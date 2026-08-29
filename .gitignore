@@ -1,0 +1,48 @@
+# Python environments, build output, and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors and operating-system files
+.DS_Store
+.idea/
+.vscode/
+
+# Local configuration and secrets
+.env
+.env.*
+/config.json
+*.seospiderauthconfig
+*.seospiderconfig
+
+# Crawls, exports, reports, and client data
+*.seospider
+*.dbseospider
+*.parquet
+/audit.json
+/audit.md
+/exports/
+/report/
+/report_*/
+/workspace/
+report_seohead/
+report_seohead_full/
+run.log
+spend.jsonl
+
+# Local scratch space retained outside the public snapshot
+_sandbox/
+_big/
+backup/
+sf spider parsing/

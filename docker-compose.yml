@@ -1,0 +1,8 @@
+services:
+  seohead:
+    build: .
+    image: seohead-tools:local
+    stdin_open: true
+    volumes:
+      - ./workspace:/data
+    command: ["--help"]

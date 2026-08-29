@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PavloSEO/seohead-seotools/schema/audit.schema.json",
+  "title": "SF Analyzer audit.json",
+  "type": "object",
+  "required": ["schema_version", "tool", "run", "summary", "issues", "pages", "groups"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "generated_by": {"type": "string"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": ["input_mode", "generated_at"],
+      "properties": {
+        "project": {"type": "string"},
+        "input_mode": {"type": "string",
+          "enum": ["crawl", "crawl-list", "load-crawl", "parse-exports"]},
+        "source": {"type": ["string", "null"]},
+        "exports_dir": {"type": ["string", "null"]},
+        "sf_version_detected": {"type": ["string", "null"]},
+        "generated_at": {"type": "string"},
+        "profile": {"type": ["string", "null"]},
+        "exports_used": {"type": "array", "items": {"type": "string"}},
+        "exports_missing": {"type": "array", "items": {"type": "string"}},
+        "checks_skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "reason"],
+            "properties": {
+              "id": {"type": "string"},
+              "reason": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["totals", "by_severity", "by_check", "health_score"],
+      "properties": {
+        "totals": {"type": "object"},
+        "by_severity": {
+          "type": "object",
+          "required": ["critical", "warning", "notice"],
+          "properties": {
+            "critical": {"type": "integer"},
+            "warning": {"type": "integer"},
+            "notice": {"type": "integer"}
+          }
+        },
+        "by_check": {"type": "object"},
+        "health_score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "size_stats_bytes": {"type": "object"},
+        "sitemap": {"type": "object"}
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "check", "severity", "source", "message", "occurrences_count"],
+        "properties": {
+          "id": {"type": "string"},
+          "fingerprint": {"type": ["string", "null"]},
+          "check": {"type": "string"},
+          "severity": {"type": "string", "enum": ["critical", "warning", "notice"]},
+          "source": {"type": "string"},
+          "message": {"type": "string"},
+          "target_url": {"type": ["string", "null"]},
+          "status_code": {"type": ["integer", "null"]},
+          "occurrences_count": {"type": "integer", "minimum": 0},
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_url": {"type": ["string", "null"]},
+                "anchor": {"type": ["string", "null"]},
+                "alt_text": {"type": ["string", "null"]},
+                "link_position": {"type": ["string", "null"]},
+                "link_path": {"type": ["string", "null"]},
+                "follow": {"type": ["boolean", "null"]},
+                "rel": {"type": ["string", "null"]},
+                "target": {"type": ["string", "null"]}
+              }
+            }
+          },
+          "details": {"type": "object"},
+          "group_id": {"type": ["string", "null"]},
+          "fix_hint": {"type": ["string", "null"]},
+          "evidence": {"type": "object"}
+        }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": {"type": "string"},
+          "status_code": {"type": ["integer", "null"]},
+          "indexability": {"type": ["string", "null"]},
+          "indexability_status": {"type": ["string", "null"]},
+          "content_type": {"type": ["string", "null"]},
+          "metrics": {"type": "object"},
+          "issues": {"type": "array", "items": {"type": "string"}},
+          "issue_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["group_id", "check", "urls", "count"],
+        "properties": {
+          "group_id": {"type": "string"},
+          "check": {"type": "string"},
+          "value": {"type": ["string", "null"]},
+          "urls": {"type": "array", "items": {"type": "string"}},
+          "count": {"type": "integer"}
+        }
+      }
+    }
+  }
+}

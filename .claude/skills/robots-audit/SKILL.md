@@ -1,0 +1,81 @@
+---
+name: robots-audit
+description: >-
+  Perform an in-depth analysis of robots.txt for redundant and harmful directives:
+  what is actually blocked, whether rendering is impaired, Allow/Disallow conflicts,
+  overly broad rules, and a missing Sitemap. Cross-check Disallow rules against live
+  200-status pages from sf-analyzer and against the sitemap, then return a list of
+  issues plus a corrected robots.txt as a diff. Use when asked to "check robots.txt,"
+  "audit robots.txt," investigate whether "robots.txt blocks" something, analyze
+  Disallow/Allow, or determine "what is blocked by robots.txt." Triggers: robots.txt,
+  redundant robots directives, robots.txt blocks, disallow, allow, check robots.txt,
+  robots.txt audit, blocked in robots.txt, blocked by robots.
+---
+
+# robots-audit
+
+An agentic `robots.txt` audit built on top of a Screaming Frog crawl. SF shows
+"blocked by robots" page by page, but it does not explain WHY a rule is harmful or
+HOW to rewrite it. This skill fills that gap.
+
+## When to use it
+
+- The user asks to analyze `robots.txt`, verify that it does not block important content,
+  or find redundant directives.
+- An `sf-analyzer` audit reports "Blocked by robots.txt" or unusual index coverage gaps.
+- A crawl/indexing section is needed before delivering an `sf-report` report.
+
+## Workflow
+
+1. **Download it.** `curl -sL -A 'Mozilla/5.0' https://SITE/robots.txt -o /tmp/robots.txt`.
+   Check the HTTP status: `curl -sIL https://SITE/robots.txt | head -1`. If it is not `200`,
+   that is already a problem (404 means no rules are present; 5xx may cause crawlers to treat
+   the entire site as blocked).
+2. **Parse it by `User-agent` group.** Collect the `Disallow`/`Allow`/`Sitemap`/`Crawl-delay`
+   directives within each group. Remember that rules apply to their own `User-agent` group,
+   not globally; `*` is the fallback. An empty `Disallow:` means "allow everything."
+3. **Collect reference data.** Take the list of live 200-status pages from the `sf-analyzer`
+   audit (`audit.json`, the internal/200 field) and URLs from the sitemap:
+   `curl -sL https://SITE/sitemap.xml | grep -oP '(?<=<loc>)[^<]+'`. This represents
+   "what should be indexed."
+4. **Checks (heuristics):**
+   - **Blocks live, important URLs.** For each `Disallow`, check whether it matches 200-status
+     pages and/or URLs from the sitemap. A conflict where a page appears in the sitemap but is
+     blocked by `Disallow` is a red flag.
+   - **Blocks rendering resources.** A `Disallow` for `*.js`, `*.css`, `/_next/`, `/static/`,
+     `/assets/`, `/wp-content/`, or `/wp-includes/` breaks rendering, so Google sees an empty
+     page. Severity: high.
+   - **Rules are too broad.** `Disallow: /*?` or `Disallow: /*?*` blocks EVERY URL with
+     parameters. This often also blocks pagination (`/blog?page=2`), filters, and UTM landing
+     pages. `Disallow: /` in the `*` group blocks the entire site; check whether it was left
+     over from development or staging.
+   - **Allow/Disallow conflicts.** An `Allow` and `Disallow` in the same group match overlapping
+     paths. State the rule clearly: the longer, more specific matching rule wins, not the rule
+     that appears first in the file.
+   - **No `Sitemap:`** Add the sitemap's absolute URL.
+   - **`Crawl-delay`** Googlebot ignores it; for most sites it only causes harm by slowing down
+     crawling. Remove it unless there is a real need to throttle an aggressive bot.
+   - **Duplicates and typos.** Repeated `Disallow` directives, `Dissallow`/`Disalow`, `Useragent`
+     without the hyphen, a relative `Sitemap:` URL (it must be absolute), and paths without a
+     leading `/`.
+5. **Create a corrected `robots.txt`** and show a **diff** against the original
+   (`diff -u /tmp/robots.txt /tmp/robots_fixed.txt`). Make minimal changes; do not reformat it
+   merely for the sake of tidiness.
+
+A small Python script using the standard-library `urllib.robotparser` is convenient for checking
+whether paths match rules:
+`python -c "import urllib.robotparser as r; rp=r.RobotFileParser(); rp.parse(open('/tmp/robots.txt').read().splitlines()); print(rp.can_fetch('*','/blog?page=2'))"`.
+
+## What to deliver to the user
+
+- **Issue list** by severity (high: rendering, important sections, or the entire site are blocked;
+  medium: broad rules or a missing Sitemap; low: typos or an unnecessary Crawl-delay), including
+  the exact line and the URLs it affects.
+- A **corrected `robots.txt`** plus a diff.
+- **The main rule to state in the conclusion:** `canonical` and `noindex` (meta/HTTP) control
+  indexing, while `robots.txt` controls crawling ONLY. You cannot "remove a page from the index"
+  with `Disallow`: a page blocked by robots.txt will not receive the `noindex` directive because
+  the bot cannot read it, and the URL may remain in search results without a snippet.
+
+See also: `sf-analyzer`, the source of the 200-status page list and sitemap data; `sf-report` /
+`sf-tasks`, which place the discovered issues into the report and backlog.

@@ -1,0 +1,119 @@
+{
+  "sf_cli": {
+    "path": "",
+    "search_paths": [
+      "/Applications/Screaming Frog SEO Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderLauncher",
+      "/Applications/Screaming Frog SEO Spider.app/Contents/MacOS/ScreamingFrogSEOSpiderCli",
+      "/usr/bin/screamingfrogseospider",
+      "C:\\Program Files\\Screaming Frog SEO Spider\\ScreamingFrogSEOSpiderCli.exe"
+    ],
+    "seospiderconfig": "",
+    "export_format": "csv",
+    "timeout_minutes": 30
+  },
+  "profile": "full",
+  "exports": {
+    "tabs": [
+      "Internal:All",
+      "Response Codes:Client Error (4xx)",
+      "Response Codes:Server Error (5xx)",
+      "Response Codes:Redirection (3xx)",
+      "Sitemaps:URLs In Sitemap",
+      "Sitemaps:URLs Not In Sitemap",
+      "Sitemaps:Orphan URLs",
+      "Sitemaps:Non-Indexable URLs In Sitemap"
+    ],
+    "bulk": [
+      "Response Codes:Client Error (4xx) Inlinks",
+      "Response Codes:Server Error (5xx) Inlinks",
+      "Response Codes:Redirection (3xx) Inlinks"
+    ],
+    "reports": [
+      "Crawl Overview",
+      "Redirects:Redirect Chains"
+    ],
+    "fetch_all_inlinks": false
+  },
+  "input": {
+    "mode": "auto",
+    "exports_dir": "exports",
+    "html_store_dir": null
+  },
+  "filters": {
+    "content_type_include": [
+      "text/html"
+    ],
+    "exclude_extensions": [
+      ".js",
+      ".css",
+      ".json",
+      ".xml",
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".gif",
+      ".webp",
+      ".svg",
+      ".pdf",
+      ".woff",
+      ".woff2",
+      ".ttf",
+      ".eot",
+      ".ico"
+    ]
+  },
+  "thresholds": {
+    "title_max_chars": 60,
+    "title_max_px": 561,
+    "title_min_chars": 30,
+    "desc_max_chars": 160,
+    "desc_max_px": 985,
+    "desc_min_chars": 70,
+    "h1_max_chars": 70,
+    "thin_content_words": 200,
+    "low_text_ratio_pct": 10,
+    "url_max_chars": 115,
+    "crawl_depth_max": 4,
+    "orphan_inlinks_min": 1,
+    "response_time_max_s": 1.5,
+    "large_html_abs_kb": 200,
+    "large_html_x_median": 3.0,
+    "dom_depth_max": 32,
+    "dom_nodes_max": 1500,
+    "img_max_kb": 150,
+    "sitemap_lastmod_stale_days": 365,
+    "sitemap_desync_pct_warn": 20,
+    "templated_title_share": 0.6,
+    "bytes_per_word_x_median": 4.0
+  },
+  "requirements": {
+    "require_canonical": true,
+    "require_h2": false,
+    "require_hreflang": false,
+    "require_structured_data": false,
+    "require_og": false
+  },
+  "live_recheck": {
+    "enabled": false,
+    "use": "auto",
+    "user_agent": "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)",
+    "max_urls": 5000,
+    "timeout_s": 10
+  },
+  "checks": {},
+  "severity_overrides": {},
+  "scoring": {
+    "weights": {
+      "critical": 5,
+      "warning": 2,
+      "notice": 0.5
+    }
+  },
+  "output": {
+    "json_path": "audit.json",
+    "md_path": "audit.md",
+    "keep_raw_exports": true,
+    "max_locations_per_issue": 200,
+    "max_pages_in_json": 100000
+  }
+}

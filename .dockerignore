@@ -1,0 +1,33 @@
+# keep the build context tiny
+.git
+.github
+docs
+examples
+tests
+skill
+.claude
+*.seospider
+*.dbseospider
+sf spider parsing/
+_sandbox/
+_big/
+report/
+exports/
+audit.json
+audit.md
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.md
+!README.md
+!THIRD_PARTY_NOTICES.md

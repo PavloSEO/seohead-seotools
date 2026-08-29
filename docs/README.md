@@ -1,0 +1,70 @@
+# seohead-seotools documentation
+
+Headless SEO toolkit: Screaming Frog crawl audits, live URL tools, domain and
+infrastructure recon, and external demand-data sources. One package, one core,
+two faces — CLI and MCP.
+
+## Where to start
+
+| You are… | Read |
+|---|---|
+| Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
+| Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
+| Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 42 |
+| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 20 skills |
+| About to change code | [ARCHITECTURE.md](ARCHITECTURE.md) — layers and invariants |
+| Running or writing tests | [TESTING.md](TESTING.md) — how to run, what they cover |
+| Trying to avoid known traps | [GOTCHAS.md](GOTCHAS.md) — money, quotas, footguns |
+| Arguing with a past decision | [DECISIONS.md](DECISIONS.md) — why it was done that way |
+| Choosing a tool for a task | [COMPARISON.md](COMPARISON.md) — where this set wins and loses |
+
+## What lives here
+
+### Current
+
+- **[TOOLS.md](TOOLS.md)** — what every tool does, which of them touch the
+  network, which have side effects, where the boundaries are. Grouped by layer:
+  recon, live tools, whole-site audit, external data sources, SF crawl audit.
+- **[SETUP.md](SETUP.md)** — install from scratch: Python version, dependency
+  groups, venv, optional system tools (SF CLI, `whois`), environment variable
+  names (names only, never values), first run checks.
+- **[USAGE.md](USAGE.md)** — the CLI/MCP/Docker calling conventions with
+  copy-paste commands.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — the package layout, the main
+  invariant ("the core does not know who called it"), the data flow diagram,
+  the four registration points of a new tool, test requirements.
+- **[TESTING.md](TESTING.md)** — how to run the suite, what the 458 tests
+  cover, what they deliberately do not, and which missing tests to write first.
+- **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
+  contracts: API money, quotas, stdin quirks, and explicit mutation flags.
+- **[DECISIONS.md](DECISIONS.md)** — decisions with their price: why no GUI,
+  why `load` instead of `networkidle`, why the metrics are called `metrics_lab`,
+  why the technology fingerprint database is not shipped.
+- **[COMPARISON.md](COMPARISON.md)** — where the set is stronger than the
+  market and where it loses, to whom. Wins and holes are both named; the main
+  hole is that there is no crawler of our own.
+- **[COVERAGE_GAPS.md](COVERAGE_GAPS.md)** — the map of what the audit still
+  lacks, with implemented items marked as done.
+- **[SKILLS.md](SKILLS.md)** — the 20 Claude Code skills: when to apply each,
+  which tools it drives, which tools deliberately have no skill.
+
+### Repository contracts
+
+- [AGENTS.md](../AGENTS.md) defines invariants and editing rules for coding agents.
+- [PROVENANCE.md](../PROVENANCE.md) defines the clean public-history boundary.
+- [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) records bundled data and
+  interoperability references.
+
+## Documentation must not lie silently
+
+Nobody recounts the numbers in prose by hand, so `tests/test_docs_drift.py`
+recounts them. It fails when:
+
+- a README, skill, or doc states a wrong number of tools, skills, or
+  audit checks;
+- a skill references a `seohead` command that does not exist;
+- a README table row names a non-existent command or a wrong MCP tool name;
+- a skill's frontmatter name does not match its folder or has no `description`.
+
+The contract test derives counts and command names directly from registries, so public prose
+cannot silently drift away from the interfaces users actually receive.

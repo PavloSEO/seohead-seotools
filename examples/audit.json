@@ -1,0 +1,784 @@
+{
+  "schema_version": "2.0",
+  "tool": {
+    "name": "SF Analyzer",
+    "version": "2.0.0",
+    "generated_by": "SEOHead"
+  },
+  "run": {
+    "project": "example.com",
+    "input_mode": "parse-exports",
+    "source": null,
+    "exports_dir": "examples/exports",
+    "sf_version_detected": null,
+    "generated_at": "2026-06-21T17:39:00Z",
+    "profile": "full",
+    "exports_used": [
+      "internal_all",
+      "inlinks_4xx"
+    ],
+    "exports_missing": [
+      "resp_4xx",
+      "resp_5xx",
+      "resp_3xx",
+      "resp_no_response",
+      "resp_blocked",
+      "inlinks_5xx",
+      "inlinks_3xx",
+      "all_inlinks",
+      "sitemap_in",
+      "sitemap_not_in",
+      "sitemap_orphan",
+      "sitemap_non_indexable",
+      "sitemap_redirects",
+      "sitemap_non_200",
+      "images_missing_alt",
+      "images_over_kb",
+      "images_missing_size",
+      "titles_duplicate",
+      "desc_duplicate",
+      "redirect_chains",
+      "crawl_overview",
+      "security_mixed",
+      "security_hsts",
+      "structured_data_missing"
+    ],
+    "checks_skipped": [
+      {
+        "id": "SCHEMA_VALIDATION_ERROR",
+        "reason": "no Structured Data validation columns in Internal:All"
+      },
+      {
+        "id": "READABILITY_DIFFICULT",
+        "reason": "no Readability/Flesch column"
+      },
+      {
+        "id": "LONG_SENTENCES",
+        "reason": "no Average Words Per Sentence column"
+      },
+      {
+        "id": "SPELLING_ERRORS",
+        "reason": "no Spelling Errors column (enable spell-check in SF)"
+      },
+      {
+        "id": "GRAMMAR_ERRORS",
+        "reason": "no Grammar Errors column (enable grammar-check in SF)"
+      },
+      {
+        "id": "MIXED_CONTENT",
+        "reason": "no security_mixed export (export this SF filter to enable)"
+      },
+      {
+        "id": "MISSING_HSTS",
+        "reason": "no security_hsts export (export this SF filter to enable)"
+      },
+      {
+        "id": "STRUCTURED_DATA_MISSING",
+        "reason": "no structured_data_missing export (export this SF filter to enable)"
+      },
+      {
+        "id": "IMG_OVER_KB",
+        "reason": "no images_over_kb export (export this SF filter to enable)"
+      },
+      {
+        "id": "IMG_MISSING_DIMENSIONS",
+        "reason": "no images_missing_size export (export this SF filter to enable)"
+      },
+      {
+        "id": "LINK_TO_5XX",
+        "reason": "export inlinks_5xx not available"
+      },
+      {
+        "id": "INTERNAL_LINK_TO_REDIRECT",
+        "reason": "export inlinks_3xx not available"
+      },
+      {
+        "id": "DOM_TOO_DEEP",
+        "reason": "no stored HTML (input.html_store_dir not set)"
+      },
+      {
+        "id": "DOM_TOO_MANY_NODES",
+        "reason": "no stored HTML (input.html_store_dir not set)"
+      },
+      {
+        "id": "TITLE_TEMPLATED",
+        "reason": "too few titles to assess templating"
+      },
+      {
+        "id": "SITEMAP_DESYNC",
+        "reason": "no sitemap URL set (no export and network disabled)"
+      }
+    ]
+  },
+  "summary": {
+    "totals": {
+      "urls_crawled": 6,
+      "html_pages": 5,
+      "html_indexable": 4,
+      "issues_total": 18,
+      "groups_total": 2
+    },
+    "by_severity": {
+      "critical": 3,
+      "warning": 10,
+      "notice": 5
+    },
+    "by_check": {
+      "DESC_DUPLICATE": 2,
+      "TITLE_DUPLICATE": 2,
+      "TITLE_TOO_SHORT": 2,
+      "BROKEN_INTERNAL_LINK": 1,
+      "BROKEN_PAGE_4XX": 1,
+      "CANONICAL_MISSING": 1,
+      "DESC_MISSING": 1,
+      "DESC_TOO_SHORT": 1,
+      "H1_MULTIPLE": 1,
+      "HTML_BLOAT": 1,
+      "LARGE_HTML": 1,
+      "LOW_TEXT_RATIO": 1,
+      "SLOW_RESPONSE": 1,
+      "THIN_CONTENT": 1,
+      "TITLE_MISSING": 1
+    },
+    "health_score": 25,
+    "size_stats_bytes": {
+      "count": 4,
+      "median": 77500,
+      "p75": 135000,
+      "p90": 234000,
+      "p95": 266999,
+      "max": 300000
+    },
+    "sitemap": {
+      "declared_in_robots": null,
+      "sitemaps": [],
+      "urls_in_sitemap": 0,
+      "urls_in_crawl_indexable": 4,
+      "in_sitemap_not_in_crawl": 0,
+      "in_crawl_not_in_sitemap": 0,
+      "non_200_in_sitemap": 0,
+      "non_indexable_in_sitemap": 0
+    }
+  },
+  "issues": [
+    {
+      "id": "ISSUE-000001",
+      "fingerprint": "8964182d8cf6",
+      "check": "BROKEN_INTERNAL_LINK",
+      "severity": "critical",
+      "source": "inlinks:Client Error (4xx) Inlinks",
+      "message": "Internal link points to a 4xx URL",
+      "target_url": "https://example.com/old-page",
+      "status_code": 404,
+      "occurrences_count": 2,
+      "locations": [
+        {
+          "source_url": "https://example.com/",
+          "anchor": "Legacy Page",
+          "alt_text": null,
+          "link_position": "Content",
+          "link_path": "/html/body/main/article/p[3]/a",
+          "follow": true,
+          "rel": null,
+          "target": null
+        },
+        {
+          "source_url": "https://example.com/page-a",
+          "anchor": "view pump specifications",
+          "alt_text": null,
+          "link_position": "Footer",
+          "link_path": "/html/body/footer/nav/a[2]",
+          "follow": true,
+          "rel": null,
+          "target": null
+        }
+      ],
+      "details": {
+        "link_position_breakdown": {
+          "Content": 1,
+          "Footer": 1
+        }
+      },
+      "fix_hint": "Replace the link with the current URL or add a 301 redirect. If the link appears in the footer or navigation, update the shared template.",
+      "evidence": {
+        "export": "examples/exports\\response_codes_client_error_(4xx)_inlinks.csv"
+      }
+    },
+    {
+      "id": "ISSUE-000002",
+      "fingerprint": "bada00941803",
+      "check": "BROKEN_PAGE_4XX",
+      "severity": "critical",
+      "source": "SF:Response Codes:4xx",
+      "message": "Page returns a 4xx status",
+      "target_url": "https://example.com/old-page",
+      "status_code": 404,
+      "occurrences_count": 1,
+      "details": {
+        "status": "Not Found",
+        "inlinks": 4
+      },
+      "fix_hint": "Restore the page or redirect it to a relevant URL with a 301 response; remove links that still point to the broken URL."
+    },
+    {
+      "id": "ISSUE-000003",
+      "fingerprint": "a219354adab4",
+      "check": "TITLE_MISSING",
+      "severity": "critical",
+      "source": "SF-derived",
+      "message": "Title is missing",
+      "target_url": "https://example.com/no-title",
+      "status_code": null,
+      "occurrences_count": 1,
+      "fix_hint": "Add a unique, descriptive title."
+    },
+    {
+      "id": "ISSUE-000004",
+      "fingerprint": "86fe437f992c",
+      "check": "CANONICAL_MISSING",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Indexable page has no canonical URL",
+      "target_url": "https://example.com/no-title",
+      "status_code": null,
+      "occurrences_count": 1,
+      "fix_hint": "Add a <link rel=\"canonical\"> element."
+    },
+    {
+      "id": "ISSUE-000005",
+      "fingerprint": "40f3c9859bad",
+      "check": "DESC_DUPLICATE",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Duplicate meta description",
+      "target_url": "https://example.com/",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "value": "A sample description over seventy characters that reliably meets the configured audit threshold.",
+        "duplicate_count": 2
+      },
+      "group_id": "GRP-DESC-0002",
+      "fix_hint": "Write a unique description for each page."
+    },
+    {
+      "id": "ISSUE-000006",
+      "fingerprint": "19122cea6310",
+      "check": "DESC_DUPLICATE",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Duplicate meta description",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "value": "A sample description over seventy characters that reliably meets the configured audit threshold.",
+        "duplicate_count": 2
+      },
+      "group_id": "GRP-DESC-0002",
+      "fix_hint": "Write a unique description for each page."
+    },
+    {
+      "id": "ISSUE-000007",
+      "fingerprint": "2282ab05008d",
+      "check": "DESC_MISSING",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Meta description is missing",
+      "target_url": "https://example.com/no-title",
+      "status_code": null,
+      "occurrences_count": 1,
+      "fix_hint": "Add a description of up to approximately 160 characters."
+    },
+    {
+      "id": "ISSUE-000008",
+      "fingerprint": "c4ba2cfaf58e",
+      "check": "H1_MULTIPLE",
+      "severity": "warning",
+      "source": "SF:H1:Multiple",
+      "message": "Multiple H1 elements on one page",
+      "target_url": "https://example.com/page-a",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "h1_count": 2,
+        "h1_texts": [
+          "Pump Models",
+          "Second H1 Heading"
+        ]
+      },
+      "fix_hint": "Keep one H1 and change the remaining top-level headings to H2 or H3."
+    },
+    {
+      "id": "ISSUE-000009",
+      "fingerprint": "41f61a2ba022",
+      "check": "LARGE_HTML",
+      "severity": "warning",
+      "source": "SF-derived+heuristic",
+      "message": "Oversized HTML in absolute or relative terms",
+      "target_url": "https://example.com/no-title",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "size_bytes": 300000,
+        "site_median": 77500,
+        "ratio": 3.87,
+        "rank": 1,
+        "abs_threshold_kb": 200,
+        "outlier": true
+      },
+      "fix_hint": "Reduce HTML size by moving inline styles and scripts, removing base64 payloads, and simplifying redundant markup."
+    },
+    {
+      "id": "ISSUE-000010",
+      "fingerprint": "9cb304658c17",
+      "check": "SLOW_RESPONSE",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Slow server response",
+      "target_url": "https://example.com/no-title",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "response_time": 2.0,
+        "max_s": 1.5
+      },
+      "fix_hint": "Improve TTFB by optimizing the server and cache configuration."
+    },
+    {
+      "id": "ISSUE-000011",
+      "fingerprint": "388dcedd10f8",
+      "check": "THIN_CONTENT",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Thin content (low word count)",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "word_count": 50,
+        "threshold": 200
+      },
+      "fix_hint": "Expand the content or exclude the page from indexing."
+    },
+    {
+      "id": "ISSUE-000012",
+      "fingerprint": "c02a37ad1123",
+      "check": "TITLE_DUPLICATE",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Duplicate title",
+      "target_url": "https://example.com/page-a",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "value": "Industrial Pumps Product A",
+        "duplicate_count": 2
+      },
+      "group_id": "GRP-TITLE-0001",
+      "fix_hint": "Write a unique title for each page."
+    },
+    {
+      "id": "ISSUE-000013",
+      "fingerprint": "8bb1eb7164aa",
+      "check": "TITLE_DUPLICATE",
+      "severity": "warning",
+      "source": "SF-derived",
+      "message": "Duplicate title",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "value": "Industrial Pumps Product A",
+        "duplicate_count": 2
+      },
+      "group_id": "GRP-TITLE-0001",
+      "fix_hint": "Write a unique title for each page."
+    },
+    {
+      "id": "ISSUE-000014",
+      "fingerprint": "dc5b9e61c269",
+      "check": "DESC_TOO_SHORT",
+      "severity": "notice",
+      "source": "SF-derived",
+      "message": "Meta description is below the length threshold",
+      "target_url": "https://example.com/page-a",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "length": 7,
+        "min_chars": 70
+      },
+      "fix_hint": "Expand the description."
+    },
+    {
+      "id": "ISSUE-000015",
+      "fingerprint": "849c64497f32",
+      "check": "HTML_BLOAT",
+      "severity": "notice",
+      "source": "heuristic",
+      "message": "Bloated HTML: high byte count with little text",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "bytes_per_word": 1600.0,
+        "site_median_bpw": 375.0,
+        "word_count": 50,
+        "size_bytes": 80000
+      },
+      "fix_hint": "Reduce bytes per word by moving styles and scripts out of the HTML and removing base64 payloads."
+    },
+    {
+      "id": "ISSUE-000016",
+      "fingerprint": "165e4fa8a3fb",
+      "check": "LOW_TEXT_RATIO",
+      "severity": "notice",
+      "source": "SF-derived",
+      "message": "Low text-to-HTML ratio",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "text_ratio": 8.0,
+        "threshold": 10
+      },
+      "fix_hint": "Increase the proportion of meaningful text content."
+    },
+    {
+      "id": "ISSUE-000017",
+      "fingerprint": "bb31b44a2144",
+      "check": "TITLE_TOO_SHORT",
+      "severity": "notice",
+      "source": "SF-derived",
+      "message": "Title is below the length threshold",
+      "target_url": "https://example.com/page-a",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "title": "Industrial Pumps Product A",
+        "length": 26,
+        "min_chars": 30
+      },
+      "fix_hint": "Expand the title to an informative length."
+    },
+    {
+      "id": "ISSUE-000018",
+      "fingerprint": "dd6ebcc10e3f",
+      "check": "TITLE_TOO_SHORT",
+      "severity": "notice",
+      "source": "SF-derived",
+      "message": "Title is below the length threshold",
+      "target_url": "https://example.com/page-b",
+      "status_code": null,
+      "occurrences_count": 1,
+      "details": {
+        "title": "Industrial Pumps Product A",
+        "length": 26,
+        "min_chars": 30
+      },
+      "fix_hint": "Expand the title to an informative length."
+    }
+  ],
+  "pages": [
+    {
+      "url": "https://example.com/",
+      "status_code": 200,
+      "indexability": "Indexable",
+      "indexability_status": null,
+      "content_type": "text/html",
+      "metrics": {
+        "title": "Industrial Pump Equipment Shop Online Homepage",
+        "title_length": 46,
+        "title_px": null,
+        "meta_description": "A sample description over seventy characters that reliably meets the configured audit threshold.",
+        "desc_length": 96,
+        "h1_count": 1,
+        "h1": [
+          "Welcome"
+        ],
+        "h2_count": 1,
+        "word_count": 800,
+        "text_ratio": 20.0,
+        "size_bytes": 70000,
+        "size_vs_median_ratio": 0.9,
+        "bytes_per_word": 87.5,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 50,
+        "unique_inlinks": null,
+        "outlinks": 30,
+        "external_outlinks": null,
+        "crawl_depth": 0,
+        "response_time": 0.3,
+        "canonical": "https://example.com/",
+        "meta_robots": "index,follow",
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [
+        "DESC_DUPLICATE"
+      ],
+      "issue_ids": [
+        "ISSUE-000005"
+      ]
+    },
+    {
+      "url": "https://example.com/page-a",
+      "status_code": 200,
+      "indexability": "Indexable",
+      "indexability_status": null,
+      "content_type": "text/html",
+      "metrics": {
+        "title": "Industrial Pumps Product A",
+        "title_length": 26,
+        "title_px": null,
+        "meta_description": "Too low",
+        "desc_length": 7,
+        "h1_count": 2,
+        "h1": [
+          "Pump Models",
+          "Second H1 Heading"
+        ],
+        "h2_count": 1,
+        "word_count": 300,
+        "text_ratio": 15.0,
+        "size_bytes": 75000,
+        "size_vs_median_ratio": 0.97,
+        "bytes_per_word": 250.0,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 5,
+        "unique_inlinks": null,
+        "outlinks": 10,
+        "external_outlinks": null,
+        "crawl_depth": 1,
+        "response_time": 0.5,
+        "canonical": "https://example.com/page-a",
+        "meta_robots": "index,follow",
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [
+        "H1_MULTIPLE",
+        "TITLE_DUPLICATE",
+        "DESC_TOO_SHORT",
+        "TITLE_TOO_SHORT"
+      ],
+      "issue_ids": [
+        "ISSUE-000008",
+        "ISSUE-000012",
+        "ISSUE-000014",
+        "ISSUE-000017"
+      ]
+    },
+    {
+      "url": "https://example.com/page-b",
+      "status_code": 200,
+      "indexability": "Indexable",
+      "indexability_status": null,
+      "content_type": "text/html",
+      "metrics": {
+        "title": "Industrial Pumps Product A",
+        "title_length": 26,
+        "title_px": null,
+        "meta_description": "A sample description over seventy characters that reliably meets the configured audit threshold.",
+        "desc_length": 96,
+        "h1_count": 1,
+        "h1": [
+          "Pump Offers"
+        ],
+        "h2_count": 0,
+        "word_count": 50,
+        "text_ratio": 8.0,
+        "size_bytes": 80000,
+        "size_vs_median_ratio": 1.03,
+        "bytes_per_word": 1600.0,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 3,
+        "unique_inlinks": null,
+        "outlinks": 5,
+        "external_outlinks": null,
+        "crawl_depth": 1,
+        "response_time": 0.4,
+        "canonical": "https://example.com/page-b",
+        "meta_robots": "index,follow",
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [
+        "DESC_DUPLICATE",
+        "THIN_CONTENT",
+        "TITLE_DUPLICATE",
+        "HTML_BLOAT",
+        "LOW_TEXT_RATIO",
+        "TITLE_TOO_SHORT"
+      ],
+      "issue_ids": [
+        "ISSUE-000006",
+        "ISSUE-000011",
+        "ISSUE-000013",
+        "ISSUE-000015",
+        "ISSUE-000016",
+        "ISSUE-000018"
+      ]
+    },
+    {
+      "url": "https://example.com/no-title",
+      "status_code": 200,
+      "indexability": "Indexable",
+      "indexability_status": null,
+      "content_type": "text/html",
+      "metrics": {
+        "title": null,
+        "title_length": 0,
+        "title_px": null,
+        "meta_description": null,
+        "desc_length": 0,
+        "h1_count": 1,
+        "h1": [
+          "No <title>"
+        ],
+        "h2_count": 1,
+        "word_count": 600,
+        "text_ratio": 18.0,
+        "size_bytes": 300000,
+        "size_vs_median_ratio": 3.87,
+        "bytes_per_word": 500.0,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 2,
+        "unique_inlinks": null,
+        "outlinks": 3,
+        "external_outlinks": null,
+        "crawl_depth": 2,
+        "response_time": 2.0,
+        "canonical": null,
+        "meta_robots": "index,follow",
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [
+        "TITLE_MISSING",
+        "CANONICAL_MISSING",
+        "DESC_MISSING",
+        "LARGE_HTML",
+        "SLOW_RESPONSE"
+      ],
+      "issue_ids": [
+        "ISSUE-000003",
+        "ISSUE-000004",
+        "ISSUE-000007",
+        "ISSUE-000009",
+        "ISSUE-000010"
+      ]
+    },
+    {
+      "url": "https://example.com/old-page",
+      "status_code": 404,
+      "indexability": "Non-Indexable",
+      "indexability_status": "Client Error",
+      "content_type": "text/html",
+      "metrics": {
+        "title": null,
+        "title_length": 0,
+        "title_px": null,
+        "meta_description": null,
+        "desc_length": 0,
+        "h1_count": 0,
+        "h1": [],
+        "h2_count": 0,
+        "word_count": 0,
+        "text_ratio": 0.0,
+        "size_bytes": 0,
+        "size_vs_median_ratio": null,
+        "bytes_per_word": null,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 4,
+        "unique_inlinks": null,
+        "outlinks": 0,
+        "external_outlinks": null,
+        "crawl_depth": 2,
+        "response_time": 0.1,
+        "canonical": null,
+        "meta_robots": null,
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [
+        "BROKEN_INTERNAL_LINK",
+        "BROKEN_PAGE_4XX"
+      ],
+      "issue_ids": [
+        "ISSUE-000001",
+        "ISSUE-000002"
+      ]
+    },
+    {
+      "url": "https://example.com/image.jpg",
+      "status_code": 200,
+      "indexability": "Indexable",
+      "indexability_status": null,
+      "content_type": "image/jpeg",
+      "metrics": {
+        "title": null,
+        "title_length": 0,
+        "title_px": null,
+        "meta_description": null,
+        "desc_length": 0,
+        "h1_count": 0,
+        "h1": [],
+        "h2_count": 0,
+        "word_count": 0,
+        "text_ratio": 0.0,
+        "size_bytes": 50000,
+        "size_vs_median_ratio": null,
+        "bytes_per_word": null,
+        "dom_depth": null,
+        "dom_nodes": null,
+        "inlinks": 9,
+        "unique_inlinks": null,
+        "outlinks": 0,
+        "external_outlinks": null,
+        "crawl_depth": 1,
+        "response_time": 0.05,
+        "canonical": null,
+        "meta_robots": null,
+        "link_score": null,
+        "is_in_sitemap": null,
+        "sitemap_lastmod": null
+      },
+      "issues": [],
+      "issue_ids": []
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "GRP-TITLE-0001",
+      "check": "TITLE_DUPLICATE",
+      "value": "Industrial Pumps Product A",
+      "urls": [
+        "https://example.com/page-a",
+        "https://example.com/page-b"
+      ],
+      "count": 2
+    },
+    {
+      "group_id": "GRP-DESC-0002",
+      "check": "DESC_DUPLICATE",
+      "value": "A sample description over seventy characters that reliably meets the configured audit threshold.",
+      "urls": [
+        "https://example.com/",
+        "https://example.com/page-b"
+      ],
+      "count": 2
+    }
+  ]
+}

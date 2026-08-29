@@ -1,0 +1,25 @@
+# Example audit report
+
+`audit.json` and `audit.md` were generated from the exports in `examples/exports/`.
+They use the same fixtures as the test suite: a small synthetic site with deliberately
+planted defects, including a broken internal link, two H1 elements, duplicate titles,
+an oversized page, and thin content.
+
+Reproduce the report:
+
+```bash
+seohead sf run --exports-dir examples/exports --out examples
+```
+
+What this example demonstrates:
+
+- `BROKEN_INTERNAL_LINK` — a broken link to `/old-page` (404), with two source
+  pages, anchor text, link position (Content/Footer), and link path (XPath);
+- `H1_MULTIPLE` — a page with two H1 elements and both heading texts;
+- `TITLE_DUPLICATE` — a group of two URLs that share the same title;
+- `LARGE_HTML` — an HTML-size outlier relative to the site median;
+- `THIN_CONTENT`, `LOW_TEXT_RATIO`, `CANONICAL_MISSING`, `SLOW_RESPONSE`, and
+  other checks.
+
+See `skill/sf-analyzer/reference/json_schema.md` for the complete `audit.json`
+contract.

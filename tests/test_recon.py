@@ -1,0 +1,302 @@
+"""Unit tests for the pure (network-free) recon functions."""
+
+import datetime as dt
+
+from seohead.recon import backlinks, cdn, domain, security, tech
+from seohead.recon.net import normalize_domain, normalize_url
+
+# ── Input normalization ──────────────────────────────────────────────────────
+
+
+def test_normalize_domain_strips_scheme_www_port_and_path():
+    for raw in (
+        "https://www.Example.com/path?q=1",
+        "www.example.com:443",
+        "http://example.com",
+        "example.com.",
+    ):
+        assert normalize_domain(raw) == "example.com"
+
+
+def test_normalize_domain_converts_idn_to_punycode():
+    # The Cyrillic IDN is intentional: this fixture verifies IDNA conversion.
+    assert normalize_domain("https://пример.рф/") == "xn--e1afmkfd.xn--p1ai"
+
+
+def test_normalize_domain_rejects_non_domains():
+    for raw in ("", "   ", "localhost", "just-a-string", "http://[::1]/", "1.2.3"):
+        assert normalize_domain(raw) == ""
+
+
+def test_normalize_url_adds_scheme_and_rejects_other_protocols():
+    assert normalize_url("example.com/x") == "https://example.com/x"
+    assert normalize_url("http://example.com") == "http://example.com"
+    assert normalize_url("ftp://example.com") == ""
+    assert normalize_url("mailto:a@b.c") == ""
+
+
+# ── Domain dates, WHOIS parsing, and risk flags ──────────────────────────────
+
+
+def test_parse_date_handles_rdap_and_local_formats():
+    assert domain._parse_date("2020-03-01T10:00:00Z") == dt.date(2020, 3, 1)
+    assert domain._parse_date("2020-03-01") == dt.date(2020, 3, 1)
+    assert domain._parse_date("01.03.2020") == dt.date(2020, 3, 1)
+    assert domain._parse_date("not a date") is None
+    assert domain._parse_date("") is None
+
+
+def test_parse_cert_date_reads_openssl_format():
+    assert domain._parse_cert_date("Jun  1 12:00:00 2027 GMT") == dt.date(2027, 6, 1)
+    assert domain._parse_cert_date("") is None
+
+
+def test_from_whois_text_picks_key_fields_for_cctld():
+    parsed = domain._from_whois_text(
+        "% comment line\n"
+        "domain: EXAMPLE.BY\n"
+        "nserver: ns1.hoster.by\n"
+        "nserver: NS2.HOSTER.BY.\n"
+        "registrar: Reliable\n"
+        "created: 2015-06-01\n"
+        "expires: 2027-06-01\n"
+    )
+    assert parsed["registrar"] == "Reliable"
+    assert parsed["created"] == "2015-06-01"
+    assert parsed["nameservers"] == ["ns1.hoster.by", "ns2.hoster.by"]
+
+
+def _profile(**over):
+    base = {
+        "registration": {"age_days": 4000, "expires_in_days": 300, "status": [], "source": "rdap"},
+        "dns": {"a": ["1.2.3.4"], "aaaa": [], "spf": "v=spf1 ~all", "dmarc": "v=DMARC1"},
+        "tls": {"valid": True, "days_left": 90},
+    }
+    base.update(over)
+    return base
+
+
+def test_flags_are_empty_for_a_healthy_domain():
+    assert domain._flags(_profile()) == []
+
+
+def test_flags_catch_young_domain_and_expiring_cert():
+    flags = domain._flags(
+        _profile(
+            registration={
+                "age_days": 10,
+                "expires_in_days": 5,
+                "status": ["clientHold"],
+                "source": "rdap",
+            },
+            tls={"valid": True, "days_left": 3},
+        )
+    )
+    joined = " ".join(flags)
+    assert "domain" in joined and "10 days old" in joined
+    assert "expires in 5" in joined
+    assert "hold" in joined
+    assert "certificate expires in 3" in joined
+
+
+def test_flags_report_missing_spf_dmarc_and_dead_dns():
+    flags = domain._flags(_profile(dns={"a": [], "aaaa": [], "spf": None, "dmarc": None}))
+    joined = " ".join(flags)
+    assert "does not resolve" in joined and "SPF" in joined and "DMARC" in joined
+
+
+# ── CDN detection and cache analysis ─────────────────────────────────────────
+
+
+def test_detect_cdn_by_header_server_and_via():
+    assert cdn._detect_cdn({"cf-ray": "abc"}) == "Cloudflare"
+    assert cdn._detect_cdn({"server": "AkamaiGHost"}) == "Akamai"
+    assert cdn._detect_cdn({"x-amz-cf-id": "z"}) == "Amazon CloudFront"
+    assert cdn._detect_cdn({"via": "1.1 google"}) == "Google Cloud CDN"
+    assert cdn._detect_cdn({"server": "nginx"}) is None
+
+
+def test_cache_status_and_classification():
+    assert cdn._classify(cdn._cache_status({"cf-cache-status": "HIT"})) == "hit"
+    assert cdn._classify(cdn._cache_status({"cf-cache-status": "DYNAMIC"})) == "miss"
+    assert cdn._classify(cdn._cache_status({"x-cache": "Hit from cloudfront"})) == "hit"
+    assert cdn._cache_status({"server": "nginx"}) is None
+    assert cdn._classify(None) is None
+
+
+def test_parse_cache_control_reads_directives():
+    parsed = cdn._parse_cache_control("public, max-age=3600, immutable")
+    assert parsed["max_age"] == 3600 and parsed["public"] and parsed["immutable"]
+    assert cdn._parse_cache_control("no-store")["no_store"] is True
+    assert cdn._parse_cache_control("")["raw"] is None
+    # A malformed max-age value must not crash the parser.
+    assert cdn._parse_cache_control("max-age=abc")["max_age"] is None
+
+
+def _cdn_result(**over):
+    result = {
+        "cdn": "Cloudflare",
+        "transport": {
+            "http_version": "HTTP/2",
+            "http_version_measurable": True,
+            "http3_advertised": True,
+            "content_encoding": "br",
+            "brotli_supported": True,
+            "ttfb_first_ms": 120.0,
+        },
+        "cache": {
+            "cache_control": cdn._parse_cache_control("public, max-age=600"),
+            "etag": 'W/"x"',
+            "last_modified": None,
+            "hit_first": "miss",
+            "hit_second": "hit",
+            "revalidation": {"supported": True},
+        },
+    }
+    for key, value in over.items():
+        result[key].update(value) if isinstance(value, dict) else result.update({key: value})
+    return result
+
+
+def test_cdn_findings_stay_quiet_when_everything_is_fine():
+    assert cdn._findings(_cdn_result()) == []
+
+
+def test_cdn_findings_do_not_blame_the_server_when_h2_is_missing():
+    """A client without h2 support must not blame the origin for using HTTP/1.1."""
+    found = cdn._findings(
+        _cdn_result(transport={"http_version": "HTTP/1.1", "http_version_measurable": False})
+    )
+    joined = " ".join(found)
+    assert "h2" in joined
+    assert "HTTP/2 would" not in joined
+
+
+def test_cdn_findings_report_real_http1_and_dead_cache():
+    found = cdn._findings(
+        _cdn_result(
+            transport={"http_version": "HTTP/1.1"},
+            cache={"hit_second": "miss", "cache_control": cdn._parse_cache_control("")},
+        )
+    )
+    joined = " ".join(found)
+    assert "HTTP/2 would" in joined
+    assert "MISS" in joined and "CDN did not retain the page" in joined
+    assert "Cache-Control is missing" in joined
+
+
+# ── Technology signatures and heuristics ─────────────────────────────────────
+
+
+def _match(kind, marker, *, html="", headers=None, cookies=None, scripts=""):
+    return tech._match(
+        kind,
+        marker,
+        html_low=html.lower(),
+        headers=headers or {},
+        cookies=cookies or {},
+        scripts_low=scripts.lower(),
+    )
+
+
+def test_match_finds_signatures_in_every_source():
+    assert _match("html", "/wp-content/", html="<img src='/WP-CONTENT/a.png'>")
+    assert _match("header", "x-vercel-id", headers={"x-vercel-id": "1"})
+    assert _match("value", "nginx", headers={"server": "nginx/1.21"})
+    assert _match("cookie", "BITRIX_SM", cookies={"BITRIX_SM_GUEST_ID": "7"})
+    assert _match("script", "jquery", scripts="https://cdn/jQuery.min.js")
+    assert _match("html", "/wp-content/", html="<p>unrelated content</p>") is None
+
+
+def test_match_returns_the_marker_it_fired_on():
+    assert "x-vercel-id" in _match("header", "x-vercel-id", headers={"x-vercel-id": "1"})
+
+
+def test_tech_findings_do_not_call_jquery_a_headless_stack():
+    """jQuery commonly accompanies a CMS and does not imply a headless stack."""
+    found = tech._findings(
+        {
+            "cms": [{"name": "OpenCart"}],
+            "library": [{"name": "jQuery"}],
+            "analytics": [{"name": "Yandex Metrica"}],
+        },
+        [],
+    )
+    assert not any("headless" in f for f in found)
+
+
+def test_tech_findings_flag_a_real_headless_stack():
+    found = tech._findings(
+        {
+            "cms": [{"name": "WordPress"}],
+            "framework": [{"name": "Next.js"}],
+            "analytics": [{"name": "GA4"}],
+        },
+        [],
+    )
+    assert any("headless" in f for f in found)
+
+
+def test_tech_findings_notice_missing_analytics_and_pixel_bloat():
+    found = tech._findings(
+        {"cms": [{"name": "WordPress"}], "pixel": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
+        [f"host{i}.tld" for i in range(12)],
+    )
+    joined = " ".join(found)
+    assert "analytics" in joined and "3 advertising" in joined and "12 third-party" in joined
+
+
+# ── Security scoring and findings ────────────────────────────────────────────
+
+
+def test_grade_scale():
+    assert security._grade(100) == "A" and security._grade(90) == "A"
+    assert security._grade(75) == "B" and security._grade(60) == "C"
+    assert security._grade(0) == "F"
+
+
+def _sec_result(**over):
+    result = {
+        "headers_missing": [],
+        "version_disclosure": {},
+        "cookies": [],
+        "https_redirect": {"checked": True, "upgrades": True},
+        "exposed_paths": None,
+    }
+    result.update(over)
+    return result
+
+
+def test_security_findings_are_empty_for_a_clean_site():
+    assert security._findings(_sec_result()) == []
+
+
+def test_security_findings_report_disclosure_only_with_a_version():
+    assert security._findings(_sec_result(version_disclosure={"server": "nginx"})) == []
+    found = security._findings(_sec_result(version_disclosure={"x-powered-by": "PHP/7.4.33"}))
+    assert any("x-powered-by" in f and "version" in f for f in found)
+
+
+def test_security_findings_cover_http_downgrade_cookies_and_exposed_paths():
+    found = security._findings(
+        _sec_result(
+            https_redirect={"checked": True, "upgrades": False},
+            cookies=[{"name": "SID", "secure": False, "same_site": None}],
+            exposed_paths=[{"path": "/.env", "bytes": 120}],
+        )
+    )
+    joined = " ".join(found)
+    assert "does not redirect to https" in joined.lower()
+    assert "without the Secure flag" in joined and "without SameSite" in joined
+    assert "/.env" in joined
+
+
+# ── Backlink domain matching ─────────────────────────────────────────────────
+
+
+def test_same_site_matches_domain_and_subdomains_only():
+    assert backlinks._same_site("https://example.com/a", "example.com")
+    assert backlinks._same_site("https://blog.example.com/", "example.com")
+    assert backlinks._same_site("https://www.example.com/", "example.com")
+    assert not backlinks._same_site("https://other.example/", "example.com")
+    assert not backlinks._same_site("/relative", "example.com")

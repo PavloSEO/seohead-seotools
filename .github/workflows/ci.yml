@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev,mcp,cluster,reports]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest --cov=seohead --cov-report=term-missing
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[mcp,cluster,reports]"
+      - name: Enforce core/interface boundary
+        run: |
+          if grep -rnE "^\s*from seohead\.(servers|cli)|^\s*import seohead\.(servers|cli)" \
+               seohead/sf seohead/tools seohead/recon seohead/data_sources; then
+            echo "::error::core modules must not import the CLI or server layer"
+            exit 1
+          fi
+      - name: Run the synthetic crawl audit
+        run: |
+          seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("/tmp/report/audit.json").read_text())
+          assert data["issues"], "the synthetic crawl stopped producing findings"
+          assert len(data["run"]["checks_skipped"]) < 96
+          print("issues", len(data["issues"]), "health", data["summary"]["health_score"])
+          PY
+      - name: Verify CLI and MCP registration
+        run: |
+          seohead --version
+          sf-analyzer --version
+          python - <<'PY'
+          import asyncio
+          from seohead.cli import COMMANDS
+          from seohead.servers.handlers import HANDLERS
+          from seohead.servers.mcp_server import build_server
+
+          tools = asyncio.run(build_server().list_tools())
+          names = {tool.name for tool in tools}
+          assert len(COMMANDS) == len(HANDLERS) == 42
+          assert len(names) == 47, sorted(names)
+          assert {"seo_parse", "seo_site_audit", "sf_audit_run"} <= names
+          print("registered MCP tools", len(names))
+          PY
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-distributions
+          path: dist/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: seohead-tools:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

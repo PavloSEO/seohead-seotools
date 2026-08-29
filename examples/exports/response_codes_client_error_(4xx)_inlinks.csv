@@ -1,0 +1,3 @@
+﻿Type,Source,Destination,Anchor Text,Alt Text,Status Code,Follow,Target,Rel,Link Position,Link Path
+Hyperlink,https://example.com/,https://example.com/old-page,Legacy Page,,404,true,,,Content,/html/body/main/article/p[3]/a
+Hyperlink,https://example.com/page-a,https://example.com/old-page,view pump specifications,,404,true,,,Footer,/html/body/footer/nav/a[2]

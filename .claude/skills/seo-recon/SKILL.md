@@ -1,0 +1,91 @@
+---
+name: seo-recon
+description: >-
+  Investigate the domain and site infrastructure using data Screaming Frog does not
+  provide: domain age and registration, DNS records, hosting and ASN by IP, server
+  location, TLS certificate, CDN and cache operation detection, CMS/framework/stack,
+  analytics, and pixels. Use when asked "what hosting provider does this site use,"
+  "where is the server," "what CMS / site engine does it use," "what is the site
+  built with," "does it use Cloudflare," "does the cache work," "how is traffic
+  measured," whois, "domain age," hosting/CDN detection, or stack detection.
+  Triggers: whois, DNS, ASN, Cloudflare, Fastly, Vercel, WordPress, Next.js, Tilda,
+  Bitrix, Shopify, cache, cache-control, HTTP/2, HTTP/3, brotli, site engine, domain
+  age, and hosting provider.
+---
+
+# SEO Recon — Domain, Hosting, Stack, and Cache Reconnaissance
+
+External domain and infrastructure reconnaissance covers what an **sf-analyzer**
+crawl does not provide: the registrar and domain age, where the server is hosted and
+on which ASN, which CDN sits in front of the site and **whether its cache actually
+works**, which CMS/framework the site is built with, and how traffic is measured.
+
+These are no longer manual Bash steps, but three tools in the `seohead` toolkit
+(CLI + MCP + HTTP). Each returns ready-to-use JSON with a `findings` block containing
+plain-language conclusions. In MCP, they are `seo_domain_profile`, `seo_cdn_check`,
+and `seo_tech_detect`.
+
+## When to Use It
+- "what hosting provider does the site use," "where is the server," "which ASN / provider hosts it";
+- "does it use Cloudflare," "which CDN," "does caching work," "why is it slow";
+- "which CMS," "which site engine," "what is the site built with," "how is traffic measured," stack detection;
+- "domain whois," "domain age," "when was it registered," "who is the registrar," TLS/expiration;
+- a quick competitor profile before a crawl audit.
+
+## Workflow (All Three Tools by Default)
+
+**1. Domain profile.** Registration, DNS, hosting, ASN, location, and TLS in one call:
+```bash
+seohead domain-profile --domain example.com
+```
+The response contains: `registration` (registrar, `age_years`, `expires_in_days`, statuses),
+`dns` (A/AAAA/NS/MX/TXT, `dns_provider`, `mail_provider`, `spf`, `dmarc`),
+`hosting` (`ip`, `asn`, `as_name`, `network`, `country`, `reverse_dns`),
+`tls` (issuer, `expires`, `days_left`), and `flags` — risks summarized in one line.
+Registration data comes from RDAP; for ccTLDs without RDAP (`.by` and some `.ru`
+domains), the tool automatically falls back to the system `whois` command. If it is
+unavailable, the tool honestly marks `source: none` instead of inventing data.
+
+**2. CDN and cache.** Not whether caching is configured on paper, but whether it works:
+```bash
+seohead cdn-check --url https://example.com
+```
+The tool makes three requests: an initial request, a repeat request (to catch
+`MISS → HIT`), and a conditional request (to check for `304`). The response contains:
+`cdn`, `transport` (HTTP version — the `http_version_measurable` field honestly states
+when it cannot be measured without the `h2` package; HTTP/3 in Alt-Svc, brotli/gzip,
+and the TTFB of the first and second requests), and `cache` (parsed `cache_control`,
+`etag`/`last_modified`, `hit_first`/`hit_second`, `warmed_up`, and `revalidation`).
+
+**3. Technologies.** CMS, framework, server, analytics, pixels, widgets, and third-party CDNs:
+```bash
+seohead tech-detect --url https://example.com
+```
+The response contains: `technologies` (each with `category`, `evidence` — the marker
+that identified it — and `version` when exposed in `generator`/`x-powered-by`),
+`by_category`, `scripts_total`, and `third_party_hosts`. Categories: cms, ecommerce,
+framework, library, server, runtime, analytics, pixel, widget, consent, fonts,
+cdn-lib, protection.
+
+## Emergency Fallback (If the Toolkit Is Unavailable)
+Use this only when `seohead` is not installed and cannot be installed. Run manually:
+`whois "$DOM"` (registrar/dates/NS), `dig +short A/AAAA/NS/MX/TXT "$DOM"`,
+`whois "$IP"` (OrgName/netname/ASN), `curl -sIL "https://$DOM"` (CDN headers:
+`cf-ray`/`server`/`x-vercel-id`/`x-amz-cf-id`), `<meta name=generator>` and paths
+(`/wp-content/`, `/_next/`, `tildacdn.com`, `/bitrix/`) to identify the site engine,
+and `openssl s_client -connect "$DOM:443"` for the certificate. The logic is the
+same, but performed manually and without structured output.
+
+## What to Deliver to the User
+A concise profile in a single block, assembled from the three tools' `findings`:
+- **Domain:** registrar, age, time until expiration, DNS and mail providers, SPF/DMARC.
+- **Server:** IP, ASN and `as_name`, the actual provider behind the CDN, country, reverse DNS.
+- **CDN/cache:** which CDN, whether the repeat request hits the cache, HTTP/2–3, compression, TTFB.
+- **Stack:** CMS/framework + backend with version, analytics and pixels, number of third-party scripts.
+- **Risk flags:** young domain, expiring registration/TLS, hold status, missing SPF/DMARC,
+  offshore hosting, or a server location that does not match the target market.
+
+Next, handle crawling and on-page analysis through **sf-analyzer** (`audit.json`),
+security through **security-audit**, readable analysis through **sf-report**, and the
+backlog through **sf-tasks**. For a complete automated domain audit, use the
+**seo-deep-audit** orchestrator.

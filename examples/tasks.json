@@ -1,0 +1,301 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "project": "example.com",
+    "generated_at": "2026-06-21T17:39:00Z",
+    "health_score": 25
+  },
+  "pipeline": {
+    "include_severities": [
+      "critical",
+      "warning",
+      "notice"
+    ],
+    "group_by": "check",
+    "priority_map": {
+      "critical": "P1",
+      "warning": "P2",
+      "notice": "P3"
+    },
+    "effort_map": {
+      "critical": "high",
+      "warning": "medium",
+      "notice": "low"
+    },
+    "max_urls_per_task": 25,
+    "min_occurrences": 1,
+    "include_checks": [],
+    "exclude_checks": []
+  },
+  "summary": {
+    "tasks_total": 15,
+    "by_priority": {
+      "P1": 3,
+      "P2": 8,
+      "P3": 4
+    }
+  },
+  "tasks": [
+    {
+      "id": "TASK-92174247",
+      "check": "BROKEN_INTERNAL_LINK",
+      "priority": "P1",
+      "severity": "critical",
+      "effort": "high",
+      "title": "Internal link points to a 4xx URL — 1 page",
+      "fix_hint": "Replace the link with the current URL or add a 301 redirect. If the link appears in the footer or navigation, update the shared template.",
+      "source": "inlinks:Client Error (4xx) Inlinks",
+      "affected_count": 1,
+      "occurrences": 2,
+      "urls": [
+        "https://example.com/old-page"
+      ],
+      "urls_truncated": 0,
+      "broken_links": [
+        {
+          "target_url": "https://example.com/old-page",
+          "status_code": 404,
+          "source_url": "https://example.com/",
+          "anchor": "Legacy Page",
+          "link_position": "Content",
+          "link_path": "/html/body/main/article/p[3]/a"
+        },
+        {
+          "target_url": "https://example.com/old-page",
+          "status_code": 404,
+          "source_url": "https://example.com/page-a",
+          "anchor": "view pump specifications",
+          "link_position": "Footer",
+          "link_path": "/html/body/footer/nav/a[2]"
+        }
+      ]
+    },
+    {
+      "id": "TASK-54ad8503",
+      "check": "BROKEN_PAGE_4XX",
+      "priority": "P1",
+      "severity": "critical",
+      "effort": "high",
+      "title": "Page returns a 4xx status — 1 page",
+      "fix_hint": "Restore the page or redirect it to a relevant URL with a 301 response; remove links that still point to the broken URL.",
+      "source": "SF:Response Codes:4xx",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/old-page"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-c5d3ee4f",
+      "check": "TITLE_MISSING",
+      "priority": "P1",
+      "severity": "critical",
+      "effort": "high",
+      "title": "Title is missing — 1 page",
+      "fix_hint": "Add a unique, descriptive title.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/no-title"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-45424e37",
+      "check": "DESC_DUPLICATE",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Duplicate meta description — 2 pages",
+      "fix_hint": "Write a unique description for each page.",
+      "source": "SF-derived",
+      "affected_count": 2,
+      "occurrences": 2,
+      "urls": [
+        "https://example.com/",
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-54b0732a",
+      "check": "TITLE_DUPLICATE",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Duplicate title — 2 pages",
+      "fix_hint": "Write a unique title for each page.",
+      "source": "SF-derived",
+      "affected_count": 2,
+      "occurrences": 2,
+      "urls": [
+        "https://example.com/page-a",
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-64efab10",
+      "check": "CANONICAL_MISSING",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Indexable page has no canonical URL — 1 page",
+      "fix_hint": "Add a <link rel=\"canonical\"> element.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/no-title"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-aa336983",
+      "check": "DESC_MISSING",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Meta description is missing — 1 page",
+      "fix_hint": "Add a description of up to approximately 160 characters.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/no-title"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-d54d97a7",
+      "check": "H1_MULTIPLE",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Multiple H1 elements on one page — 1 page",
+      "fix_hint": "Keep one H1 and change the remaining top-level headings to H2 or H3.",
+      "source": "SF:H1:Multiple",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/page-a"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-9e27800e",
+      "check": "LARGE_HTML",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Oversized HTML in absolute or relative terms — 1 page",
+      "fix_hint": "Reduce HTML size by moving inline styles and scripts, removing base64 payloads, and simplifying redundant markup.",
+      "source": "SF-derived+heuristic",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/no-title"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-9bda9060",
+      "check": "SLOW_RESPONSE",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Slow server response — 1 page",
+      "fix_hint": "Improve TTFB by optimizing the server and cache configuration.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/no-title"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-5c3d9251",
+      "check": "THIN_CONTENT",
+      "priority": "P2",
+      "severity": "warning",
+      "effort": "medium",
+      "title": "Thin content (low word count) — 1 page",
+      "fix_hint": "Expand the content or exclude the page from indexing.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-f4d7444c",
+      "check": "TITLE_TOO_SHORT",
+      "priority": "P3",
+      "severity": "notice",
+      "effort": "low",
+      "title": "Title is below the length threshold — 2 pages",
+      "fix_hint": "Expand the title to an informative length.",
+      "source": "SF-derived",
+      "affected_count": 2,
+      "occurrences": 2,
+      "urls": [
+        "https://example.com/page-a",
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-6c37199b",
+      "check": "DESC_TOO_SHORT",
+      "priority": "P3",
+      "severity": "notice",
+      "effort": "low",
+      "title": "Meta description is below the length threshold — 1 page",
+      "fix_hint": "Expand the description.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/page-a"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-69aebead",
+      "check": "HTML_BLOAT",
+      "priority": "P3",
+      "severity": "notice",
+      "effort": "low",
+      "title": "Bloated HTML: high byte count with little text — 1 page",
+      "fix_hint": "Reduce bytes per word by moving styles and scripts out of the HTML and removing base64 payloads.",
+      "source": "heuristic",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    },
+    {
+      "id": "TASK-b37fa823",
+      "check": "LOW_TEXT_RATIO",
+      "priority": "P3",
+      "severity": "notice",
+      "effort": "low",
+      "title": "Low text-to-HTML ratio — 1 page",
+      "fix_hint": "Increase the proportion of meaningful text content.",
+      "source": "SF-derived",
+      "affected_count": 1,
+      "occurrences": 1,
+      "urls": [
+        "https://example.com/page-b"
+      ],
+      "urls_truncated": 0
+    }
+  ]
+}

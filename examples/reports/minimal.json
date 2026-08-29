@@ -1,0 +1,21 @@
+{
+  "schema": "seohead.site-audit/1",
+  "domain": "example.org",
+  "findings": [
+    {
+      "source": "render_check",
+      "severity": "critical",
+      "text": "The raw HTML contains an empty <div id=\"root\"> container, so crawlers receive an empty page"
+    }
+  ],
+  "pages": [],
+  "summary": {
+    "pages_checked": 0,
+    "findings_total": 1,
+    "findings_by_severity": {
+      "critical": 1,
+      "warning": 0,
+      "notice": 0
+    }
+  }
+}

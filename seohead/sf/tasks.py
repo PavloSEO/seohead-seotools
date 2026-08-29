@@ -1,0 +1,227 @@
+"""Turn an audit into a prioritized, actionable task backlog.
+
+A thin, configurable pipeline on top of ``audit.json``: it groups issues into
+work items, maps severity to priority/effort, caps the URL lists and emits both
+a machine-readable ``tasks.json`` and a readable ``tasks.md``. Drives the
+``sf-tasks`` skill and the ``sf-analyzer tasks`` CLI / ``sf_audit_tasks`` MCP tool.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from typing import Any
+
+from .config import DEFAULT_CONFIG
+from .core.registry import check_meta
+
+_PRIORITY_ORDER = {"P1": 0, "P2": 1, "P3": 2, "P4": 3}
+LINK_CHECKS = {"BROKEN_INTERNAL_LINK", "LINK_TO_5XX", "INTERNAL_LINK_TO_REDIRECT"}
+
+
+def _pipeline_cfg(config: dict[str, Any] | None) -> dict[str, Any]:
+    base = dict(DEFAULT_CONFIG["tasks_pipeline"])
+    if config and isinstance(config.get("tasks_pipeline"), dict):
+        base.update(config["tasks_pipeline"])
+    return base
+
+
+def _task_id(check: str, key: str) -> str:
+    digest = hashlib.sha1(f"{check}|{key}".encode(), usedforsecurity=False).hexdigest()[:8]
+    return "TASK-" + digest
+
+
+def build_tasks(audit: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a task backlog from an ``audit.json`` dict (``AuditResult.to_json()``)."""
+    cfg = _pipeline_cfg(config)
+    sev_filter = set(cfg["include_severities"])
+    include = set(cfg["include_checks"])
+    exclude = set(cfg["exclude_checks"])
+    prio = cfg["priority_map"]
+    effort = cfg["effort_map"]
+    cap = cfg["max_urls_per_task"]
+    min_occ = cfg["min_occurrences"]
+    group_by = cfg["group_by"]
+
+    issues = [
+        i
+        for i in audit.get("issues", [])
+        if i["severity"] in sev_filter
+        and (not include or i["check"] in include)
+        and i["check"] not in exclude
+    ]
+
+    tasks: list[dict[str, Any]] = (
+        _group_by_check(issues, prio, effort, cap, min_occ)
+        if group_by == "check"
+        else _per_issue(issues, prio, effort, cap)
+    )
+    tasks.sort(key=lambda t: (_PRIORITY_ORDER.get(t["priority"], 9), -t["affected_count"]))
+
+    by_priority: dict[str, int] = {}
+    for t in tasks:
+        by_priority[t["priority"]] = by_priority.get(t["priority"], 0) + 1
+
+    return {
+        "schema_version": "1.0",
+        "source": {
+            "project": audit.get("run", {}).get("project"),
+            "generated_at": audit.get("run", {}).get("generated_at"),
+            "health_score": audit.get("summary", {}).get("health_score"),
+        },
+        "pipeline": cfg,
+        "summary": {"tasks_total": len(tasks), "by_priority": by_priority},
+        "tasks": tasks,
+    }
+
+
+def _group_by_check(issues, prio, effort, cap, min_occ) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict]] = {}
+    for issue in issues:
+        groups.setdefault(issue["check"], []).append(issue)
+
+    tasks: list[dict[str, Any]] = []
+    for check, group in groups.items():
+        urls = [i["target_url"] for i in group if i.get("target_url")]
+        unique_urls = list(dict.fromkeys(urls))  # stable de-dupe
+        occurrences = sum(i.get("occurrences_count", 1) for i in group)
+        if len(group) < min_occ:
+            continue
+        meta = check_meta(check)
+        severity = group[0]["severity"]
+        page_count_label = "page" if len(group) == 1 else "pages"
+        task = {
+            "id": _task_id(check, "all"),
+            "check": check,
+            "priority": prio.get(severity, "P3"),
+            "severity": severity,
+            "effort": effort.get(severity, "medium"),
+            "title": (
+                f"{meta['message']} — {len(group)} {page_count_label}"
+                if unique_urls
+                else meta["message"]
+            ),
+            "fix_hint": meta.get("fix"),
+            "source": group[0].get("source"),
+            "affected_count": len(unique_urls) or len(group),
+            "occurrences": occurrences,
+            "urls": unique_urls[:cap],
+            "urls_truncated": max(0, len(unique_urls) - cap),
+        }
+        if check in LINK_CHECKS:
+            task["broken_links"] = _link_evidence(group, cap)
+        tasks.append(task)
+    return tasks
+
+
+def _per_issue(issues, prio, effort, cap) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for issue in issues:
+        severity = issue["severity"]
+        meta = check_meta(issue["check"])
+        task = {
+            "id": "TASK-"
+            + (
+                issue.get("id", "").replace("ISSUE-", "")
+                or _task_id(issue["check"], str(issue.get("target_url")))
+            ),
+            "check": issue["check"],
+            "priority": prio.get(severity, "P3"),
+            "severity": severity,
+            "effort": effort.get(severity, "medium"),
+            "title": f"{meta['message']}: {issue.get('target_url') or ''}".strip(),
+            "fix_hint": issue.get("fix_hint") or meta.get("fix"),
+            "source": issue.get("source"),
+            "affected_count": 1,
+            "occurrences": issue.get("occurrences_count", 1),
+            "urls": [issue["target_url"]] if issue.get("target_url") else [],
+            "urls_truncated": 0,
+        }
+        if issue["check"] in LINK_CHECKS:
+            task["broken_links"] = _link_evidence([issue], cap)
+        tasks.append(task)
+    return tasks
+
+
+def _link_evidence(group: list[dict], cap: int) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for issue in group:
+        for loc in issue.get("locations", [])[:cap]:
+            out.append(
+                {
+                    "target_url": issue.get("target_url"),
+                    "status_code": issue.get("status_code"),
+                    "source_url": loc.get("source_url"),
+                    "anchor": loc.get("anchor"),
+                    "link_position": loc.get("link_position"),
+                    "link_path": loc.get("link_path"),
+                }
+            )
+            if len(out) >= cap:
+                return out
+    return out
+
+
+# --------------------------------------------------------------------------
+# Markdown rendering
+# --------------------------------------------------------------------------
+def _esc(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def render_tasks_md(backlog: dict[str, Any]) -> str:
+    src = backlog["source"]
+    lines = [f"# Audit Tasks — {src.get('project', 'site')}", ""]
+    lines.append(
+        f"- Source: audit generated at {src.get('generated_at')} (health {src.get('health_score')})"
+    )
+    lines.append(
+        f"- Tasks: **{backlog['summary']['tasks_total']}** "
+        f"({', '.join(f'{k}: {v}' for k, v in sorted(backlog['summary']['by_priority'].items()))})"
+    )
+    lines.append("")
+
+    by_prio: dict[str, list[dict]] = {}
+    for t in backlog["tasks"]:
+        by_prio.setdefault(t["priority"], []).append(t)
+
+    for prio in sorted(by_prio, key=lambda p: _PRIORITY_ORDER.get(p, 9)):
+        lines.append(f"## {prio} ({len(by_prio[prio])})")
+        lines.append("")
+        for t in by_prio[prio]:
+            lines.append(
+                f"- [ ] **{_esc(t['title'])}** "
+                f"`{t['check']}` · {t['severity']} · effort: {t['effort']} · `{t['id']}`"
+            )
+            if t.get("fix_hint"):
+                lines.append(f"    - _How to fix:_ {_esc(t['fix_hint'])}")
+            if t.get("broken_links"):
+                lines.append("    - Broken links (destination ← source · position · XPath):")
+                for bl in t["broken_links"][:15]:
+                    lines.append(
+                        f"        - {_esc(bl['target_url'])} ({bl.get('status_code')}) "
+                        f"← {_esc(bl['source_url'])} · {_esc(bl.get('link_position'))} "
+                        f"· `{_esc(bl.get('link_path'))}`"
+                    )
+            elif t["urls"]:
+                for url in t["urls"][:15]:
+                    lines.append(f"        - {_esc(url)}")
+                shown = min(15, len(t["urls"]))
+                hidden = t["urls_truncated"] + max(0, len(t["urls"]) - shown)
+                if hidden:
+                    lines.append(f"        - … {hidden} more")
+            lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def write_tasks(backlog: dict[str, Any], json_path: str, md_path: str) -> tuple[str, str]:
+    import json
+
+    os.makedirs(os.path.dirname(os.path.abspath(json_path)) or ".", exist_ok=True)
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(backlog, fh, ensure_ascii=False, indent=2)
+    with open(md_path, "w", encoding="utf-8") as fh:
+        fh.write(render_tasks_md(backlog))
+    return json_path, md_path
