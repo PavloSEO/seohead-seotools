@@ -55,7 +55,7 @@ Grouped by area (file names under `tests/`):
   tech signatures, security scoring), `test_tech_db.py` +
   `test_tech_categories.py` + `test_tech_coverage.py` (fingerprint
   database), `test_mirrors.py`, `test_ai_bots.py`, `test_regions.py`.
-- **Whole-site audit & reports**: `test_site_audit.py` (the
+- **Bounded site audit & reports**: `test_site_audit.py` (the
   `seohead.site-audit/1` document assembly, severity rules, `tools_failed`
   semantics).
 - **External data sources**: `test_data_sources.py` — credentials

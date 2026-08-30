@@ -8,7 +8,7 @@ takes `https://example.com` goes to the network; audit mode B over
 ## The whole site in one command
 
 ```bash
-# whole-site live audit + a ready Excel file
+# bounded sitemap-based live evidence pass + a ready Excel file (not a link-graph crawl)
 seohead site-audit --url https://example.com --limit 50 --report xlsx --out audit.xlsx
 
 # re-render an existing audit document into other formats

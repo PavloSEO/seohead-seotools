@@ -28,8 +28,8 @@ seohead/
                       ai_bots, regions — plus net.py, the shared network
                       layer (DoH, RDAP, domain/URL normalization)
   audit/
-    site.py           site_audit: runs the whole live toolkit over one site
-                      into a single seohead.site-audit/1 document
+    site.py           site_audit: bounded sitemap-based pass (10 site-level
+                      + 3 page-level tools) into one seohead.site-audit/1 document
   reports/            report_build: that document -> xlsx / docx / csv /
                       md / json (generators compute nothing)
   data_sources/       EXTERNAL DEMAND DATA (7 modules): credentials,
@@ -58,6 +58,8 @@ returns the same dict to everyone, CLI and MCP cannot diverge in meaning.
 Cross-imports **inside** the core are allowed and used: `recon/regions.py`
 takes simhash from `tools/duplicate.py`; `tools/schema.py` takes the network
 client from `recon/net.py`.
+
+![The SEOHEAD CLI and local MCP server call the same tested Python core](../.github/assets/cli-mcp.png)
 
 ## Data flow
 

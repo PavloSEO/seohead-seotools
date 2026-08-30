@@ -52,7 +52,8 @@ Build the roadmap according to site type and scale. Use the baseline set (for ev
 type-specific items.
 
 **Baseline set (any site):**
-- SF crawl (mode A or B), all 96 checks -> `audit.json`/`tasks`.
+- SF crawl evidence (mode A or B), maximum applicable coverage from the 96-check registry ->
+  `audit.json`/`tasks`; inspect `checks_skipped` instead of assuming every check ran.
 - `security-audit`, `robots-audit`, `silo-audit`, `heading-outline` — on key templates.
 - `schema-graph` (`schema-build` + `schema-check`) — on one page of each type.
 

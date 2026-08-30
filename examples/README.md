@@ -21,5 +21,5 @@ What this example demonstrates:
 - `THIN_CONTENT`, `LOW_TEXT_RATIO`, `CANONICAL_MISSING`, `SLOW_RESPONSE`, and
   other checks.
 
-See `skill/sf-analyzer/reference/json_schema.md` for the complete `audit.json`
-contract.
+See [the JSON schema reference](../.claude/skills/sf-analyzer/reference/json_schema.md) for the
+complete `audit.json` contract.

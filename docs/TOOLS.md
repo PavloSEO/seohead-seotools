@@ -76,11 +76,11 @@ the report says `http_version_measurable: false`.
 
 ---
 
-## Whole-site audit and reports (`seohead/audit/`, `seohead/reports/`)
+## Bounded site audit and reports (`seohead/audit/`, `seohead/reports/`)
 
 | Command | What it does |
 |---|---|
-| `site-audit` | Runs the whole live toolkit over one site: site-level tools once, page-level tools per URL from the sitemap. Returns a single `seohead.site-audit/1` document. A failed tool lands in `summary.tools_failed` instead of disappearing |
+| `site-audit` | Runs a bounded live pass: 10 site-level tools once and 3 page-level tools per selected URL (from the sitemap by default; 25 pages by default). Returns one `seohead.site-audit/1` document. It is not a full crawl or an exhaustive run of the catalog; site-level failures remain in `summary.tools_failed`, while page-level failures remain in that page's issues |
 | `report-build` | Document -> file: `xlsx`, `docx`, `csv`, `md`, `json` |
 
 ```bash

@@ -3,8 +3,9 @@ name: seo-deep-audit
 description: >-
   SINGLE ENTRY POINT and orchestrator for a complete domain SEO audit. Triggers when a site/domain
   is provided with a request to inspect/analyze/check it — WITHOUT a specified scope. By default,
-  it runs the MAXIMUM: reconnaissance (domain/hosting/CMS), a complete Screaming Frog crawl (all
-  96 checks), agent-level analysis (robots, JS rendering, silo structure, H1–H6), and a consolidated
+  it runs the MAXIMUM: reconnaissance (domain/hosting/CMS), crawl evidence from a separately
+  installed licensed Screaming Frog CLI or supplied exports analyzed against the 96-check
+  registry, agent-level analysis (robots, JS rendering, silo structure, H1–H6), and a consolidated
   report + task backlog. Use a narrow analysis only when the scope is stated explicitly ("only
   robots," "quick/lite," "no rendering"). Use for: "analyze the site," "perform an SEO audit of
   the domain," "inspect the entire site," "what is wrong with the site," "audit this domain,"
@@ -44,12 +45,15 @@ Remember the stack: if `tech-detect` found an SPA/Next.js/Nuxt, mark JS renderin
 (Phase 2). Some findings from `domain-profile.flags` and `cdn-check.findings` go directly into
 the report.
 
-**Phase 1 — Crawl (core, all 96 checks).** Check the environment first: `seohead sf doctor`.
+**Phase 1 — Crawl evidence (96-check registry).** SEOHEAD is the analyzer and adapter here, not
+the crawler. Check the environment first with `seohead sf doctor`; live mode requires a separately
+installed, actively licensed Screaming Frog CLI.
 ```bash
 seohead sf run --crawl https://<domain> --out report --tasks
 ```
-The **full** profile is the default (maximum coverage), and the sitemap is automatically obtained
-from robots. If the output contains many `skipped` results because SF modules are disabled
+The **full** profile is the default (maximum available coverage), and the sitemap is automatically
+obtained from robots. The registry contains 96 checks, but only checks supported by the available
+exports and enabled SF modules can run. If the output contains many `skipped` results
 (MIXED_CONTENT/STRUCTURED_DATA/SPELLING/DOM_*), enable them once through the `sf-config` skill
 (create `audit.seospiderconfig`); the tool will pick it up automatically. If SF/a license is not
 available, request exports and use mode B (`--exports-dir`); see `sf-analyzer`/`sf-config`.

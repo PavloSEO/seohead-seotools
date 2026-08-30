@@ -1,8 +1,8 @@
 # seohead-seotools documentation
 
-Headless SEO toolkit: Screaming Frog crawl audits, live URL tools, domain and
-infrastructure recon, and external demand-data sources. One package, one core,
-two faces — CLI and MCP.
+Headless evidence and audit-automation toolkit: it analyzes Screaming Frog exports, adds bounded
+live URL and infrastructure checks plus explicit external data sources, and exposes one shared
+core through two interfaces — CLI and local MCP. It is not a general-purpose crawler.
 
 ## Where to start
 
@@ -16,7 +16,7 @@ two faces — CLI and MCP.
 | Running or writing tests | [TESTING.md](TESTING.md) — how to run, what they cover |
 | Trying to avoid known traps | [GOTCHAS.md](GOTCHAS.md) — money, quotas, footguns |
 | Arguing with a past decision | [DECISIONS.md](DECISIONS.md) — why it was done that way |
-| Choosing a tool for a task | [COMPARISON.md](COMPARISON.md) — where this set wins and loses |
+| Understanding the product and its role beside Screaming Frog | [COMPARISON.md](COMPARISON.md) — canonical positioning, workflow, and boundaries |
 
 ## What lives here
 
@@ -24,7 +24,7 @@ two faces — CLI and MCP.
 
 - **[TOOLS.md](TOOLS.md)** — what every tool does, which of them touch the
   network, which have side effects, where the boundaries are. Grouped by layer:
-  recon, live tools, whole-site audit, external data sources, SF crawl audit.
+  recon, live tools, bounded site audit, external data sources, SF crawl audit.
 - **[SETUP.md](SETUP.md)** — install from scratch: Python version, dependency
   groups, venv, optional system tools (SF CLI, `whois`), environment variable
   names (names only, never values), first run checks.

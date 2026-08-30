@@ -1,8 +1,26 @@
 # AGENTS.md — public repository contract
 
-SEOHEAD Tools is a headless, local-first Python SEO toolkit. It has exactly two user interfaces:
-the `seohead` CLI and one local stdio MCP server. Do not add a GUI, desktop shell, hosted API, or
-remote MCP endpoint to this repository.
+SEOHEAD Tools is a headless, local-first evidence and audit-automation layer for SEO specialists
+and tool-calling agents. It has exactly two user interfaces: the `seohead` CLI and one local stdio
+MCP server. Do not add a GUI, desktop shell, hosted API, or remote MCP endpoint to this repository.
+
+## Product model
+
+Do not present SEOHEAD as a replacement for Screaming Frog or as a collection of unrelated
+scripts. The crawler and this toolkit have different jobs:
+
+- Screaming Frog produces the CSV/XLSX exports consumed by SEOHEAD's 96-check analyzer. Do not
+  imply that another crawler's exports are drop-in compatible.
+- SEOHEAD analyzes those SF exports, adds bounded live and infrastructure evidence, preserves
+  skipped/failed measurements, and produces structured audit, task, and report artifacts.
+- The CLI and MCP expose the same tested core so either a specialist or an AI agent can run the
+  workflow without improvising its own crawler.
+- Skills guide orchestration and interpretation; they are not evidence sources, and final
+  judgement remains with the specialist.
+
+Live SF mode launches a separately installed, actively licensed Screaming Frog CLI. Export mode
+works from existing CSV/XLSX files. The `site-audit` command is a bounded sitemap-based pass, not
+an exhaustive run of the tool catalog and not a general-purpose crawl.
 
 ## Start here
 
@@ -22,7 +40,7 @@ seohead/
   tools/          live page, content, image, log, and structured-data tools
   recon/          domain and infrastructure reconnaissance
   sf/             Screaming Frog export runner and 96-check analyzer
-  audit/          whole-site orchestration
+  audit/          bounded sitemap-based evidence orchestration
   reports/        XLSX, DOCX, CSV, Markdown, and JSON formatting
   data_sources/   optional demand, SERP, and traffic providers
   servers/        shared handlers and MCP registration

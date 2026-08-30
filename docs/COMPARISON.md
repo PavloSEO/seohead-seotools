@@ -1,8 +1,29 @@
-# Scope and trade-offs
+# How SEOHEAD fits into a technical SEO stack
 
-SEOHEAD Tools is a local evidence and automation layer. It complements crawlers and commercial
-data providers; it does not pretend to replace infrastructure that requires a web-scale index,
-field telemetry, or a hosted product.
+SEOHEAD Tools is the local evidence-processing and audit-automation layer between data collection
+and specialist judgement. It complements crawlers and commercial data providers; it does not
+pretend to replace infrastructure that requires a web-scale index, field telemetry, or a hosted
+product.
+
+## Canonical product description
+
+> Screaming Frog collects the crawl. SEOHEAD analyzes its exports, adds the bounded live,
+> infrastructure, Schema.org, log, and optional provider evidence the audit needs, and gives a
+> specialist or tool-calling agent one tested CLI/MCP surface for producing traceable findings,
+> prioritized tasks, and reports.
+
+This is a division of labour, not a feature-by-feature contest with Screaming Frog:
+
+| Stage | Tool or owner | Result |
+|---|---|---|
+| Collect | Screaming Frog exports, logs, supplied files, or explicit providers | Raw evidence |
+| Analyze and organize | SEOHEAD core through CLI or local MCP | Structured results, explicit gaps, audit documents, and task artifacts |
+| Interpret and approve | SEO specialist, optionally supported by an agent | Business-aware priorities and a reviewed deliverable |
+
+The short workflow is: **collect -> analyze -> enrich deliberately -> review -> deliver**.
+
+The built-in 96-check importer targets Screaming Frog CSV/XLSX exports. Another crawler may still
+belong in a team's stack, but its exports are not claimed to be a drop-in input for the SF analyzer.
 
 ## Where it is strong
 
@@ -14,9 +35,9 @@ interface.
 
 ### Deep analysis of existing crawl data
 
-Export mode applies 96 checks to Screaming Frog CSV/XLSX data without crawling again. It is useful
-when the crawl was taken by another specialist, came from CI, or must remain offline. Missing
-exports become explicit skipped checks rather than silent zeroes.
+Export mode evaluates Screaming Frog CSV/XLSX data against a 96-check registry without crawling
+again. It is useful when the crawl was taken by another specialist, came from CI, or must remain
+offline. Missing exports become explicit skipped checks rather than silent zeroes.
 
 ### Evidence beyond a crawler
 
@@ -26,8 +47,10 @@ Schema.org graphs, and optional demand/traffic data.
 
 ### Structured deliverables
 
-`site-audit` assembles a single document and records individual tool failures. `report-build`
-formats that evidence as XLSX, DOCX, CSV, Markdown, or JSON without recalculating findings.
+`site-audit` runs a bounded sitemap-based pass: ten site-level tools and three page-level tools,
+with 25 selected pages by default. It assembles one document and records individual tool failures;
+it is not an exhaustive run of the catalog or a link-graph crawl. `report-build` formats existing
+evidence as XLSX, DOCX, CSV, Markdown, or JSON without recalculating findings.
 
 ## Where another tool is the right choice
 
@@ -45,7 +68,7 @@ formats that evidence as XLSX, DOCX, CSV, Markdown, or JSON without recalculatin
 
 Export analysis works with files you already have. Live crawl mode launches a separately installed
 Screaming Frog CLI and requires an active paid SEO Spider licence. The toolkit does not bundle,
-activate, or bypass Screaming Frog.
+activate, bypass, or replace Screaming Frog.
 
 ## Interpretation boundary
 

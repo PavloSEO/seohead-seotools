@@ -4,9 +4,9 @@
 
 # SEOHEAD Tools
 
-**A local-first SEO workstation for people and AI agents.**
+**The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-47 callable tools · 96 Screaming Frog crawl checks · 27 workflow skills · CLI · local MCP · Docker
+47 callable tools · 96 checks over Screaming Frog crawl exports · 27 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Product page](https://seohead.tech/seotools) · [Portfolio](https://seohead.tech/about/results) · [Documentation](docs/README.md)
 
@@ -16,17 +16,52 @@
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
+[Quick start](#quick-start) · [Inspect the real example](examples/README.md) · [Scope and trade-offs](docs/COMPARISON.md)
+
 </div>
 
-SEOHEAD Tools brings technical audits, live URL checks, infrastructure reconnaissance,
-structured-data work, keyword and SERP sources, traffic data, report generation, and agent
-playbooks into one Python package. It is the SEO specialist's Swiss Army knife: one command and
-one local MCP server instead of a folder of unrelated scripts.
+**SEOHEAD is not a crawler replacement.** Screaming Frog produces the CSV/XLSX exports consumed
+by SEOHEAD's 96-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
+unavailable measurements visible, and gives a specialist or tool-calling agent one tested CLI/MCP
+surface for assembling an audit, prioritized backlog, and reports.
+
+The package brings live URL checks, infrastructure reconnaissance, structured-data work, log and
+content analysis, optional keyword/SERP/traffic sources, report generation, and agent playbooks
+into that workflow. Think of it as the automation and evidence layer around the crawler, not an
+alternative to the crawler or to specialist judgement.
 
 The toolkit does not write strategy or client copy by itself. It collects evidence, applies
 deterministic checks, and returns structured data. A capable tool-calling agent can then combine
 those results into a site review, competitor brief, migration plan, prioritized backlog, or
 commercial-proposal draft while a specialist keeps control of interpretation.
+
+### Different jobs, one workflow
+
+| Stage | Primary owner | Role |
+|---|---|---|
+| Crawl collection | Screaming Frog | Discover site-scale URLs and produce compatible CSV/XLSX exports |
+| Evidence processing | SEOHEAD Tools | Analyze those exports against a 96-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
+| Interpretation and approval | SEO specialist, optionally supported by an AI agent | Connect findings to business context, implementation risk, and final priorities |
+
+See [how SEOHEAD fits with crawlers and data providers](docs/COMPARISON.md) for the exact scope
+boundary.
+
+## Reproducible output from a committed synthetic fixture
+
+![Screaming Frog exports pass through the SEOHEAD analyzer and become an audit and prioritized task backlog](.github/assets/audit-workflow.png)
+
+The values above come from the committed synthetic fixture: **6 URLs, 18 issues, and 15 tasks**.
+Open the generated [`audit.md`](examples/audit.md) and [`tasks.md`](examples/tasks.md), or reproduce
+them locally with `seohead sf run --exports-dir examples/exports --out examples --tasks`.
+No client data is included.
+
+## Choose your path
+
+| Starting point | Start with | What it does |
+|---|---|---|
+| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 96-check registry and builds an audit plus backlog |
+| A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
+| A tool-calling AI agent | `seohead mcp` | Exposes 42 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -49,7 +84,7 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 | Live page and URL evidence | 11 | parsing, robots.txt, headers, links, hreflang, redirects, sitemaps, image download and optimization, keyword clustering |
 | Domain and infrastructure reconnaissance | 8 | domain/DNS/TLS, CDN cache behavior, technology detection, security headers, mirrors, regional structure, donor backlink verification, AI crawler access |
 | Structured data, content, rendering, and logs | 10 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
-| Audit orchestration and reporting | 2 | whole-site orchestration and XLSX/DOCX/CSV/Markdown/JSON output |
+| Audit orchestration and reporting | 2 | bounded sitemap-based site evidence and XLSX/DOCX/CSV/Markdown/JSON output |
 | Demand, SERP, and traffic sources | 11 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
 
 Run `seohead --help` for the authoritative command list. Every core command goes through the
@@ -60,10 +95,10 @@ same handler used by its `seo_*` MCP counterpart; a test gate fails if the inter
 Five additional `sf_*` MCP tools turn a Screaming Frog crawl into machine-readable evidence,
 compact summaries, filtered findings, an export inventory, and a prioritized task backlog.
 
-The analyzer applies **96 checks** across metadata, indexability, canonicals, redirects, internal
-links, sitemaps, hreflang, structured data, page depth, HTML weight, performance signals, and
-other crawl-derived evidence. Missing input is reported as skipped with a reason; it is never
-silently converted into “zero issues.”
+The analyzer has a registry of **96 checks** across metadata, indexability, canonicals, redirects,
+internal links, sitemaps, hreflang, structured data, page depth, HTML weight, performance signals,
+and other crawl-derived evidence. It applies the checks supported by the available exports;
+missing input is reported as skipped with a reason, never silently converted into “zero issues.”
 
 Two modes are intentionally supported:
 
@@ -78,14 +113,6 @@ The repository ships 20 technical-audit playbooks in `.claude/skills/` and seven
 content/research playbooks in `seohead/skills/`. They teach an agent when to call tools, how to
 separate evidence from inference, and how to assemble outputs without pretending that an
 unmeasured signal is clean.
-
-### A reproducible self-test
-
-The social preview at the top of this README was processed by the public `images-optimize`
-command. The generated 1774×887 source was resized to 1280×640 and reduced from **1,056,172 bytes
-to 33,173 bytes** (**96.9% smaller**) while the source remained untouched. This is a concrete
-product result, not a mock dashboard; the command and safety behavior are covered by the test
-suite.
 
 ## Quick start
 
@@ -114,7 +141,7 @@ Optional components stay optional:
 ## One-command examples
 
 ```bash
-# Full live evidence pass over a site, then write an Excel deliverable
+# Bounded sitemap-based live evidence pass (not a link-graph crawl), then write an Excel file
 seohead site-audit \
   --url https://example.com \
   --limit 25 \
@@ -147,6 +174,15 @@ seohead images-optimize \
 All commands also accept a JSON object through `--input`; without explicit flags, that object may
 come from stdin. See [usage examples](docs/USAGE.md) and the [tool reference](docs/TOOLS.md).
 
+## One audit document, five deliverables
+
+![The same structured SEOHEAD audit document rendered as XLSX, DOCX, CSV, Markdown, and JSON](.github/assets/report-formats.png)
+
+`report-build` formats existing evidence without adding findings or making network requests.
+XLSX is a four-sheet working file; DOCX is a client deliverable; CSV, Markdown, and JSON preserve
+the same contract for import, review, and data exchange. See the
+[report fixtures and field contract](examples/reports/README.md).
+
 ## Local MCP server
 
 Install the `mcp` extra, then register one stdio process in any compatible client:
@@ -162,9 +198,10 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **42 `seo_*` tools plus five `sf_*` tools**. It opens no port, hosts no
-dashboard, stores no account, sends no telemetry, and shares the same tested handler layer as the
-CLI. File-producing tools return paths instead of dumping large reports into an agent context.
+The server exposes **42 `seo_*` tools plus five `sf_*` tools**. The 42 core tools share the tested
+handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
+opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
+return paths instead of dumping large reports into an agent context.
 
 ## Docker and VPS use
 
@@ -224,6 +261,8 @@ Read [provider gotchas](docs/GOTCHAS.md) before enabling production credentials.
   backlink index.
 - International tools validate hreflang and regional structure; the package does not claim a
   machine-translation engine. Translation belongs to a reviewed model or localization workflow.
+- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 42 core
+  tools and not a replacement for a production crawler.
 - SEOHEAD does not include its own general-purpose crawler. Whole-site crawling is delegated to
   Screaming Frog; export analysis remains available without live crawl mode.
 
@@ -243,6 +282,10 @@ python -m build
 
 The suite contains **458 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
+
+README visuals are generated from committed synthetic examples with
+[`scripts/render_readme_visuals.py`](scripts/render_readme_visuals.py); they are evidence views,
+not screenshots of a fictional dashboard.
 
 ## Provenance and licence
 
