@@ -2,6 +2,13 @@
 
 All notable public changes are documented here.
 
+## Unreleased
+
+- Add community, citation, and no-key agent onboarding files.
+- Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
+- Document support for the current `3.x` security line.
+- Require TLS 1.2 or newer and pin direct certificate probes to prevalidated public addresses.
+
 ## 3.0.0 — first public snapshot
 
 - One Python package with 42 shared CLI/MCP tools.

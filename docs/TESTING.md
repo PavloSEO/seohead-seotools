@@ -10,7 +10,8 @@
 ```
 
 If the venv does not exist, see [SETUP.md](SETUP.md) — nothing is installed
-by the tests themselves. The first public snapshot contains **458 offline tests**; runtime varies
+by the tests themselves. The first public snapshot contained **458 offline tests**; the current
+suite contains **460 offline tests**. Runtime varies
 with Python version and installed extras. CI (`.github/workflows/ci.yml`) runs the same suite on
 Python 3.10, 3.12, and 3.13 plus the gates described below.
 

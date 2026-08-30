@@ -19,6 +19,7 @@ PUBLIC_MARKDOWN = [
     ROOT / "README.md",
     ROOT / "AGENTS.md",
     ROOT / "CHANGELOG.md",
+    ROOT / "CODE_OF_CONDUCT.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "PROVENANCE.md",
     ROOT / "SECURITY.md",
@@ -99,12 +100,13 @@ def test_documented_product_counts_match_the_registries():
     assert len(COMMANDS) == len(HANDLERS) == 42
     assert len(_sf_tool_names()) == 5
     assert len(CHECKS) == 96
-    assert len(TECHNICAL_SKILLS) == 20
+    assert len(TECHNICAL_SKILLS) == 21
     assert len(PACKAGED_SKILLS) == 7
     for text in (readme, provenance):
         assert "42" in text and "96" in text and "five" in text.lower()
     assert "47 callable tools" in readme
-    assert "27 workflow skills" in readme
+    assert "28 workflow skills" in readme
+    assert (ROOT / "CITATION.cff").is_file()
 
 
 def test_public_markdown_is_english():

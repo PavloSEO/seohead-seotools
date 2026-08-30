@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use SEOHEAD Tools in academic work, please cite it as below."
+title: "SEOHEAD Tools"
+type: software
+authors:
+  - family-names: Barushka
+    given-names: Pavel
+version: 3.0.0
+date-released: 2026-08-30
+license: MIT
+repository-code: https://github.com/PavloSEO/seohead-seotools
+url: https://seohead.tech/seotools

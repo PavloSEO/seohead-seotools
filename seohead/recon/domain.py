@@ -19,7 +19,7 @@ import socket
 import ssl
 from typing import Any
 
-from seohead.recon.net import doh, normalize_domain, rdap, whois_text
+from seohead.recon.net import doh, normalize_domain, rdap, resolve_socket_addresses, whois_text
 
 # Domain age is a weak trust signal; a 30-day expiry window warrants renewal attention.
 YOUNG_DOMAIN_DAYS = 180
@@ -170,16 +170,36 @@ def _ip_owner(ip: str) -> dict[str, Any]:
 def _tls(domain: str, timeout: float = 8.0) -> dict[str, Any]:
     """Inspect certificate issuer, covered names, negotiated protocol, and expiry."""
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     try:
-        with socket.create_connection((domain, 443), timeout=timeout) as raw:  # noqa: SIM117
-            with context.wrap_socket(raw, server_hostname=domain) as tls:
-                cert = tls.getpeercert()
-                protocol = tls.version()
-    except ssl.SSLCertVerificationError as exc:
-        detail = getattr(exc, "verify_message", None) or str(exc)
-        return {"ok": False, "valid": False, "error": f"certificate verification failed: {detail}"}
-    except (OSError, ssl.SSLError) as exc:
+        addresses = resolve_socket_addresses(domain, 443)
+    except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+
+    cert = None
+    protocol = None
+    last_error: OSError | ssl.SSLError | None = None
+    for family, socktype, proto, sockaddr in addresses:
+        try:
+            with socket.socket(family, socktype, proto) as raw:
+                raw.settimeout(timeout)
+                raw.connect(sockaddr)
+                with context.wrap_socket(raw, server_hostname=domain) as tls:
+                    cert = tls.getpeercert()
+                    protocol = tls.version()
+            break
+        except ssl.SSLCertVerificationError as exc:
+            detail = getattr(exc, "verify_message", None) or str(exc)
+            return {
+                "ok": False,
+                "valid": False,
+                "error": f"certificate verification failed: {detail}",
+            }
+        except (OSError, ssl.SSLError) as exc:
+            last_error = exc
+    else:
+        return {"ok": False, "error": str(last_error or "TLS connection failed")}
+
     if not cert:
         return {"ok": False, "error": "the server did not provide a certificate"}
 

@@ -1,6 +1,6 @@
 # Skill map
 
-20 skills in `.claude/skills/`. A skill is not tool documentation — it is a
+21 skills in `.claude/skills/`. A skill is not tool documentation — it is a
 **method**: when to apply, in what order, how to read the result, and where
 the boundary is beyond which the tool starts to lie.
 
@@ -59,6 +59,12 @@ Then by the layer of the task.
 | Skill | When | Tools |
 |---|---|---|
 | **site-report** | The whole site dissected and a ready file — Excel, Word, CSV | `site-audit`, `report-build` |
+
+## Analytics consoles and exports
+
+| Skill | When | Tools |
+|---|---|---|
+| **analytics-console-review** | A user-authorized signed-in console or aggregate export is available, but no provider API is configured | Host browser or user export; optional `sources-doctor`, `metrika-report`, and page/SF checks |
 
 ## Tools without a skill of their own
 

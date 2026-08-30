@@ -6,17 +6,17 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-47 callable tools · 96 checks over Screaming Frog crawl exports · 27 workflow skills · CLI · local MCP · Docker
+47 callable tools · 96 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
 [![CI](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
-![Tests](https://img.shields.io/badge/tests-458%20offline-BDDDF5)
+![Tests](https://img.shields.io/badge/tests-460%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
-[Quick start](#quick-start) · [Inspect the real example](examples/README.md) · [Scope and trade-offs](docs/COMPARISON.md)
+[Quick start](#quick-start) · [Agent recipes](docs/RECIPES.md) · [Inspect the real example](examples/README.md) · [Scope and trade-offs](docs/COMPARISON.md)
 
 </div>
 
@@ -107,12 +107,15 @@ Two modes are intentionally supported:
 - **Live crawl mode** launches the local Screaming Frog CLI and therefore requires an installed,
   active paid Screaming Frog SEO Spider licence. SEOHEAD does not bundle or replace that licence.
 
-### 27 agent workflow skills
+### 28 agent workflow skills
 
-The repository ships 20 technical-audit playbooks in `.claude/skills/` and seven broader SEO
+The repository ships 21 technical-audit playbooks in `.claude/skills/` and seven broader SEO
 content/research playbooks in `seohead/skills/`. They teach an agent when to call tools, how to
 separate evidence from inference, and how to assemble outputs without pretending that an
 unmeasured signal is clean.
+
+`analytics-console-review` describes a permissioned, read-only browser/export fallback when an
+official provider API is unavailable. The repository does not bundle a browser or provider login.
 
 ## Quick start
 
@@ -280,7 +283,7 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 python -m build
 ```
 
-The suite contains **458 offline tests**. CI also checks interface registration, layer boundaries,
+The suite contains **460 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
 
 README visuals are generated from committed synthetic examples with
@@ -294,4 +297,5 @@ The bundled Schema.org vocabulary retains its original CC BY-SA 3.0 terms. Compa
 projects that informed individual algorithms are credited in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); no GPL or unlicensed source code is included.
 See [PROVENANCE.md](PROVENANCE.md) for the clean-snapshot policy and
-[TRADEMARKS.md](TRADEMARKS.md) for the SEOHEAD name and terminal mark.
+[TRADEMARKS.md](TRADEMARKS.md) for the SEOHEAD name and terminal mark. Academic users can use the
+repository's [citation metadata](CITATION.cff).

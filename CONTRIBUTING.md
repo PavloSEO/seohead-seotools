@@ -3,6 +3,8 @@
 Contributions are welcome when they keep the toolkit headless, evidence-first, and safe to call
 from both a terminal and an agent.
 
+All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Before opening a pull request
 
 1. Open an issue for substantial product-scope changes.

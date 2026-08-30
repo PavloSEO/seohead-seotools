@@ -59,6 +59,32 @@ def _is_public_address(value: str) -> bool:
         return False
 
 
+def resolve_socket_addresses(host: str, port: int) -> list[tuple[int, int, int, Any]]:
+    """Resolve once and return vetted socket addresses for a direct connection."""
+    try:
+        records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f"hostname could not be resolved safely: {host}") from exc
+    if not records:
+        raise ValueError(f"hostname could not be resolved safely: {host}")
+    if not private_networks_enabled() and any(
+        not _is_public_address(record[4][0]) for record in records
+    ):
+        raise ValueError(
+            f"private or non-public network target blocked; set {PRIVATE_NETWORK_ENV}=1 "
+            "only for an authorized target"
+        )
+
+    unique: list[tuple[int, int, int, Any]] = []
+    seen: set[tuple[int, int, int, Any]] = set()
+    for family, socktype, proto, _canonname, sockaddr in records:
+        item = (family, socktype, proto, sockaddr)
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
 def validate_url(url: str) -> str:
     """Validate an HTTP(S) URL and block private networks by default.
 
@@ -89,26 +115,10 @@ def validate_url(url: str) -> str:
             "only for an authorized target"
         )
 
-    try:
-        addresses = {ipaddress.ip_address(host.split("%", 1)[0]).compressed}
-    except ValueError:
-        try:
-            addresses = {
-                item[4][0]
-                for item in socket.getaddrinfo(
-                    host,
-                    parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
-                    type=socket.SOCK_STREAM,
-                )
-            }
-        except socket.gaierror as exc:
-            raise ValueError(f"hostname could not be resolved safely: {host}") from exc
-
-    if not addresses or any(not _is_public_address(address) for address in addresses):
-        raise ValueError(
-            f"private or non-public network target blocked; set {PRIVATE_NETWORK_ENV}=1 "
-            "only for an authorized target"
-        )
+    resolve_socket_addresses(
+        host,
+        parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+    )
     return value
 
 

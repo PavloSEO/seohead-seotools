@@ -51,6 +51,65 @@ def test_parse_cert_date_reads_openssl_format():
     assert domain._parse_cert_date("") is None
 
 
+def test_tls_probe_requires_tls_1_2(monkeypatch):
+    class Context:
+        minimum_version = None
+
+        def wrap_socket(self, _raw, *, server_hostname):
+            self.server_hostname = server_hostname
+            return Wrapped()
+
+    class Wrapped:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def getpeercert(self):
+            return {
+                "issuer": ((("organizationName", "Example CA"),),),
+                "notAfter": "Jun  1 12:00:00 2027 GMT",
+                "subjectAltName": (("DNS", "example.com"),),
+            }
+
+        def version(self):
+            return "TLSv1.3"
+
+    class RawSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def settimeout(self, value):
+            self.timeout = value
+
+        def connect(self, value):
+            self.connected = value
+
+    context = Context()
+    monkeypatch.setattr(domain.ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr(
+        domain,
+        "resolve_socket_addresses",
+        lambda _host, _port: [
+            (domain.socket.AF_INET, domain.socket.SOCK_STREAM, 6, ("93.184.216.34", 443))
+        ],
+    )
+    raw = RawSocket()
+    monkeypatch.setattr(domain.socket, "socket", lambda *_args: raw)
+
+    result = domain._tls("example.com", timeout=3)
+    assert result["ok"] is True
+    assert result["protocol"] == "TLSv1.3"
+    assert context.minimum_version is domain.ssl.TLSVersion.TLSv1_2
+    assert context.server_hostname == "example.com"
+    assert raw.connected == ("93.184.216.34", 443)
+    assert raw.timeout == 3
+
+
 def test_from_whois_text_picks_key_fields_for_cctld():
     parsed = domain._from_whois_text(
         "% comment line\n"

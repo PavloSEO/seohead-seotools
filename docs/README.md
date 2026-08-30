@@ -11,7 +11,8 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 | Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
 | Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 42 |
-| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 20 skills |
+| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 21 skills |
+| Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
 | About to change code | [ARCHITECTURE.md](ARCHITECTURE.md) — layers and invariants |
 | Running or writing tests | [TESTING.md](TESTING.md) — how to run, what they cover |
 | Trying to avoid known traps | [GOTCHAS.md](GOTCHAS.md) — money, quotas, footguns |
@@ -33,7 +34,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — the package layout, the main
   invariant ("the core does not know who called it"), the data flow diagram,
   the four registration points of a new tool, test requirements.
-- **[TESTING.md](TESTING.md)** — how to run the suite, what the 458 tests
+- **[TESTING.md](TESTING.md)** — how to run the suite, what the 460 tests
   cover, what they deliberately do not, and which missing tests to write first.
 - **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
   contracts: API money, quotas, stdin quirks, and explicit mutation flags.
@@ -45,8 +46,10 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
   hole is that there is no crawler of our own.
 - **[COVERAGE_GAPS.md](COVERAGE_GAPS.md)** — the map of what the audit still
   lacks, with implemented items marked as done.
-- **[SKILLS.md](SKILLS.md)** — the 20 Claude Code skills: when to apply each,
+- **[SKILLS.md](SKILLS.md)** — the 21 technical workflow skills: when to apply each,
   which tools it drives, which tools deliberately have no skill.
+- **[RECIPES.md](RECIPES.md)** — three agent workflows that use existing exports, bounded
+  public evidence, or a user-authorized browser without pretending that provider credentials exist.
 
 ### Repository contracts
 
@@ -54,6 +57,8 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - [PROVENANCE.md](../PROVENANCE.md) defines the clean public-history boundary.
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) records bundled data and
   interoperability references.
+- [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) defines participation standards.
+- [CITATION.cff](../CITATION.cff) provides versioned citation metadata.
 
 ## Documentation must not lie silently
 

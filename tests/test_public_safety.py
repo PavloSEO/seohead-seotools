@@ -35,6 +35,19 @@ def test_private_networks_require_explicit_opt_in(monkeypatch: pytest.MonkeyPatc
     assert net.validate_url("http://127.0.0.1:8000/") == "http://127.0.0.1:8000/"
 
 
+def test_socket_resolution_requires_explicit_private_opt_in(monkeypatch: pytest.MonkeyPatch):
+    records = [(net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_args, **_kwargs: records)
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    with pytest.raises(ValueError, match="private or non-public"):
+        net.resolve_socket_addresses("internal.example", 443)
+
+    monkeypatch.setenv(net.PRIVATE_NETWORK_ENV, "1")
+    assert net.resolve_socket_addresses("internal.example", 443) == [
+        (net.socket.AF_INET, net.socket.SOCK_STREAM, 6, ("127.0.0.1", 443))
+    ]
+
+
 def test_url_credentials_are_always_rejected(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(net.PRIVATE_NETWORK_ENV, "1")
     with pytest.raises(ValueError, match="credentials"):
