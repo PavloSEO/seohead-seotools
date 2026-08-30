@@ -8,7 +8,7 @@
 
 47 callable tools · 96 checks over Screaming Frog crawl exports · 27 workflow skills · CLI · local MCP · Docker
 
-[Website](https://seohead.tech) · [Product page](https://seohead.tech/seotools) · [Portfolio](https://seohead.tech/about/results) · [Documentation](docs/README.md)
+[Website](https://seohead.tech) · [Documentation](docs/README.md)
 
 [![CI](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
