@@ -168,8 +168,51 @@ def _extract_jsonld(soup: BeautifulSoup) -> list[Any]:
     return out
 
 
-def _extract_links(soup: BeautifulSoup, final_url: str) -> list[dict[str, Any]]:
-    """Collect ``<a href>`` links resolved against ``final_url``.
+_BASE_HREF_RE = re.compile(r"<base\b[^>]*?\bhref\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE)
+
+
+def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
+    """Return the document base URL for resolving relative links.
+
+    Per the HTML standard relative URLs resolve against the ``href`` of the
+    **first** ``<base>`` element that carries one — itself resolved against the
+    document URL — and against the document URL when there is no such element.
+
+    Ignoring this reports links that do not exist: on a page whose base is
+    ``https://example.com/`` a relative ``catalog/`` resolves to
+    ``https://example.com/catalog/``, not to a path under the current
+    directory. Sites that ship a ``<base>`` tag (MODX and older CMS themes do)
+    otherwise produce a flood of phantom broken links that a browser and a
+    search engine crawler both fetch with a 200.
+
+    ``document`` accepts parsed markup or raw HTML; the raw form exists for
+    callers that deliberately avoid the cost of building a tree.
+    """
+    href = ""
+    if isinstance(document, str):
+        match = _BASE_HREF_RE.search(document)
+        if match:
+            href = match.group(1).strip()
+    else:
+        for tag in document.find_all("base"):
+            candidate = (tag.get("href") or "").strip()
+            if candidate:
+                href = candidate
+                break
+    if not href:
+        return final_url
+    try:
+        return urljoin(final_url, href)
+    except ValueError:
+        return final_url
+
+
+def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[dict[str, Any]]:
+    """Collect ``<a href>`` links resolved against ``base_url``.
+
+    ``base_url`` resolves the hrefs; ``final_url`` decides what counts as
+    external, because "external" means a host other than the page's own —
+    a ``<base>`` pointing elsewhere must not reclassify the whole page.
 
     Skips empty hrefs and ``javascript:`` / ``mailto:`` / ``tel:`` /
     pure-fragment (``#...``) links. Each entry carries the resolved absolute
@@ -190,7 +233,7 @@ def _extract_links(soup: BeautifulSoup, final_url: str) -> list[dict[str, Any]]:
         ):
             continue
         try:
-            abs_href = urljoin(final_url, href_raw)
+            abs_href = urljoin(base_url, href_raw)
         except ValueError:
             continue
         rel_attr = tag.get("rel") or []
@@ -309,6 +352,9 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
     """
     opts = _resolve_options(options)
     soup = BeautifulSoup(html, features="lxml")
+    # Everything that turns markup into absolute URLs resolves against the
+    # document base, not the page URL: see document_base_url.
+    base_url = document_base_url(soup, final_url)
 
     result: dict[str, Any] = {}
 
@@ -325,7 +371,7 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
         href = canonical_tag.get("href") if canonical_tag else None
-        result["canonical"] = urljoin(final_url, href.strip()) if href else None
+        result["canonical"] = urljoin(base_url, href.strip()) if href else None
     else:
         result["canonical"] = None
 
@@ -351,11 +397,11 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
 
     result["headings"] = _extract_headings(soup) if opts["headings"] else {}
     result["jsonld"] = _extract_jsonld(soup) if opts["jsonld"] else []
-    result["links"] = _extract_links(soup, final_url) if opts["links"] else []
+    result["links"] = _extract_links(soup, base_url, final_url) if opts["links"] else []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.
     if opts["url_sources"]:
-        result["url_sources"] = extract_url_sources(soup, final_url)
+        result["url_sources"] = extract_url_sources(soup, base_url)
 
     if opts["text"]:
         text = _extract_text(soup)

@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from seohead.recon.net import UA, http_client, normalize_domain, normalize_url
+from seohead.tools.parser import document_base_url
 
 MAX_DONORS = 500
 _NO_WEIGHT_RELS = ("nofollow", "ugc", "sponsored")
@@ -67,14 +68,15 @@ def _inspect_donor(
         "link",
         rel=lambda v: v and "canonical" in [s.lower() for s in (v if isinstance(v, list) else [v])],
     )
-    canonical_href = urljoin(str(resp.url), str(canonical.get("href"))) if canonical else None
+    resolve_from = document_base_url(soup, str(resp.url))
+    canonical_href = urljoin(resolve_from, str(canonical.get("href"))) if canonical else None
     record["canonical"] = canonical_href
     record["canonical_elsewhere"] = bool(
         canonical_href and normalize_url(canonical_href).rstrip("/") != str(resp.url).rstrip("/")
     )
 
     for tag in soup.find_all("a", href=True):
-        href = urljoin(str(resp.url), str(tag["href"]).strip())
+        href = urljoin(resolve_from, str(tag["href"]).strip())
         if not _same_site(href, target_domain):
             continue
         if target_url and href.rstrip("/") != target_url.rstrip("/"):

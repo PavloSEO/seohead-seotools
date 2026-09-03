@@ -27,7 +27,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.tools.parser import collapse_whitespace, parse_html
+from seohead.tools.parser import collapse_whitespace, document_base_url, parse_html
 
 # Hosts suitable for an organization's ``sameAs`` references.
 _SOCIAL_HOSTS = (
@@ -318,6 +318,7 @@ def extract(html: str, url: str) -> dict[str, Any]:
     """
     base = parse_html(html, url)
     soup = BeautifulSoup(html, features="lxml")
+    doc_base = document_base_url(soup, url)
     h1_list = base["headings"].get("h1") or []
     text = base["text"] or ""
 
@@ -333,8 +334,8 @@ def extract(html: str, url: str) -> dict[str, Any]:
         "published_time": _article_time(soup),
         "modified_time": _article_time(soup, "article:modified_time"),
         "author_rel": _rel_author(soup),
-        "breadcrumbs": _breadcrumbs(soup, url),
-        "same_as": _same_as(soup, url),
+        "breadcrumbs": _breadcrumbs(soup, doc_base),
+        "same_as": _same_as(soup, doc_base),
         "organization": _organization(soup, base["og"]),
         "price": _price(soup, text),
         "rating": _rating(soup, text),

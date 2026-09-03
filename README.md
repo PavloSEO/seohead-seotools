@@ -12,7 +12,7 @@
 
 [![CI](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
-![Tests](https://img.shields.io/badge/tests-460%20offline-BDDDF5)
+![Tests](https://img.shields.io/badge/tests-475%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
@@ -283,7 +283,7 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 python -m build
 ```
 
-The suite contains **460 offline tests**. CI also checks interface registration, layer boundaries,
+The suite contains **475 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
 
 README visuals are generated from committed synthetic examples with

@@ -114,13 +114,17 @@ def _links(html: str, base_url: str) -> set[str]:
     """Return internal links that can participate in crawling the site."""
     if not html:
         return set()
+    from seohead.tools.parser import document_base_url
+
+    # Host comes from the page URL; links resolve against the document base.
     host = urlparse(normalize_url(base_url)).hostname or ""
+    resolve_from = document_base_url(html, base_url)
     out: set[str] = set()
     for href in re.findall(r'<a\b[^>]*href=["\']([^"\']+)', html, re.IGNORECASE):
         href = href.strip()
         if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
             continue
-        absolute = urljoin(base_url, href).split("#")[0]
+        absolute = urljoin(resolve_from, href).split("#")[0]
         if (urlparse(absolute).hostname or "") == host:
             out.add(absolute)
     return out

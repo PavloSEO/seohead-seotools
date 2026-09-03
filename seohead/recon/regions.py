@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from seohead.recon.net import http_client, normalize_url
+from seohead.tools.parser import document_base_url
 
 # ── Regional dictionary ──────────────────────────────────────────────────────
 # Keys are URL tokens observed in practice; values are human-readable city names.
@@ -385,12 +386,13 @@ def discover_regional_links(html: str, base_url: str) -> list[dict[str, Any]]:
 
     main_host = urlparse(normalize_url(base_url)).hostname or ""
     soup = BeautifulSoup(html, features="lxml")
+    resolve_from = document_base_url(soup, normalize_url(base_url))
     seen: dict[str, dict[str, Any]] = {}
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
             continue
-        absolute = urljoin(normalize_url(base_url), href)
+        absolute = urljoin(resolve_from, href)
         info = classify_url(absolute, main_host)
         if not info["region"]:
             # A city in anchor text is still evidence when the URL has no region,

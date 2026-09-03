@@ -34,7 +34,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — the package layout, the main
   invariant ("the core does not know who called it"), the data flow diagram,
   the four registration points of a new tool, test requirements.
-- **[TESTING.md](TESTING.md)** — how to run the suite, what the 460 tests
+- **[TESTING.md](TESTING.md)** — how to run the suite, what the 475 tests
   cover, what they deliberately do not, and which missing tests to write first.
 - **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
   contracts: API money, quotas, stdin quirks, and explicit mutation flags.

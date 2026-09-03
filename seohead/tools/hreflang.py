@@ -22,7 +22,11 @@ def extract_hreflang(html: str, base_url: str = "") -> list[dict]:
 
     from bs4 import BeautifulSoup
 
+    from seohead.tools.parser import document_base_url
+
     soup = BeautifulSoup(html, features="lxml")
+    # Alternates are relative URLs like any other: resolve them from the base.
+    resolve_from = document_base_url(soup, base_url) if base_url else ""
     out: list[dict] = []
     for link in soup.find_all("link"):
         rel = " ".join(link.get("rel", [])).lower() if link.get("rel") else ""
@@ -30,7 +34,10 @@ def extract_hreflang(html: str, base_url: str = "") -> list[dict]:
         if "alternate" in rel and hreflang:
             href = link.get("href", "")
             out.append(
-                {"hreflang": hreflang, "href": urljoin(base_url, href) if base_url else href}
+                {
+                    "hreflang": hreflang,
+                    "href": urljoin(resolve_from, href) if resolve_from else href,
+                }
             )
     return out
 
