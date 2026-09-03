@@ -7,10 +7,13 @@ features). Builds the ``--export-tabs`` / ``--bulk-export`` /
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import os
 import shutil
+import signal
 import subprocess
+import time
 from collections.abc import Iterator
 from urllib.parse import urlsplit
 
@@ -136,6 +139,180 @@ def build_command(
     return cmd
 
 
+# --- timeout budgeting -------------------------------------------------------
+# Screaming Frog writes its exports when the crawl finishes, so a run that is
+# cut off produces nothing at all. The timeout is therefore not a safety valve
+# but a deadline: set it below what the crawl needs and the entire crawl is
+# discarded. That makes a flat default wrong by construction the moment a rate
+# limit is set — 3 000 URLs at 1.5 URL/s is 33 minutes of request time alone.
+DEFAULT_TIMEOUT_MINUTES = 30
+
+# Requests are the floor, not the cost: startup, rendering and writing the
+# exports all sit on top, and a sitemap lists pages while a crawl also fetches
+# images, scripts and stylesheets.
+TIMEOUT_MARGIN = 2.0
+TIMEOUT_STARTUP_MINUTES = 5.0
+
+# How often to say the crawl is still alive. A silent hour is
+# indistinguishable from a hung process.
+PROGRESS_INTERVAL_SECONDS = 60.0
+
+
+def expected_url_count(
+    mode: str, source: str, config: dict, log=print, sitemap_counter=None
+) -> int | None:
+    """How many URLs this run is likely to request, when that is knowable.
+
+    An explicit count wins, a URL list can simply be counted, and for a crawl
+    the sitemap is the only cheap estimate available before the crawl itself.
+    None means unknown, which is honest: a derived timeout must not rest on a
+    number nobody measured.
+    """
+    explicit = config.get("sf_cli", {}).get("expected_urls")
+    if explicit:
+        return int(explicit)
+    if mode == "crawl-list":
+        try:
+            with open(source, encoding="utf-8", errors="replace") as handle:
+                return sum(1 for line in handle if line.strip())
+        except OSError as exc:
+            log(f"[runner] cannot count URLs in {source}: {exc}")
+            return None
+    if mode != "crawl":
+        return None
+    counter = sitemap_counter or _sitemap_url_count
+    try:
+        return counter(source)
+    except Exception as exc:  # an estimate is never worth failing a run over
+        log(f"[runner] sitemap URL count unavailable: {exc}")
+        return None
+
+
+def _sitemap_url_count(start_url: str) -> int | None:
+    from seohead.tools.sitemap import crawl as crawl_sitemap
+
+    parts = urlsplit(start_url)
+    result = crawl_sitemap(f"{parts.scheme}://{parts.netloc}/sitemap.xml")
+    count = result.get("count") if result.get("ok") else None
+    return int(count) if count else None
+
+
+def derive_timeout_minutes(
+    configured: float, url_count: int | None, rate: float | None
+) -> tuple[float, str]:
+    """The timeout to use, and the sentence explaining it.
+
+    When the arithmetic says the crawl cannot finish in the configured window,
+    the window is widened rather than the run refused: the alternative is to
+    spend an hour crawling a third party's site politely and then throw the
+    result away.
+    """
+    if not rate or not url_count:
+        return configured, ""
+    needed = (url_count / float(rate)) / 60.0 * TIMEOUT_MARGIN + TIMEOUT_STARTUP_MINUTES
+    if needed <= configured:
+        return configured, (
+            f"{url_count} URLs at {rate}/s need about {needed:.0f} min; "
+            f"timeout is {configured:.0f} min"
+        )
+    return needed, (
+        f"{url_count} URLs at {rate}/s need about {needed:.0f} min, but "
+        f"sf_cli.timeout_minutes is {configured:.0f}. Raising the timeout to "
+        f"{needed:.0f} min: Screaming Frog writes its exports only when the crawl "
+        "ends, so stopping early would discard the whole crawl"
+    )
+
+
+# --- process control ---------------------------------------------------------
+def _terminate_tree(proc: subprocess.Popen) -> str:
+    """Stop the crawler and everything it started. Returns what was done.
+
+    The CLI entry point is a launcher that starts a JVM, so killing the direct
+    child can leave the crawler running and still requesting a third party's
+    site with no parent left to collect the result. The whole process group
+    goes, which is why it was given one at launch.
+    """
+    if proc.poll() is not None:
+        return "the crawler had already exited"
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=10)
+        return "the crawler process group was terminated"
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name != "nt":
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:
+            proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=10)
+    return "the crawler process group was killed"
+
+
+def _run_watched(
+    cmd: list[str], timeout: float, output_folder: str, log
+) -> subprocess.CompletedProcess:
+    """Run the CLI to completion or to the deadline, reporting that it is alive.
+
+    Raises :class:`subprocess.TimeoutExpired` after stopping the process tree,
+    with the outcome of that in ``output`` so the caller can say what happened
+    to the crawler rather than leaving the operator to go looking for it.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+    )
+    started = time.monotonic()
+    next_report = started + PROGRESS_INTERVAL_SECONDS
+    while True:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            outcome = _terminate_tree(proc)
+            raise subprocess.TimeoutExpired(cmd, timeout, output=outcome)
+        try:
+            stdout, stderr = proc.communicate(timeout=min(remaining, PROGRESS_INTERVAL_SECONDS))
+        except subprocess.TimeoutExpired:
+            now = time.monotonic()
+            if now >= next_report:
+                next_report = now + PROGRESS_INTERVAL_SECONDS
+                log(
+                    f"[runner] still crawling: {(now - started) / 60:.0f} min elapsed, "
+                    f"{_output_size(output_folder)} in {output_folder}"
+                )
+            continue
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+def _output_size(folder: str) -> str:
+    """A coarse sign of life: how much SF has written so far."""
+    total = 0
+    for root, _dirs, names in os.walk(folder):
+        for name in names:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+    return f"{total / 1024:.0f} KB written"
+
+
 def _apply_rate_limit(config: dict, output_folder: str, log) -> dict:
     """Build and inject a rate-limited .seospiderconfig when requested.
 
@@ -196,15 +373,26 @@ def run_sf(
         cli, source_arg=arg, source_value=source, output_folder=output_folder, config=config
     )
     log(f"[runner] {' '.join(cmd)}")
-    timeout = config.get("sf_cli", {}).get("timeout_minutes", 30) * 60
+
+    sf = config.get("sf_cli", {})
+    rate = sf.get("max_urls_per_second")
+    url_count = expected_url_count(mode, source, config, log) if rate else None
+    configured = float(sf.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES))
+    minutes, note = derive_timeout_minutes(configured, url_count, rate)
+    if note:
+        log(f"[runner] {note}")
+    timeout = minutes * 60
+
     try:
-        proc = subprocess.run(
-            cmd, timeout=timeout, capture_output=True, text=True, stdin=subprocess.DEVNULL
-        )
+        proc = _run_watched(cmd, timeout, output_folder, log)
     except subprocess.TimeoutExpired as err:
+        budget = f"{url_count} URLs at {rate}/s" if url_count and rate else "the crawl"
         raise RuntimeError(
-            f"Screaming Frog CLI timed out after {timeout // 60} min. "
-            "Increase sf_cli.timeout_minutes or narrow the crawl."
+            f"Screaming Frog CLI timed out after {minutes:.0f} min ({budget}); "
+            f"{err.output or 'the crawler was stopped'}. Screaming Frog writes its "
+            "exports only when a crawl ends, so nothing from this run was kept. "
+            "Raise sf_cli.timeout_minutes, raise sf_cli.max_urls_per_second, or "
+            "narrow the crawl, then run it again."
         ) from err
     if proc.returncode != 0:
         raise RuntimeError(

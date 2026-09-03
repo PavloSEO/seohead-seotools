@@ -25,7 +25,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Create it once in SF (see skill sf-config) to unlock the module checks.
         "seospiderconfig": "audit.seospiderconfig",
         "export_format": "csv",
+        # A deadline, not a safety valve: Screaming Frog writes its exports when
+        # the crawl ends, so cutting a run short discards all of it. When a rate
+        # limit is set and the URL count is known, the runner raises this to
+        # what the crawl actually needs and says so.
         "timeout_minutes": 30,
+        # How many URLs the run will request, when the caller knows better than
+        # the sitemap does. 0 means "work it out".
+        "expected_urls": 0,
     },
     "profile": "full",  # lite | full | custom
     "exports": {

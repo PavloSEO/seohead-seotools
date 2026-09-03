@@ -30,7 +30,7 @@ def test_run_sf_normalizes_relative_output(tmp_path, monkeypatch):
     monkeypatch.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
     seen: dict = {}
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, *args, **kwargs):
         i = cmd.index("--output-folder")
         seen["folder"] = cmd[i + 1]
         # Simulate a completed SF run by creating an export for run_sf to detect.
@@ -46,7 +46,7 @@ def test_run_sf_normalizes_relative_output(tmp_path, monkeypatch):
         return P()
 
     monkeypatch.setattr(runner, "resolve_cli", lambda *a, **k: "/bin/sf")
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "_run_watched", fake_run)
     monkeypatch.chdir(tmp_path)
 
     got = runner.run_sf(
@@ -66,7 +66,7 @@ def test_run_sf_empty_exports_is_loud(tmp_path, monkeypatch):
     # Keep the test fully offline: URL policy is covered in test_public_safety.py.
     monkeypatch.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, *args, **kwargs):
         class P:
             returncode = 0
             stdout = ""
@@ -75,7 +75,7 @@ def test_run_sf_empty_exports_is_loud(tmp_path, monkeypatch):
         return P()
 
     monkeypatch.setattr(runner, "resolve_cli", lambda *a, **k: "/bin/sf")
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "_run_watched", fake_run)
 
     with pytest.raises(RuntimeError) as err:
         runner.run_sf(
@@ -93,7 +93,7 @@ def test_run_sf_empty_exports_is_loud(tmp_path, monkeypatch):
 def test_run_sf_accepts_only_the_in_memory_trusted_loopback_proxy(tmp_path, monkeypatch):
     proxy = "http://127.0.0.1:43123"
 
-    def fake_run(cmd, **kwargs):
+    def fake_run(cmd, *args, **kwargs):
         output = cmd[cmd.index("--output-folder") + 1]
         os.makedirs(output, exist_ok=True)
         with open(os.path.join(output, "internal_all.csv"), "w") as handle:
@@ -108,7 +108,7 @@ def test_run_sf_accepts_only_the_in_memory_trusted_loopback_proxy(tmp_path, monk
 
     monkeypatch.delenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", raising=False)
     monkeypatch.setattr(runner, "resolve_cli", lambda *a, **k: "/bin/sf")
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "_run_watched", fake_run)
 
     result = runner.run_sf(
         mode="crawl",
