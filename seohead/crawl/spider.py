@@ -120,7 +120,11 @@ def crawl_site(
             handle = stack.enter_context(open(out_path, "w", encoding="utf-8"))
         client = None
         if fetcher is None:
-            client, _ = http_client(timeout)
+            # A crawler must observe redirects, not be moved by them. With
+            # follow_redirects on, a 301 is recorded as a 200 carrying the
+            # target's title and body, the Location is never seen, and redirect
+            # auditing is impossible — the old and new URL become duplicates.
+            client, _ = http_client(timeout, follow_redirects=False)
             stack.callback(client.close)
 
         enforce = robots_policy == "respect"

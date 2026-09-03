@@ -23,6 +23,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from urllib.parse import urljoin
+
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import UA, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
@@ -173,7 +175,10 @@ def fetch_one(
     headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
     record.content_type = headers.get("content-type", "")
     record.x_robots = headers.get("x-robots-tag", "")
-    record.redirect_url = headers.get("location", "")
+    # Location may be relative ("/new"); resolve it so the destination is a
+    # real URL rather than a fragment the scope check then rejects as off-host.
+    location = headers.get("location", "")
+    record.redirect_url = urljoin(url, location) if location else ""
 
     body = getattr(response, "text", "") or ""
     record.size_bytes = len(body.encode("utf-8", "ignore"))
@@ -198,7 +203,13 @@ def fetch_one(
         record.jsonld_blocks_found = found
         record.jsonld_blocks_parsed = parsed_count
         text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
-        record.text_ratio = round(text_len / record.size_bytes, 4) if record.size_bytes else None
+        # Percent, not a fraction: the analyzer's threshold is a percentage and
+        # the export format this projects onto uses percent too (20.0, 15.0).
+        # Emitting 0.6 here made LOW_TEXT_RATIO fire on every crawled page,
+        # since 0.6 < 10 always.
+        record.text_ratio = (
+            round(text_len / record.size_bytes * 100, 2) if record.size_bytes else None
+        )
     return record, parsed
 
 
@@ -245,7 +256,11 @@ def collect_urls(
 
         client = None
         if fetcher is None:
-            client, _ = http_client(timeout)
+            # A crawler must observe redirects, not be moved by them. With
+            # follow_redirects on, a 301 is recorded as a 200 carrying the
+            # target's title and body, the Location is never seen, and redirect
+            # auditing is impossible — the old and new URL become duplicates.
+            client, _ = http_client(timeout, follow_redirects=False)
             stack.callback(client.close)
 
         for raw in urls:

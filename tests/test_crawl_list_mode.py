@@ -271,3 +271,32 @@ def test_a_malformed_block_is_found_but_not_parsed():
 
     html = '<html><head><script type="application/ld+json">{ /* comment */ }</script></head></html>'
     assert _jsonld_counts(html, parse_html(html, "https://example.com/")) == (1, 0)
+
+
+def test_a_redirect_is_observed_not_followed():
+    """A crawler must see the 3xx, not be moved by it.
+
+    With follow_redirects on, a 301 was recorded as a 200 carrying the target's
+    title and body, the Location was never seen, and the old and new URL became
+    duplicates of each other.
+    """
+    resp = FakeResponse(
+        "", status_code=301, headers={"location": "/new", "content-type": "text/html"}
+    )
+    result = collect_urls(
+        ["https://example.com/old"], fetcher=_fetch({"https://example.com/old": resp})
+    )
+    page = result.pages[0]
+    assert page.status_code == 301
+    assert page.redirect_url == "https://example.com/new", "relative Location must be resolved"
+
+
+def test_text_ratio_is_a_percentage_matching_the_analyzer_threshold():
+    """The threshold is a percentage; emitting a fraction fired on every page."""
+    body = "<html><head><title>t</title></head><body>" + ("word " * 300) + "</body></html>"
+    result = collect_urls(
+        ["https://example.com/"], fetcher=_fetch({"https://example.com/": FakeResponse(body)})
+    )
+    ratio = result.pages[0].text_ratio
+    assert ratio > 1, f"expected a percentage, got {ratio} which reads as a fraction"
+    assert ratio <= 100
