@@ -98,7 +98,9 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "h1_2": _first_heading(parsed, "h1", 1),
         "h2": _first_heading(parsed, "h2", 0),
         "canonical": _text_of(parsed.get("canonical")),
-        "meta_robots": _text_of(parsed.get("robots")),
+        # Every crawler-addressed robots tag, joined the way the directives
+        # themselves are: a page can be noindex for Googlebot alone.
+        "meta_robots": ", ".join(parsed.get("robots_meta") or []),
         "og_title": _text_of(og.get("title")),
         "og_description": _text_of(og.get("description")),
         "og_image": _text_of(og.get("image")),

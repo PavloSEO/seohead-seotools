@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from seohead.tools.parser import robots_directives
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from seohead.crawl.collect import CrawlResult
 
@@ -76,7 +78,7 @@ def _indexability(record: Any) -> tuple[str, str]:
         return "Non-Indexable", "Redirected"
     if code >= 400:
         return "Non-Indexable", "Client Error" if code < 500 else "Server Error"
-    directives = f"{record.meta_robots} {record.x_robots}".lower()
+    directives = robots_directives(record.meta_robots, record.x_robots)
     if "noindex" in directives:
         return "Non-Indexable", "noindex"
     if record.canonical and record.canonical.rstrip("/") != record.url.rstrip("/"):
