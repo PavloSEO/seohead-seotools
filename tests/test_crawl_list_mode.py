@@ -246,3 +246,28 @@ def test_the_analyzer_never_imports_the_collector():
     forbidden = re.compile(r"^\s*(from|import)\s+seohead\.crawl\b", re.M)
     for path in Path("seohead/sf").rglob("*.py"):
         assert not forbidden.search(path.read_text(encoding="utf-8")), path
+
+
+def test_json_ld_is_counted_by_tag_not_by_substring():
+    """A hydration payload that echoes the media type must not inflate the count.
+
+    One real block on a Next.js page was counted twice, which across a crawl
+    reported "found 408, parsed 200" for a site whose structured data is fine.
+    """
+    from seohead.crawl.collect import _jsonld_counts
+    from seohead.tools.parser import parse_html
+
+    html = (
+        '<html><head><script id="s" type="application/ld+json">{"@type":"Thing"}</script>'
+        '</head><body><script>self.__payload="\\"type\\":\\"application/ld+json\\""</script>'
+        "</body></html>"
+    )
+    assert _jsonld_counts(html, parse_html(html, "https://example.com/")) == (1, 1)
+
+
+def test_a_malformed_block_is_found_but_not_parsed():
+    from seohead.crawl.collect import _jsonld_counts
+    from seohead.tools.parser import parse_html
+
+    html = '<html><head><script type="application/ld+json">{ /* comment */ }</script></head></html>'
+    assert _jsonld_counts(html, parse_html(html, "https://example.com/")) == (1, 0)

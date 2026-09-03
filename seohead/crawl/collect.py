@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
@@ -106,14 +107,21 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
     }
 
 
+# Match the script tag, not the media type wherever it appears. Counting the
+# substring double-counts on any framework that echoes its own markup into a
+# hydration payload: one real block on a Next.js page was counted twice, which
+# across a crawl reported "found 408, parsed 200" for a site whose JSON-LD is
+# fine. A false alarm of that shape is worse than no check.
+_JSONLD_TAG_RE = re.compile(r"<script[^>]+application/ld\+json", re.IGNORECASE)
+
+
 def _jsonld_counts(html: str, parsed: dict) -> tuple[int, int]:
     """Blocks present in the markup, and blocks that actually parsed.
 
-    A page carrying one malformed JSON-LD block must be reported as "found 1,
-    parsed 0". Reporting "no structured data" would describe a different page.
+    A page carrying one malformed block must be reported as "found 1, parsed 0".
+    Reporting "no structured data" would describe a different page.
     """
-    found = html.lower().count("application/ld+json")
-    return found, len(parsed.get("jsonld") or [])
+    return len(_JSONLD_TAG_RE.findall(html)), len(parsed.get("jsonld") or [])
 
 
 def fetch_one(
