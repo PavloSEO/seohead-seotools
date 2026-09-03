@@ -26,7 +26,7 @@ from collections import Counter
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from seohead.recon.net import http_client, normalize_url
+from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.parser import document_base_url
 
 # ── Regional dictionary ──────────────────────────────────────────────────────
@@ -318,19 +318,8 @@ def detect_region(token: str) -> str | None:
 
 
 def _registrable(host: str) -> str:
-    """Approximate the registrable domain while accounting for compound Runet zones.
-
-    A public suffix list would be large and mutable; this audit only needs to
-    distinguish a subdomain from a separate domain.
-    """
-    host = host.lower().strip(".")
-    parts = host.split(".")
-    if len(parts) <= 2:
-        return host
-    compound = {"com", "net", "org", "co", "gov", "edu", "ac", "spb", "msk"}
-    if len(parts) >= 3 and parts[-2] in compound and len(parts[-1]) <= 3:
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
+    """Approximate the registrable domain, accounting for compound Runet zones."""
+    return registrable_domain(host)
 
 
 def classify_url(url: str, main_host: str) -> dict[str, Any]:
