@@ -422,7 +422,11 @@ def check_url_extra(ctx: AuditContext) -> None:
             ctx.add("URL_MULTIPLE_SLASHES", target_url=url)
         if " " in url or "%20" in url:
             ctx.add("URL_CONTAINS_SPACE", target_url=url)
-        segs = [s for s in path.split("/") if s]
+        # A repeated *word* means a duplicated prefix or a crawl trap
+        # (/shop/shop/, /en/products/en/). A repeated *number* means a
+        # coordinate: /2024/01/01/ is the default WordPress permalink and
+        # /catalog/12/12/ a pair of ids, so numeric segments are not compared.
+        segs = [s for s in path.split("/") if s and not s.isdigit()]
         if len(segs) >= 2 and len(segs) != len(set(segs)):
             ctx.add("URL_REPETITIVE_PATH", target_url=url, details={"path": path})
         # Tracking params matter only on indexable URLs (else they're not going
