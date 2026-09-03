@@ -28,6 +28,9 @@
         "generated_at": {"type": "string"},
         "profile": {"type": ["string", "null"]},
         "exports_used": {"type": "array", "items": {"type": "string"}},
+        "crawl_valid": {"type": "boolean"},
+        "crawl_invalid_reason": {"type": ["string", "null"]},
+        "crawl_partial": {"type": "boolean"},
         "exports_missing": {"type": "array", "items": {"type": "string"}},
         "checks_skipped": {
           "type": "array",
@@ -57,7 +60,12 @@
           }
         },
         "by_check": {"type": "object"},
-        "health_score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "health_score": {
+          "description": "null when the crawl produced nothing worth scoring; see health_score_reason",
+          "type": ["integer", "null"], "minimum": 0, "maximum": 100
+        },
+        "health_score_reason": {"type": "string"},
+        "health_score_scope": {"type": "string"},
         "size_stats_bytes": {"type": "object"},
         "sitemap": {"type": "object"}
       }

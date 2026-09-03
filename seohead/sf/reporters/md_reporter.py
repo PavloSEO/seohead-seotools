@@ -62,7 +62,18 @@ def write_markdown(result: AuditResult, path: str) -> str:
     # 2. health summary
     w("## Health summary")
     w("")
-    w(f"**Health score: {s.get('health_score')} / 100**")
+    # An invalid crawl leads with the failure: a score printed next to a
+    # critical NO_RESPONSE reads as a verdict on the site rather than on the run.
+    if run.get("crawl_valid") is False:
+        reason = s.get("health_score_reason") or run.get("crawl_invalid_reason") or "unknown"
+        w(f"> **Crawl failed — no health score.** {_esc(reason)}.")
+        w(">")
+        w("> The findings below describe the failed run, not the state of the site.")
+    else:
+        w(f"**Health score: {s.get('health_score')} / 100**")
+        if s.get("health_score_scope"):
+            w("")
+            w(f"_{_esc(s['health_score_scope'])}_")
     w("")
     totals = s.get("totals", {})
     w(

@@ -42,9 +42,41 @@ def _dedupe(issues: list[Issue]) -> list[Issue]:
     return out
 
 
-def _health_score(by_severity: dict[str, int], n_pages: int, weights: dict[str, float]) -> int:
+# Crawling far fewer URLs than the sitemap declares is normal — a deliberate
+# sample, a URL limit — so it marks the run partial rather than invalid. Scoring
+# a fraction of a site as if it were the whole one is still worth flagging.
+PARTIAL_CRAWL_RATIO = 0.2
+
+
+def _crawl_validity(
+    n_pages: int, by_check: dict[str, int], urls_crawled: int
+) -> tuple[bool, str | None]:
+    """Decide whether the run produced a corpus worth scoring.
+
+    A score of 100 next to a critical NO_RESPONSE is a false green: the run
+    proved nothing, and that number is the one that reaches a client report.
+    """
+    if urls_crawled <= 0:
+        return False, "no URLs were crawled"
     if n_pages <= 0:
-        return 100
+        reason = "no HTML pages were crawled"
+        if by_check.get("NO_RESPONSE"):
+            reason = "the crawl got no response from the site"
+        return False, reason
+    return True, None
+
+
+def _health_score(
+    by_severity: dict[str, int], n_pages: int, weights: dict[str, float]
+) -> int | None:
+    """Score the crawl, or return ``None`` when there is nothing to score.
+
+    Returning 100 for an empty corpus was arithmetically defensible and
+    completely misleading: it is the one place the toolkit rendered "no data"
+    as "no problems".
+    """
+    if n_pages <= 0:
+        return None
     penalty = sum(by_severity.get(sev, 0) * w for sev, w in weights.items())
     score = 100 - (penalty / n_pages) * 10
     return max(0, min(100, round(score)))
@@ -98,6 +130,27 @@ def aggregate(
         "by_check": dict(sorted(by_check.items(), key=lambda kv: (-kv[1], kv[0]))),
         "health_score": _health_score(by_severity, n_pages, weights),
     }
+
+    urls_crawled = len(ctx.pages)
+    crawl_valid, invalid_reason = _crawl_validity(n_pages, dict(by_check), urls_crawled)
+    run["crawl_valid"] = crawl_valid
+    run["crawl_invalid_reason"] = invalid_reason
+    if not crawl_valid:
+        summary["health_score"] = None
+        summary["health_score_reason"] = invalid_reason
+
+    # A crawl far below the declared sitemap still scores, but says so: the
+    # score describes what was crawled, not the site.
+    urls_in_sitemap = int((sitemap_summary or {}).get("urls_in_sitemap") or 0)
+    partial = bool(
+        urls_in_sitemap and crawl_valid and urls_crawled < urls_in_sitemap * PARTIAL_CRAWL_RATIO
+    )
+    run["crawl_partial"] = partial
+    if partial:
+        summary["health_score_scope"] = (
+            f"{urls_crawled} of {urls_in_sitemap} sitemap URLs crawled — "
+            "the score describes the crawled subset, not the whole site"
+        )
     if size_stats:
         summary["size_stats_bytes"] = {k: int(v) for k, v in size_stats.items() if k != "iqr"}
     if sitemap_summary:

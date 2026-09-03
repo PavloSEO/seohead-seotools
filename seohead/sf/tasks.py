@@ -68,6 +68,8 @@ def build_tasks(audit: dict[str, Any], config: dict[str, Any] | None = None) -> 
             "project": audit.get("run", {}).get("project"),
             "generated_at": audit.get("run", {}).get("generated_at"),
             "health_score": audit.get("summary", {}).get("health_score"),
+            "crawl_valid": audit.get("run", {}).get("crawl_valid", True),
+            "crawl_invalid_reason": audit.get("run", {}).get("crawl_invalid_reason"),
         },
         "pipeline": cfg,
         "summary": {"tasks_total": len(tasks), "by_priority": by_priority},
@@ -174,9 +176,15 @@ def _esc(value: Any) -> str:
 def render_tasks_md(backlog: dict[str, Any]) -> str:
     src = backlog["source"]
     lines = [f"# Audit Tasks — {src.get('project', 'site')}", ""]
-    lines.append(
-        f"- Source: audit generated at {src.get('generated_at')} (health {src.get('health_score')})"
-    )
+    # A failed crawl says so before anything else: the tasks below describe the
+    # failed run, and a reader must not take them for a picture of the site.
+    if src.get("crawl_valid") is False:
+        reason = src.get("crawl_invalid_reason") or "the crawl produced no usable data"
+        lines.append(f"> **Crawl failed — no health score.** {reason}.")
+        lines.append("")
+    health = src.get("health_score")
+    health_text = "n/a" if health is None else health
+    lines.append(f"- Source: audit generated at {src.get('generated_at')} (health {health_text})")
     lines.append(
         f"- Tasks: **{backlog['summary']['tasks_total']}** "
         f"({', '.join(f'{k}: {v}' for k, v in sorted(backlog['summary']['by_priority'].items()))})"

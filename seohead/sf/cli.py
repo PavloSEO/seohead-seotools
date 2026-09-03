@@ -468,13 +468,24 @@ def main(argv: list[str] | None = None) -> int:
         log(f"[out] {jp}")
         log(f"[out] {mp}")
 
+    crawl_valid = result.run.get("crawl_valid") is not False
     if not args.quiet:
         sev = result.summary["by_severity"]
+        health = result.summary["health_score"]
+        health_text = "n/a" if health is None else str(health)
         print(
-            f"health={result.summary['health_score']} "
+            f"health={health_text} "
             f"critical={sev['critical']} warning={sev['warning']} notice={sev['notice']} "
             f"issues={result.summary['totals']['issues_total']}"
         )
+        if not crawl_valid:
+            reason = result.run.get("crawl_invalid_reason") or "the crawl produced no usable data"
+            print(f"crawl failed: {reason} — no health score", file=sys.stderr)
+
+    # A run that never crawled anything must not record a success, whatever
+    # --fail-on says about severities: there were no severities to judge.
+    if not crawl_valid:
+        return 2
 
     if args.fail_on == "critical" and result.summary["by_severity"]["critical"] > 0:
         return 2
