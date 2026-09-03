@@ -24,6 +24,7 @@ from seohead.servers import handlers
 COMMANDS = (
     "parse",
     "crawl-site",
+    "compare-crawls",
     "redirects-generate",
     "redirects-check",
     "sitemap-crawl",
@@ -252,6 +253,11 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["fmt"] = args.format
         if getattr(args, "out", None):
             kw["out"] = args.out
+    elif cmd == "compare-crawls":
+        if getattr(args, "before", None):
+            kw["before"] = args.before
+        if getattr(args, "after", None):
+            kw["after"] = args.after
     elif cmd == "regions-check":
         if args.url:
             kw["url"] = args.url
@@ -505,6 +511,9 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             help="report format (default xlsx)",
         )
         sub.add_argument("--out", help="output file path")
+    if cmd == "compare-crawls":
+        sub.add_argument("--before", required=True, help="path to the earlier audit.json")
+        sub.add_argument("--after", required=True, help="path to the later audit.json")
     if cmd == "regions-check":
         sub.add_argument("--url", help="any site page, usually the home page")
         sub.add_argument(

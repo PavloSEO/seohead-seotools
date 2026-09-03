@@ -359,6 +359,29 @@ def report_build(audit: Any = None, fmt: str = "xlsx", out: str | None = None) -
     return build_report(audit, fmt=fmt, path=out)
 
 
+def _load_audit(value: Any, label: str) -> dict[str, Any]:
+    """Accept an audit document, or a path to its JSON file."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        import json
+
+        with open(value, encoding="utf-8") as fh:
+            return json.load(fh)
+    raise ValueError(f"{label} required: an audit document or a path to its JSON file")
+
+
+def compare_crawls(before: Any = None, after: Any = None) -> dict[str, Any]:
+    """Diff two audits: which findings were fixed, which are new, which pages
+    dropped out of the crawl entirely. See seohead.sf.core.compare for why
+    "fixed" and "no longer crawled" are kept apart rather than merged."""
+    from seohead.sf.core.compare import compare
+
+    before_doc = _load_audit(before, "before")
+    after_doc = _load_audit(after, "after")
+    return compare(before_doc, after_doc)
+
+
 def render_check(
     url: str | None = None, viewport: str = "desktop", wait: str = "load"
 ) -> dict[str, Any]:
@@ -893,6 +916,7 @@ _RAW_HANDLERS = {
     "render_check": render_check,
     "site_audit": site_audit,
     "report_build": report_build,
+    "compare_crawls": compare_crawls,
     "keywords_expand": keywords_expand,
     "keywords_seasonality": keywords_seasonality,
     "keywords_exact": keywords_exact,

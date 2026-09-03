@@ -362,6 +362,18 @@ def build_server():  # -> FastMCP
         not in the JSON does not appear in the report."""
         return handlers.report_build(audit=audit, fmt=fmt, out=out)
 
+    @mcp.tool(annotations=pure, structured_output=True)
+    def seo_compare_crawls(before: Any, after: Any) -> dict[str, Any]:
+        """Diff two audit documents (dict or path to their JSON) into four disjoint
+        sets per finding: entered (new problem on a page that existed before),
+        left (the page is still crawled and no longer matches — a real fix),
+        appeared (a genuinely new page with a finding), disappeared (the page is
+        not in this crawl at all, so a missing finding proves nothing). "left" and
+        "disappeared" look identical in a naive diff and mean opposite things.
+        Warns when the two runs used different results-affecting settings, since
+        part of the difference may be the configuration rather than the site."""
+        return handlers.compare_crawls(before=before, after=after)
+
     # --- External data providers: demand, search results, traffic, and spend ---
 
     @mcp.tool(annotations=paid, structured_output=True)

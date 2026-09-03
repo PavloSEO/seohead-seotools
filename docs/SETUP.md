@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 646 offline tests; runtime depends on extras
+pytest -q                             # 662 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
@@ -97,6 +97,32 @@ Mode B (`--exports-dir`) already has the exports and is not affected.
 
 `sf-analyzer` is also installed as a focused audit-CLI alias (`[project.scripts]` in
 `pyproject.toml`). Use `seohead sf ...` when one entry point is preferable.
+
+## Comparing two crawls
+
+```bash
+seohead compare-crawls --before old-audit.json --after new-audit.json
+```
+
+The most repeated question in audit work is "did the fix actually ship", and a naive diff of two
+finding sets cannot answer it: a page that stopped matching because it was fixed and a page that
+stopped matching because it dropped out of the crawl look identical unless something also checks
+which pages were actually crawled each time.
+
+Every finding lands in exactly one of four sets:
+
+- **entered** — a new problem on a page that was already being crawled;
+- **left** — the page is still crawled and no longer matches: a real fix;
+- **appeared** — a genuinely new page, and it has a finding;
+- **disappeared** — the page is not in the later crawl at all, so a missing finding proves
+  nothing about whether it was fixed.
+
+`left` and `disappeared` are the pair that matters. Confusing them is how "we fixed it" gets said
+about a page nobody re-checked.
+
+The result carries `warnings` when the comparison should be trusted less: either crawl marked
+invalid or partial, or the two runs using different results-affecting settings (`run.crawl_config`
+from #13) — in which case some of the difference may be the configuration, not the site.
 
 ## Crawler configuration
 
