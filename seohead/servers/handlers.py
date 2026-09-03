@@ -144,7 +144,7 @@ def crawl_site(
             max_depth=settings["limits"]["max_depth"],
             min_delay=settings["speed"]["min_delay_seconds"],
             timeout=settings["http"]["timeout_seconds"],
-            respect_robots=settings["robots"]["policy"] != "ignore",
+            robots_policy=settings["robots"]["policy"],
             out_path=pages_path,
         )
         discovery = {
@@ -153,6 +153,9 @@ def crawl_site(
             "links_seen": len(result.links),
             "excluded": result.excluded,
             "robots_note": result.robots_note,
+            "robots_blocked": len(result.robots_blocked),
+            "crawl_delay_applied": result.crawl_delay_applied,
+            "effective_delay_seconds": round(result.effective_delay, 3),
         }
     else:
         result = collect_urls(

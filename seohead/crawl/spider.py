@@ -22,11 +22,12 @@ from urllib.parse import urlsplit, urlunsplit
 from seohead.crawl.collect import CrawlResult, _write, fetch_one
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url
-from seohead.tools.robots import is_allowed, parse_robots
+from seohead.tools.robots import crawl_delay, is_allowed, parse_robots
 
 MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
 ROBOTS_TOKEN = "SEOHEAD-Tools"
+EMPTY_ROBOTS = {"allow": [], "disallow": [], "groups": [], "crawl_delay": None}
 
 
 @dataclass
@@ -43,6 +44,12 @@ class SpiderResult(CrawlResult):
     excluded: dict[str, int] = field(default_factory=dict)
     max_depth_reached: int = 0
     robots_note: str = ""
+    # URLs robots.txt disallows. Under "report_only" they are crawled anyway and
+    # listed here, which is what an audit needs: full coverage plus an inventory
+    # of what a compliant crawler would not have seen.
+    robots_blocked: list[str] = field(default_factory=list)
+    crawl_delay_applied: float | None = None
+    effective_delay: float = 0.0
 
 
 def _canonical_key(url: str) -> str:
@@ -85,7 +92,7 @@ def crawl_site(
     max_depth: int = 5,
     min_delay: float = 0.5,
     timeout: float = 15.0,
-    respect_robots: bool = True,
+    robots_policy: str = "respect",
     out_path: str | None = None,
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
@@ -116,12 +123,25 @@ def crawl_site(
             client, _ = http_client(timeout)
             stack.callback(client.close)
 
-        robots, note = _fetch_robots(start, fetcher, client)
+        enforce = robots_policy == "respect"
+        if robots_policy == "ignore":
+            # Not fetched at all, so there is nothing to report either.
+            robots, note = dict(EMPTY_ROBOTS), "robots.txt not fetched (policy: ignore)"
+        else:
+            robots, note = _fetch_robots(start, fetcher, client)
         result.robots_note = note
-        if respect_robots and not robots:
+        if enforce and not robots:
             result.partial = True
             result.stopped_reason = note or "robots.txt unavailable"
             return result
+
+        # A site asking to be crawled slowly is asking the crawler, not the
+        # operator. The configured delay is a floor, never a ceiling on politeness.
+        asked = crawl_delay(robots, ROBOTS_TOKEN) if robots else None
+        if asked and asked > throttle.min_delay:
+            throttle.min_delay = asked
+            throttle.delay = max(throttle.delay, asked)
+            result.crawl_delay_applied = asked
 
         queue: deque[tuple[str, int]] = deque([(start, 0)])
         seen: set[str] = {_canonical_key(start)}
@@ -134,9 +154,11 @@ def crawl_site(
             url, depth = queue.popleft()
             result.max_depth_reached = max(result.max_depth_reached, depth)
 
-            if respect_robots and not is_allowed(robots, urlsplit(url).path or "/", ROBOTS_TOKEN):
-                exclude("blocked_by_robots")
-                continue
+            if robots and not is_allowed(robots, urlsplit(url).path or "/", ROBOTS_TOKEN):
+                result.robots_blocked.append(url)
+                if enforce:
+                    exclude("blocked_by_robots")
+                    continue
 
             if throttle.delay:
                 sleeper(throttle.delay)
@@ -192,6 +214,7 @@ def crawl_site(
                 queue.append((href, depth + 1))
 
     result.excluded = excluded
+    result.effective_delay = throttle.delay
     result.limitations = [
         "same-host only: external links are recorded, never fetched",
         "static HTML only: no JavaScript rendering",

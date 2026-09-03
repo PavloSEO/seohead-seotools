@@ -52,11 +52,47 @@ def private_networks_enabled() -> bool:
     }
 
 
+# Ranges that carry a non-public address inside a globally-scoped one. Python's
+# ``is_global`` answers a question about the address family, not about where the
+# packet ends up: 64:ff9b::7f00:1 is 127.0.0.1 wrapped in the well-known NAT64
+# prefix and reports is_global=True, so on any NAT64 host — common in CI and in
+# mobile and cloud networks — the guard would pass a request to loopback.
+_TRANSLATED_PREFIXES = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "64:ff9b::/96",  # RFC 6052 well-known NAT64 prefix
+        "64:ff9b:1::/48",  # RFC 8215 local-use NAT64
+        "2002::/16",  # 6to4, embeds an IPv4 address
+        "::ffff:0:0/96",  # IPv4-mapped
+        "::/96",  # IPv4-compatible, deprecated but still parsed
+    )
+)
+
+
+def _embedded_ipv4(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address a translated IPv6 address actually reaches."""
+    packed = address.packed
+    if address in _TRANSLATED_PREFIXES[2]:  # 6to4 carries it in bytes 2..6
+        return ipaddress.IPv4Address(packed[2:6])
+    return ipaddress.IPv4Address(packed[-4:])
+
+
 def _is_public_address(value: str) -> bool:
     try:
-        return ipaddress.ip_address(value.split("%", 1)[0]).is_global
+        address = ipaddress.ip_address(value.split("%", 1)[0])
     except ValueError:
         return False
+    # Translated forms are checked first: the wrapper's own scope says nothing
+    # about the destination, and Python scores some of them non-global and
+    # others global regardless of what they carry.
+    if isinstance(address, ipaddress.IPv6Address) and any(
+        address in prefix for prefix in _TRANSLATED_PREFIXES
+    ):
+        try:
+            return _embedded_ipv4(address).is_global
+        except (ipaddress.AddressValueError, ValueError):
+            return False
+    return address.is_global
 
 
 def resolve_socket_addresses(host: str, port: int) -> list[tuple[int, int, int, Any]]:
