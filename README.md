@@ -6,13 +6,13 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-47 callable tools · 96 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
+48 callable tools · 96 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
 [![CI](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
-![Tests](https://img.shields.io/badge/tests-548%20offline-BDDDF5)
+![Tests](https://img.shields.io/badge/tests-564%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
@@ -61,7 +61,7 @@ No client data is included.
 |---|---|---|
 | Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 96-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 42 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| A tool-calling AI agent | `seohead mcp` | Exposes 43 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -77,7 +77,7 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
-### 42 core CLI commands and MCP tools
+### 43 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |
 |---|---:|---|
@@ -201,7 +201,7 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **42 `seo_*` tools plus five `sf_*` tools**. The 42 core tools share the tested
+The server exposes **43 `seo_*` tools plus five `sf_*` tools**. The 43 core tools share the tested
 handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
 opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
 return paths instead of dumping large reports into an agent context.
@@ -283,7 +283,7 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 python -m build
 ```
 
-The suite contains **548 offline tests**. CI also checks interface registration, layer boundaries,
+The suite contains **564 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
 
 README visuals are generated from committed synthetic examples with

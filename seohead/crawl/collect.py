@@ -56,6 +56,7 @@ class PageRecord:
     og_image: str = ""
     word_count: int = 0
     text_ratio: float | None = None
+    crawl_depth: int = 0
     outlinks: int = 0
     external_outlinks: int = 0
     jsonld_blocks_found: int = 0
@@ -115,6 +116,74 @@ def _jsonld_counts(html: str, parsed: dict) -> tuple[int, int]:
     return found, len(parsed.get("jsonld") or [])
 
 
+def fetch_one(
+    url: str,
+    *,
+    client: Any = None,
+    fetcher: Callable[[str], Any] | None = None,
+    throttle: Throttle | None = None,
+) -> tuple[PageRecord, dict[str, Any] | None]:
+    """Fetch and parse one URL. Returns the record and the parsed document.
+
+    The parsed document is handed back rather than discarded so a caller that
+    needs the links — the spider — does not parse the same bytes twice.
+    """
+    record = PageRecord(url=url)
+    if fetcher is None:
+        # Guard only the transport we open ourselves. validate_url resolves DNS,
+        # so running it against an injected transport would make offline tests
+        # depend on the network and would guard a socket we never open.
+        try:
+            validate_url(url)
+        except Exception as exc:  # blocked target, bad scheme, private network
+            record.error = str(exc)
+            return record, None
+
+    started = time.monotonic()
+    try:
+        response = fetcher(url) if fetcher else client.get(url, headers={"User-Agent": UA})
+    except Exception as exc:
+        record.error = str(exc)
+        if throttle is not None and _is_timeout(str(exc)):
+            throttle.record_timeout()
+        return record, None
+
+    elapsed = time.monotonic() - started
+    record.response_time = round(elapsed, 3)
+    record.status_code = getattr(response, "status_code", None)
+    headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
+    record.content_type = headers.get("content-type", "")
+    record.x_robots = headers.get("x-robots-tag", "")
+    record.redirect_url = headers.get("location", "")
+
+    body = getattr(response, "text", "") or ""
+    record.size_bytes = len(body.encode("utf-8", "ignore"))
+    ok = record.status_code is not None and 200 <= record.status_code < 300
+    if throttle is not None:
+        throttle.record_response(elapsed, ok)
+        throttle.record_success()
+
+    parsed = None
+    if record.size_bytes > MAX_RESPONSE_BYTES:
+        # Too large to parse, but a 200 is still a 200: not "unreachable".
+        record.error = "response too large to parse"
+    elif record.is_html and body:
+        parsed = parse_html(body, url)
+        for key, value in _record_from_parsed(parsed).items():
+            setattr(record, key, value)
+        found, parsed_count = _jsonld_counts(body, parsed)
+        record.jsonld_blocks_found = found
+        record.jsonld_blocks_parsed = parsed_count
+        text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
+        record.text_ratio = round(text_len / record.size_bytes, 4) if record.size_bytes else None
+    return record, parsed
+
+
+def _is_timeout(message: str) -> bool:
+    lowered = message.lower()
+    return "timed out" in lowered or "timeout" in lowered
+
+
 def collect_urls(
     urls: Iterable[str],
     *,
@@ -133,6 +202,7 @@ def collect_urls(
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
     throttle = Throttle(min_delay=min_delay)
+
     seen: set[str] = set()
     with contextlib.ExitStack() as stack:
         handle = None
@@ -155,68 +225,18 @@ def collect_urls(
                 continue
             seen.add(url)
 
-            record = PageRecord(url=url)
-            try:
-                validate_url(url)
-            except Exception as exc:  # guarded target, bad scheme, private network
-                record.error = str(exc)
-                result.pages.append(record)
-                _write(handle, record)
-                continue
-
             if throttle.delay:
                 sleeper(throttle.delay)
 
-            started = time.monotonic()
-            try:
-                response = fetcher(url) if fetcher else client.get(url, headers={"User-Agent": UA})
-            except Exception as exc:
-                message = str(exc)
-                record.error = message
-                if "timed out" in message.lower() or "timeout" in message.lower():
-                    throttle.record_timeout()
-                    if throttle.should_stop():
-                        result.pages.append(record)
-                        _write(handle, record)
-                        result.partial = True
-                        result.stopped_reason = "origin stopped responding (repeated timeouts)"
-                        break
-                result.pages.append(record)
-                _write(handle, record)
-                continue
-
-            elapsed = time.monotonic() - started
-            record.response_time = round(elapsed, 3)
-            record.status_code = getattr(response, "status_code", None)
-            headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
-            record.content_type = headers.get("content-type", "")
-            record.x_robots = headers.get("x-robots-tag", "")
-            record.redirect_url = headers.get("location", "")
-
-            body = getattr(response, "text", "") or ""
-            record.size_bytes = len(body.encode("utf-8", "ignore"))
-            ok = record.status_code is not None and 200 <= record.status_code < 300
-            throttle.record_response(elapsed, ok)
-            throttle.record_success()
-
-            if record.size_bytes > MAX_RESPONSE_BYTES:
-                # Too large to parse, but a 200 is still a 200: it must not be
-                # reported as unreachable.
-                record.error = "response too large to parse"
-            elif record.is_html and body:
-                parsed = parse_html(body, url)
-                for key, value in _record_from_parsed(parsed).items():
-                    setattr(record, key, value)
-                found, parsed_count = _jsonld_counts(body, parsed)
-                record.jsonld_blocks_found = found
-                record.jsonld_blocks_parsed = parsed_count
-                text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
-                record.text_ratio = (
-                    round(text_len / record.size_bytes, 4) if record.size_bytes else None
-                )
-
+            record, _ = fetch_one(url, client=client, fetcher=fetcher, throttle=throttle)
             result.pages.append(record)
             _write(handle, record)
+
+            if throttle.should_stop():
+                result.partial = True
+                result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                break
+
     result.limitations = [
         "list mode: no link discovery, no sitemap expansion",
         "static HTML only: no JavaScript rendering",

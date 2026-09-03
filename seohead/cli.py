@@ -23,6 +23,7 @@ from seohead.servers import handlers
 # command -> handler kwarg builder. Each maps CLI namespace + --input dict -> kwargs.
 COMMANDS = (
     "parse",
+    "crawl-site",
     "redirects-generate",
     "redirects-check",
     "sitemap-crawl",
@@ -68,6 +69,7 @@ COMMANDS = (
 
 # Tools whose complete direct CLI input can be supplied by one --url flag.
 URL_COMMANDS = (
+    "crawl-site",
     "parse",
     "redirects-check",
     "sitemap-crawl",
@@ -182,6 +184,15 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "redirects-check":
         if args.url:
             kw["url"] = args.url
+    elif cmd == "crawl-site":
+        if args.url:
+            kw["url"] = args.url
+        for flag in ("max_urls", "max_depth", "min_delay", "out_dir"):
+            value = getattr(args, flag, None)
+            if value is not None:
+                kw[flag] = value
+        if getattr(args, "ignore_robots", False):
+            kw["respect_robots"] = False
     elif cmd == "sitemap-crawl":
         if args.url:
             kw["url"] = args.url
@@ -374,6 +385,20 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             action="store_true",
             help="verify bot identities with forward-confirmed reverse DNS "
             "(performs network lookups)",
+        )
+    if cmd == "crawl-site":
+        sub.add_argument("--max-urls", type=int, help="URL budget (default 200)")
+        sub.add_argument("--max-depth", type=int, help="link depth from the start URL (default 5)")
+        sub.add_argument(
+            "--min-delay",
+            type=float,
+            help="seconds between requests; the floor beneath adaptive back-off (default 0.5)",
+        )
+        sub.add_argument("--out-dir", help="directory for pages.jsonl and audit.json")
+        sub.add_argument(
+            "--ignore-robots",
+            action="store_true",
+            help="crawl URLs robots.txt disallows (only for a site you control)",
         )
     if cmd == "site-audit":
         sub.add_argument("--url", help="site home page")

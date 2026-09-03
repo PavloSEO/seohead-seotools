@@ -79,6 +79,105 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
     return sitemap.crawl(url, concurrency)
 
 
+def crawl_site(
+    url: str | None = None,
+    urls: list[str] | None = None,
+    max_urls: int = 200,
+    max_depth: int = 5,
+    min_delay: float = 0.5,
+    respect_robots: bool = True,
+    out_dir: str | None = None,
+) -> dict[str, Any]:
+    """Crawl a site from a start URL, or fetch an explicit list, then audit it.
+
+    The interface layer is where collector and analyzer are allowed to meet:
+    ``seohead.crawl`` gathers evidence and never imports the analyzer,
+    ``seohead.sf`` judges it and never imports the collector, and this function
+    hands the projection from one to the other.
+
+    ``min_delay`` defaults to half a second because the target is somebody's
+    production site: polite by accident beats fast by accident.
+    """
+    import json
+    import os
+    from datetime import datetime, timezone
+
+    from seohead.crawl.collect import collect_urls
+    from seohead.crawl.evidence import build_evidence
+    from seohead.crawl.spider import crawl_site as _spider
+    from seohead.sf.config import load_config
+    from seohead.sf.core.aggregate import aggregate
+    from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.loader import LoadedExports
+    from seohead.sf.core.rules import run_rules
+
+    if not url and not urls:
+        raise ValueError("url or urls required")
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    pages_path = os.path.join(out_dir, "pages.jsonl") if out_dir else None
+
+    if url:
+        result = _spider(
+            url,
+            max_urls=max_urls,
+            max_depth=max_depth,
+            min_delay=min_delay,
+            respect_robots=respect_robots,
+            out_path=pages_path,
+        )
+        discovery = {
+            "mode": "spider",
+            "max_depth_reached": result.max_depth_reached,
+            "links_seen": len(result.links),
+            "excluded": result.excluded,
+            "robots_note": result.robots_note,
+        }
+    else:
+        result = collect_urls(
+            urls or [], max_urls=max_urls, min_delay=min_delay, out_path=pages_path
+        )
+        discovery = {"mode": "list"}
+
+    evidence = build_evidence(result)
+    exports = LoadedExports()
+    exports.frames.update(evidence["frames"])
+    exports.found = list(evidence["found"])
+    exports.missing = list(evidence["missing"])
+
+    ctx = AuditContext(exports, load_config(None))
+    ctx.skip_unsupported(set(exports.frames))
+    run_rules(ctx)
+    audit = aggregate(
+        ctx,
+        {
+            "input_mode": "crawl" if url else "crawl-list",
+            "source": url or "url-list",
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "collector": "seohead.crawl",
+            "crawl_partial": result.partial,
+            "crawl_stopped_reason": result.stopped_reason,
+        },
+        {},
+        {},
+    ).to_json()
+
+    if out_dir:
+        with open(os.path.join(out_dir, "audit.json"), "w", encoding="utf-8") as fh:
+            json.dump(audit, fh, ensure_ascii=False, indent=2)
+
+    return {
+        "urls_collected": len(result.pages),
+        "partial": result.partial,
+        "stopped_reason": result.stopped_reason,
+        "discovery": discovery,
+        "limitations": result.limitations,
+        "summary": audit["summary"],
+        "checks_skipped": len(audit["run"].get("checks_skipped", [])),
+        "out_dir": out_dir,
+    }
+
+
 def images_download(
     urls: list[str] | None = None,
     output_dir: str | None = None,
@@ -735,6 +834,7 @@ HANDLERS = {
     "redirects_generate": redirects_generate,
     "redirects_check": redirects_check,
     "sitemap_crawl": sitemap_crawl,
+    "crawl_site": crawl_site,
     "images_download": images_download,
     "images_optimize": images_optimize,
     "keywords_cluster": keywords_cluster,

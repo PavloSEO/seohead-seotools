@@ -52,13 +52,29 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 548 offline tests; runtime depends on extras
+pytest -q                             # 564 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
 The last command runs a real audit (mode B) over the synthetic crawl in
 `examples/exports/` and writes `/tmp/report/audit.json` + `audit.md` +
 `tasks.json` + `tasks.md`. If that works, the toolkit works.
+
+## Crawling without a Screaming Frog licence
+
+```bash
+seohead crawl-site --url https://example.com/ --max-urls 200 --out-dir ./report
+```
+
+Follows links from the start URL on the same host, respects `robots.txt`, and audits the result
+through the same checks used for Screaming Frog exports. `--min-delay` is the floor beneath an
+adaptive back-off: latency widens the delay, a timeout widens it hard, and repeated timeouts stop
+the run rather than pushing a failing origin. Rows land in `pages.jsonl` as they are collected, so
+an interrupted crawl still leaves evidence behind.
+
+This is not Screaming Frog parity. Checks whose evidence a native crawl cannot produce —
+redirect chains, near-duplicates, readability, pixel widths, link score — are reported as
+**skipped**, never as clean, and `summary.check_coverage` states how much of the registry ran.
 
 `seohead sf doctor` prints environment diagnostics: where the SF CLI is (or
 is not), which optional dependencies are present, which base Screaming Frog

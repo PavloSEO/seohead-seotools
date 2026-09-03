@@ -69,6 +69,28 @@ def build_server():  # -> FastMCP
         """Follow a live redirect chain for a URL and report each hop (status, location)."""
         return handlers.redirects_check(url=url, options=options)
 
+    @mcp.tool(annotations=create_files_from_web, structured_output=True)
+    def seo_crawl_site(
+        url: str,
+        max_urls: int = 200,
+        max_depth: int = 5,
+        min_delay: float = 0.5,
+        respect_robots: bool = True,
+        out_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Crawl a site from a start URL by following links, then audit the result
+        through the same checks used for Screaming Frog exports. Same host only,
+        robots.txt respected, politeness adapts to the origin. Checks whose evidence
+        a native crawl cannot produce are reported as skipped, never as clean."""
+        return handlers.crawl_site(
+            url=url,
+            max_urls=max_urls,
+            max_depth=max_depth,
+            min_delay=min_delay,
+            respect_robots=respect_robots,
+            out_dir=out_dir,
+        )
+
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_sitemap_crawl(url: str, concurrency: int = 3) -> dict[str, Any]:
         """Recursively parse a sitemap (index/urlset, gzip supported) into a URL tree,

@@ -114,7 +114,7 @@ def _row(record: Any) -> dict[str, Any]:
         "External Outlinks": record.external_outlinks,
         "Response Time": record.response_time if record.response_time is not None else "",
         "Redirect URL": record.redirect_url,
-        "Crawl Depth": 0,
+        "Crawl Depth": record.crawl_depth,
         "Structured Data": record.jsonld_blocks_found,
     }
 
