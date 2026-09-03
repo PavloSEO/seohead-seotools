@@ -9,10 +9,18 @@ WORKDIR /src
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# EXTRAS selects what goes in the image. The default is deliberately narrow:
+# the crawl-and-audit path plus the MCP server, which is what this image exists
+# for. "cluster" alone pulls scikit-learn and, transitively, scipy — 119 MB for
+# keyword clustering, which has nothing to do with crawling a site.
+#   docker build .                                    -> slim (default)
+#   docker build --build-arg EXTRAS=all .             -> everything
+ARG EXTRAS=mcp,reports
+
 COPY pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md ./
 COPY seohead ./seohead
 RUN python -m pip install --upgrade pip && \
-    python -m pip install ".[mcp,cluster,reports]"
+    python -m pip install ".[${EXTRAS}]"
 
 FROM python:3.12-slim AS runtime
 

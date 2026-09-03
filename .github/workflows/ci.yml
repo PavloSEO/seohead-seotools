@@ -113,6 +113,22 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: seohead-tools:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Report image size and smoke-test the slim image
+        run: |
+          # Printed on every run so a transitive dependency that quietly adds
+          # 200 MB is visible in the build log, not discovered months later.
+          docker images seohead-tools:ci --format 'image size: {{.Size}}'
+          docker run --rm seohead-tools:ci --version
+          docker run --rm -v "$PWD/examples:/data/examples:ro" seohead-tools:ci \
+            sf run --exports-dir /data/examples/exports --out /tmp/report -q
+          docker run --rm --entrypoint python seohead-tools:ci -c "
+          import asyncio
+          from seohead.servers.mcp_server import build_server
+          tools = asyncio.run(build_server().list_tools())
+          assert len(tools) == 49, f'expected 49 MCP tools, got {len(tools)}'
+          print(f'MCP tools available in the slim image: {len(tools)}')
+          "

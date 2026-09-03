@@ -98,6 +98,27 @@ Mode B (`--exports-dir`) already has the exports and is not affected.
 `sf-analyzer` is also installed as a focused audit-CLI alias (`[project.scripts]` in
 `pyproject.toml`). Use `seohead sf ...` when one entry point is preferable.
 
+## Docker
+
+```bash
+docker build -t seohead-tools .                      # slim: crawl, audit, MCP
+docker build --build-arg EXTRAS=all -t seohead-tools:full .   # + clustering, rendering
+```
+
+The default image carries the crawl-and-audit path and the MCP server. Keyword clustering is
+deliberately not in it: `scikit-learn` pulls `scipy` transitively, which is 119 MB for a feature
+unrelated to crawling a site. Rendering (Playwright) is likewise opt-in — it needs a real Chromium
+and its shared libraries.
+
+Measured: **540 MB slim, 1.3 GB full.** CI prints the image size on every run, so a transitive
+dependency that quietly adds a couple of hundred megabytes shows up in the build log rather than
+being discovered later.
+
+One weight item is not yet addressed: `pandas` 3.x requires `pyarrow`, which is 124 MB and is never
+called by this codebase. The pandas API surface actually used here is small (`DataFrame`,
+`read_csv`, `read_excel`, `to_numeric`, `Series`, `isna`), all of which exist in 2.x — so pinning
+below 3 is likely to remove it. That change is tracked separately rather than made blind.
+
 ## Comparing two crawls
 
 ```bash
