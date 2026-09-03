@@ -19,7 +19,13 @@ import socket
 import ssl
 from typing import Any
 
-from seohead.recon.net import doh, normalize_domain, rdap, resolve_socket_addresses, whois_text
+from seohead.recon.net import (
+    doh,
+    normalize_domain,
+    rdap,
+    resolve_socket_addresses,
+    whois_lookup,
+)
 
 # Domain age is a weak trust signal; a 30-day expiry window warrants renewal attention.
 YOUNG_DOMAIN_DAYS = 180
@@ -89,6 +95,28 @@ def _from_rdap_domain(data: dict[str, Any]) -> dict[str, Any]:
             }
         ),
     }
+
+
+# Keys a whois record uses to name the object it describes.
+_WHOIS_IDENTITY_KEYS = ("domain", "domain name", "domain_name")
+
+
+def whois_record_is_about(text: str, domain: str) -> bool:
+    """True when the record names the domain that was asked about.
+
+    A resolver that answers with the zone record returns a perfectly normal
+    looking registration — creation date, expiry, nameservers — for a different
+    object. Parsing it produced a confident wrong domain age, which is worse
+    than no answer: age decides whether a site's authority is treated as an
+    asset worth preserving.
+    """
+    from seohead.recon.net import _whois_field
+
+    stated = _whois_field(text, _WHOIS_IDENTITY_KEYS)
+    if not stated:
+        return False
+    stated = stated.strip().rstrip(".").lower()
+    return stated == domain.strip().rstrip(".").lower()
 
 
 def _from_whois_text(text: str) -> dict[str, Any]:
@@ -272,20 +300,31 @@ def profile_domain(domain: str, *, with_tls: bool = True) -> dict[str, Any]:
         registration = _from_rdap_domain(res.get("data") or {})
         registration["source"] = "rdap"
     else:
-        text = whois_text(name)
-        registration = (
-            _from_whois_text(text)
-            if text
-            else {
-                "registrar": None,
-                "created": None,
-                "expires": None,
-                "updated": None,
-                "status": [],
-                "nameservers": [],
-            }
-        )
-        registration["source"] = "whois" if text else "none"
+        empty = {
+            "registrar": None,
+            "created": None,
+            "expires": None,
+            "updated": None,
+            "status": [],
+            "nameservers": [],
+        }
+        text, whois_server = whois_lookup(name)
+        if text and whois_record_is_about(text, name):
+            registration = _from_whois_text(text)
+            registration["source"] = "whois"
+            if whois_server:
+                registration["whois_server"] = whois_server
+        else:
+            # Either nothing answered, or what answered was about another object
+            # (typically the zone). Reporting "none" is the same discipline the
+            # toolkit already applies when RDAP and whois both fail.
+            registration = dict(empty)
+            registration["source"] = "none"
+            if text:
+                registration["whois_note"] = (
+                    "whois answered with a record for another object "
+                    "(usually the zone); no registration data was taken from it"
+                )
         registration["rdap_note"] = res.get("error")
 
     created = _parse_date(registration.get("created") or "")

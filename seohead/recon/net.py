@@ -267,19 +267,81 @@ def rdap(path: str, timeout: float = 12.0) -> dict[str, Any]:
             return {"supported": False, "error": "RDAP returned non-JSON"}
 
 
-def whois_text(domain: str, timeout: float = 15.0) -> str | None:
+# Registries the default whois resolver does not reach. Without these it answers
+# with the zone record instead of the domain's own, which reads as a real
+# registration: every .ru domain came back with the .RU delegation date of 1994.
+WHOIS_SERVERS_BY_TLD: dict[str, str] = {
+    "ru": "whois.tcinet.ru",
+    "su": "whois.tcinet.ru",
+    "xn--p1ai": "whois.tcinet.ru",  # the Cyrillic .rf ccTLD, in punycode
+}
+
+# Fields a registry uses to refer to the authoritative server.
+_WHOIS_REFERRAL_KEYS = ("whois", "refer", "registrar whois server")
+
+_HOSTNAME_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+
+
+def _whois_field(text: str, keys: tuple[str, ...]) -> str | None:
+    """First value of the first matching key, ignoring comment lines."""
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if ":" not in stripped or stripped.startswith(("%", "#")):
+            continue
+        key, _, value = stripped.partition(":")
+        if key.strip().lower() in keys and value.strip():
+            return value.strip()
+    return None
+
+
+def whois_text(domain: str, timeout: float = 15.0, server: str | None = None) -> str | None:
     """Return raw system-whois output as an optional ccTLD fallback."""
     binary = shutil.which("whois")
     if not binary or not domain:
         return None
+    argv = [binary]
+    if server:
+        # The server may come from a registry response, i.e. untrusted input.
+        # Only a syntactically valid hostname is ever passed on, and it is
+        # passed as an argument vector, never through a shell.
+        if not _HOSTNAME_RE.match(server.lower()):
+            return None
+        argv += ["-h", server]
+    argv.append(domain)
     try:
-        process = subprocess.run(
-            [binary, domain],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        process = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
     except (subprocess.SubprocessError, OSError):
         return None
     return process.stdout or None
+
+
+def whois_lookup(domain: str, timeout: float = 15.0) -> tuple[str | None, str | None]:
+    """Query whois, following one registry referral. Returns ``(text, server)``.
+
+    The referral hop is what separates a domain's own record from the record of
+    its zone; a caller still has to confirm the answer is about the domain it
+    asked for.
+    """
+    if not domain:
+        return None, None
+    tld = domain.rsplit(".", 1)[-1].lower()
+    mapped = WHOIS_SERVERS_BY_TLD.get(tld)
+    if mapped:
+        text = whois_text(domain, timeout, server=mapped)
+        if text:
+            return text, mapped
+
+    text = whois_text(domain, timeout)
+    if not text:
+        return None, None
+
+    referral = _whois_field(text, _WHOIS_REFERRAL_KEYS)
+    if referral:
+        referral = referral.split("//")[-1].split("/")[0].strip().lower()
+        if referral and referral != (mapped or ""):
+            deeper = whois_text(domain, timeout, server=referral)
+            if deeper:
+                return deeper, referral
+    return text, None

@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 497 offline tests; runtime depends on extras
+pytest -q                             # 508 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
