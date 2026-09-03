@@ -83,10 +83,11 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
-    max_urls: int = 200,
-    max_depth: int = 5,
-    min_delay: float = 0.5,
-    respect_robots: bool = True,
+    config: str | None = None,
+    max_urls: int | None = None,
+    max_depth: int | None = None,
+    min_delay: float | None = None,
+    robots: str | None = None,
     out_dir: str | None = None,
 ) -> dict[str, Any]:
     """Crawl a site from a start URL, or fetch an explicit list, then audit it.
@@ -103,6 +104,7 @@ def crawl_site(
     import os
     from datetime import datetime, timezone
 
+    from seohead.crawl import config as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
     from seohead.crawl.spider import crawl_site as _spider
@@ -114,17 +116,35 @@ def crawl_site(
 
     if not url and not urls:
         raise ValueError("url or urls required")
+
+    # Defaults, then file, then environment, then these explicit arguments.
+    settings = crawl_config.load(
+        config,
+        overrides={
+            "limits.max_urls": max_urls,
+            "limits.max_depth": max_depth,
+            "speed.min_delay_seconds": min_delay,
+            "robots.policy": robots,
+            "output.dir": out_dir,
+        },
+    )
+    out_dir = settings["output"]["dir"] or None
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    pages_path = os.path.join(out_dir, "pages.jsonl") if out_dir else None
+    pages_path = (
+        os.path.join(out_dir, "pages.jsonl")
+        if out_dir and settings["output"]["write_pages_jsonl"]
+        else None
+    )
 
     if url:
         result = _spider(
             url,
-            max_urls=max_urls,
-            max_depth=max_depth,
-            min_delay=min_delay,
-            respect_robots=respect_robots,
+            max_urls=settings["limits"]["max_urls"],
+            max_depth=settings["limits"]["max_depth"],
+            min_delay=settings["speed"]["min_delay_seconds"],
+            timeout=settings["http"]["timeout_seconds"],
+            respect_robots=settings["robots"]["policy"] != "ignore",
             out_path=pages_path,
         )
         discovery = {
@@ -136,7 +156,11 @@ def crawl_site(
         }
     else:
         result = collect_urls(
-            urls or [], max_urls=max_urls, min_delay=min_delay, out_path=pages_path
+            urls or [],
+            max_urls=settings["limits"]["max_urls"],
+            min_delay=settings["speed"]["min_delay_seconds"],
+            timeout=settings["http"]["timeout_seconds"],
+            out_path=pages_path,
         )
         discovery = {"mode": "list"}
 
@@ -158,6 +182,10 @@ def crawl_site(
             "collector": "seohead.crawl",
             "crawl_partial": result.partial,
             "crawl_stopped_reason": result.stopped_reason,
+            # Resolved values of every setting that can change what was found.
+            # Without these two reports on the same site are not comparable.
+            "crawl_config": crawl_config.manifest(settings),
+            "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
         },
         {},
         {},

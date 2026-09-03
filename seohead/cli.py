@@ -187,12 +187,10 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "crawl-site":
         if args.url:
             kw["url"] = args.url
-        for flag in ("max_urls", "max_depth", "min_delay", "out_dir"):
+        for flag in ("config", "max_urls", "max_depth", "min_delay", "out_dir", "robots"):
             value = getattr(args, flag, None)
             if value is not None:
                 kw[flag] = value
-        if getattr(args, "ignore_robots", False):
-            kw["respect_robots"] = False
     elif cmd == "sitemap-crawl":
         if args.url:
             kw["url"] = args.url
@@ -395,10 +393,11 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             help="seconds between requests; the floor beneath adaptive back-off (default 0.5)",
         )
         sub.add_argument("--out-dir", help="directory for pages.jsonl and audit.json")
+        sub.add_argument("--config", help="path to a crawler config file (JSON)")
         sub.add_argument(
-            "--ignore-robots",
-            action="store_true",
-            help="crawl URLs robots.txt disallows (only for a site you control)",
+            "--robots",
+            choices=["respect", "report_only", "ignore"],
+            help="respect robots.txt; report what it blocks but crawl anyway; or do not fetch it",
         )
     if cmd == "site-audit":
         sub.add_argument("--url", help="site home page")

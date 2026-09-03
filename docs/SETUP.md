@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 585 offline tests; runtime depends on extras
+pytest -q                             # 610 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
@@ -97,6 +97,45 @@ Mode B (`--exports-dir`) already has the exports and is not affected.
 
 `sf-analyzer` is also installed as a focused audit-CLI alias (`[project.scripts]` in
 `pyproject.toml`). Use `seohead sf ...` when one entry point is preferable.
+
+## Crawler configuration
+
+```bash
+seohead crawl-site --url https://example.com/ --config crawl.json --out-dir ./report
+```
+
+```json
+{
+  "limits": {"max_urls": 500, "max_depth": 4},
+  "speed": {"min_delay_seconds": 1.0},
+  "robots": {"policy": "report_only"},
+  "discovery": {"external": {"store": true, "crawl": false}}
+}
+```
+
+Resolution order is defaults, then the file, then environment variables, then explicit command-line
+arguments — the most local statement of intent wins.
+
+Three properties are deliberate:
+
+**An unknown key is an error, not a no-op.** A setting the crawler does not read would promise
+behaviour that does not exist, and a typo in a scope pattern would silently widen a crawl.
+
+**`store` and `crawl` are separate flags** for every link type: keep it in the report, versus
+request it for a status code. These are different questions, and one flag for both is why a crawler
+either misses broken images or triples its request count.
+
+**Settings that change what the audit finds are written into `audit.json`** as
+`run.crawl_config`, with their resolved values. Two reports on the same site are otherwise not
+comparable, and nobody can tell why they differ. `run.effective_max_requests_per_second` records the
+politeness the run actually permitted, because politeness is a combination of settings rather than
+any single one.
+
+`robots.policy` accepts `respect` (obey), `report_only` (fetch it, report what it would block, crawl
+anyway — the honest audit setting), and `ignore` (do not fetch it at all).
+
+Environment overrides: `SEOHEAD_CRAWL_MAX_URLS`, `SEOHEAD_CRAWL_MAX_DEPTH`,
+`SEOHEAD_CRAWL_MIN_DELAY`, `SEOHEAD_CRAWL_ROBOTS`, `SEOHEAD_CRAWL_USER_AGENT`.
 
 ## Run journal
 
