@@ -279,6 +279,23 @@ def _split_srcset(value: str) -> list[str]:
     return urls
 
 
+# CSS ``url(...)`` references, in inline style attributes and <style> blocks.
+# A page whose banners and product photos are CSS backgrounds is invisible to
+# every image check if only <img> is inspected — and a background image has no
+# alt attribute at all, which is itself sometimes the finding.
+_CSS_URL_RE = re.compile(r"""url\(\s*(['"]?)([^'")]+)\1\s*\)""", re.IGNORECASE)
+
+
+def extract_css_urls(css_text: str) -> list[str]:
+    """URLs referenced from CSS text, in source order, duplicates kept.
+
+    Deliberately not limited to ``background-image``: ``border-image``,
+    ``list-style-image``, ``mask-image`` and ``content`` all fetch resources the
+    same way, and a checker that only knew one property would under-report.
+    """
+    return [match.group(2).strip() for match in _CSS_URL_RE.finditer(css_text or "")]
+
+
 def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
     """Extract URL carriers beyond ``a[href]``.
 
@@ -319,6 +336,20 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
                         push(sub, tag_name, attr)
                 else:
                     push(value if isinstance(value, str) else value[0], tag_name, attr)
+
+    # CSS url(...) in inline style attributes and in <style> blocks. External
+    # stylesheets are not fetched here: this function parses one document and
+    # performs no I/O, so a linked .css is reported as a resource by the <link>
+    # rule above and its contents are a crawler concern, not a parser one.
+    for tag in soup.find_all(style=True):
+        style_value = tag.get("style")
+        if isinstance(style_value, list):
+            style_value = " ".join(style_value)
+        for url in extract_css_urls(style_value):
+            push(url, tag.name, "style")
+    for style_tag in soup.find_all("style"):
+        for url in extract_css_urls(style_tag.get_text()):
+            push(url, "style", "css")
 
     # meta http-equiv=refresh content="0;url=..."
     for meta in soup.find_all("meta"):

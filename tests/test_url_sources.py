@@ -58,3 +58,75 @@ def test_data_and_fragment_and_mailto_skipped():
 def test_url_sources_off_by_default():
     r = parse_html('<img src="/a.jpg">', "https://example.com/")
     assert "url_sources" not in r  # The disabled option preserves backward compatibility.
+
+
+# ── CSS-referenced resources ────────────────────────────────────────────────
+
+
+def test_css_urls_are_extracted_from_inline_style_attributes():
+    """A page whose images are CSS backgrounds was invisible to every image check."""
+    from seohead.tools.parser import parse_html
+
+    html = "<html><body><div style=\"background: url('/hero.png') no-repeat\"></div></body></html>"
+    found = parse_html(html, "https://e.com/", {"url_sources": True})["url_sources"]
+    assert {"url": "https://e.com/hero.png", "tag": "div", "attr": "style"} in found
+
+
+def test_css_urls_are_extracted_from_style_blocks():
+    from seohead.tools.parser import parse_html
+
+    html = "<html><head><style>.hero{background-image:url(/bg.webp)}</style></head><body></body></html>"
+    found = parse_html(html, "https://e.com/", {"url_sources": True})["url_sources"]
+    assert {"url": "https://e.com/bg.webp", "tag": "style", "attr": "css"} in found
+
+
+def test_css_extraction_covers_properties_beyond_background_image():
+    """border-image, mask-image and content fetch resources the same way."""
+    from seohead.tools.parser import extract_css_urls
+
+    css = "a{border-image:url(b.png)} b{mask-image:url('m.svg')} c{content:url(\"i.gif\")}"
+    assert extract_css_urls(css) == ["b.png", "m.svg", "i.gif"]
+
+
+def test_css_url_quoting_variants_all_parse():
+    from seohead.tools.parser import extract_css_urls
+
+    css = "a{background:url(bare.png)} b{background:url('single.png')} c{background:url(\"double.png\")}"
+    assert extract_css_urls(css) == ["bare.png", "single.png", "double.png"]
+
+
+def test_css_url_whitespace_is_tolerated():
+    from seohead.tools.parser import extract_css_urls
+
+    assert extract_css_urls("a{background:url(  spaced.png  )}") == ["spaced.png"]
+
+
+def test_data_uris_in_css_are_skipped_like_everywhere_else():
+    from seohead.tools.parser import parse_html
+
+    html = (
+        '<html><body><div style="background:url(data:image/gif;base64,R0lGOD)"></div></body></html>'
+    )
+    found = parse_html(html, "https://e.com/", {"url_sources": True})["url_sources"]
+    assert found == []
+
+
+def test_css_text_without_urls_yields_nothing():
+    from seohead.tools.parser import extract_css_urls
+
+    assert extract_css_urls("body{color:red}") == []
+    assert extract_css_urls("") == []
+
+
+def test_a_css_background_and_an_img_are_both_reported():
+    """The point of the change: neither source hides the other."""
+    from seohead.tools.parser import parse_html
+
+    html = (
+        "<html><head><style>.h{background-image:url(/css.png)}</style></head>"
+        '<body><img src="/tag.png"></body></html>'
+    )
+    urls = {
+        u["url"] for u in parse_html(html, "https://e.com/", {"url_sources": True})["url_sources"]
+    }
+    assert urls == {"https://e.com/css.png", "https://e.com/tag.png"}
