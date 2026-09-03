@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from seohead import runlog
 from seohead.tools import (
     clusterer,
     downloader,
@@ -829,7 +830,7 @@ def sources_doctor() -> dict[str, Any]:
     return {"ok": True, "sources": sources, "spend_log": str(spend_core.log_path())}
 
 
-HANDLERS = {
+_RAW_HANDLERS = {
     "parse": parse,
     "redirects_generate": redirects_generate,
     "redirects_check": redirects_check,
@@ -874,3 +875,8 @@ HANDLERS = {
     "google_keywords": google_keywords,
     "google_serp": google_serp,
 }
+
+# Journaling sits here rather than in each interface: the CLI and the MCP server
+# both dispatch through this mapping, so one wrapper records every call exactly
+# once and no future tool can be added without being recorded.
+HANDLERS = {name: runlog.journaled(name, fn) for name, fn in _RAW_HANDLERS.items()}

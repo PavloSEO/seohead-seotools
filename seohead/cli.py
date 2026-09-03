@@ -17,7 +17,7 @@ import json
 import sys
 from typing import Any
 
-from seohead import __version__
+from seohead import __version__, runlog
 from seohead.servers import handlers
 
 # command -> handler kwarg builder. Each maps CLI namespace + --input dict -> kwargs.
@@ -605,6 +605,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    runlog.set_interface("cli")
     args = build_parser().parse_args(argv)
     cmd = args.command
     if not cmd:

@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from seohead import runlog
 from seohead.servers import handlers
 
 
 def build_server():  # -> FastMCP
+    runlog.set_interface("mcp")
     from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 

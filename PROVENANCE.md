@@ -29,6 +29,6 @@ Counts shown in the README are checked against source registries:
 - five Screaming Frog-specific `sf_*` MCP tools;
 - 96 audit checks in the crawl registry;
 - 21 technical workflow skills plus seven packaged SEO playbooks;
-- 566 offline tests in the current suite.
+- 585 offline tests in the current suite.
 
 When these registries change, tests and public counts must change in the same pull request.

@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 566 offline tests; runtime depends on extras
+pytest -q                             # 585 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
@@ -98,6 +98,32 @@ Mode B (`--exports-dir`) already has the exports and is not affected.
 `sf-analyzer` is also installed as a focused audit-CLI alias (`[project.scripts]` in
 `pyproject.toml`). Use `seohead sf ...` when one entry point is preferable.
 
+## Run journal
+
+Every CLI command and MCP call is appended to one JSONL journal, so a session can be
+reconstructed after the process exits: which tools ran, against what, how long they took, and
+whether they failed.
+
+```bash
+SEOHEAD_RUN_LOG=./runs.jsonl seohead crawl-site --url https://example.com/
+SEOHEAD_RUN_LOG=off seohead parse --url https://example.com/    # disable
+```
+
+Default path is `~/.config/seohead/runs.jsonl`. Journaling wraps the shared handler registry
+rather than each interface, so both faces of the toolkit record exactly once and a new tool
+cannot be added without being recorded.
+
+Arguments whose names look like credentials — token, key, secret, password, auth — are stored as
+`[redacted]`, and long values and lists are shortened rather than dropped. A journal that leaks an
+API key would leak it silently, since nothing about a log file suggests it holds secrets.
+
+Each entry carries a `fingerprint` of the call: the same tool with the same arguments produces the
+same value regardless of argument order. Nothing currently reuses it — reuse is a decision for a
+caller who knows whether a stale answer is acceptable, and that decision is deliberately not made
+inside the journal.
+
+An unwritable journal never fails a run: a degraded observation is not a failed audit.
+
 ## Environment variables
 
 Names only — values are secrets and never belong in a repo, a log or a doc.
@@ -108,6 +134,7 @@ Tool behaviour:
 |---|---|
 | `SF_CLI`, `SCREAMINGFROG_CLI` | explicit path to the SF CLI executable for audit mode A (`seohead/sf/core/runner.py`) |
 | `SEOHEAD_TECH_DB` | path to an external technology-fingerprint database; not shipped for license reasons (`recon/tech_db.py`) |
+| `SEOHEAD_RUN_LOG` | where the run journal is written (default `~/.config/seohead/runs.jsonl`); `off` disables it |
 | `SEOHEAD_SPEND_LOG` | override for the paid-call journal (default `~/.config/seohead/spend.jsonl`) |
 | `DATAFORSEO_ENV` | `sandbox` (default) or `prod` for the DataForSEO tools |
 
