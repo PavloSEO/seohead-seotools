@@ -24,6 +24,7 @@ class Throttle:
         self.min_delay = max(0.0, float(min_delay))
         self.delay = max(self.min_delay, float(start_delay))
         self.timeouts = 0
+        self.server_errors = 0
 
     def record_response(self, latency_s: float, ok: bool) -> None:
         """Fold one completed response into the delay.
@@ -49,3 +50,22 @@ class Throttle:
 
     def record_success(self) -> None:
         self.timeouts = 0
+        self.server_errors = 0
+
+    def record_server_error(self, status_code: int, retry_after: float | None = None) -> None:
+        """A host answering 429 or 5xx is already struggling.
+
+        Treat a single 429 as an overload signal rather than a retryable blip:
+        it is the server explicitly asking for less, and continuing at the same
+        rate turns an audit into a load test.
+        """
+        self.server_errors += 1
+        base = max(self.delay, self.min_delay, 0.5)
+        widened = base * TIMEOUT_PENALTY if status_code == 429 else base * 2
+        if retry_after is not None:
+            widened = max(widened, retry_after)
+        self.delay = min(MAX_DELAY_S, widened)
+
+    def host_is_failing(self, limit: int = 5) -> bool:
+        """Consecutive server refusals mean stop, not retry harder."""
+        return self.server_errors >= limit

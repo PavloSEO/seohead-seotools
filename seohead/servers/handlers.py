@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from seohead import runlog
 from seohead.tools import (
     clusterer,
     downloader,
@@ -77,6 +78,136 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
     if not url:
         raise ValueError("url required")
     return sitemap.crawl(url, concurrency)
+
+
+def crawl_site(
+    url: str | None = None,
+    urls: list[str] | None = None,
+    config: str | None = None,
+    max_urls: int | None = None,
+    max_depth: int | None = None,
+    min_delay: float | None = None,
+    robots: str | None = None,
+    out_dir: str | None = None,
+) -> dict[str, Any]:
+    """Crawl a site from a start URL, or fetch an explicit list, then audit it.
+
+    The interface layer is where collector and analyzer are allowed to meet:
+    ``seohead.crawl`` gathers evidence and never imports the analyzer,
+    ``seohead.sf`` judges it and never imports the collector, and this function
+    hands the projection from one to the other.
+
+    ``min_delay`` defaults to half a second because the target is somebody's
+    production site: polite by accident beats fast by accident.
+    """
+    import json
+    import os
+    from datetime import datetime, timezone
+
+    from seohead.crawl import config as crawl_config
+    from seohead.crawl.collect import collect_urls
+    from seohead.crawl.evidence import build_evidence
+    from seohead.crawl.spider import crawl_site as _spider
+    from seohead.sf.config import load_config
+    from seohead.sf.core.aggregate import aggregate
+    from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.loader import LoadedExports
+    from seohead.sf.core.rules import run_rules
+
+    if not url and not urls:
+        raise ValueError("url or urls required")
+
+    # Defaults, then file, then environment, then these explicit arguments.
+    settings = crawl_config.load(
+        config,
+        overrides={
+            "limits.max_urls": max_urls,
+            "limits.max_depth": max_depth,
+            "speed.min_delay_seconds": min_delay,
+            "robots.policy": robots,
+            "output.dir": out_dir,
+        },
+    )
+    out_dir = settings["output"]["dir"] or None
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    pages_path = (
+        os.path.join(out_dir, "pages.jsonl")
+        if out_dir and settings["output"]["write_pages_jsonl"]
+        else None
+    )
+
+    if url:
+        result = _spider(
+            url,
+            max_urls=settings["limits"]["max_urls"],
+            max_depth=settings["limits"]["max_depth"],
+            min_delay=settings["speed"]["min_delay_seconds"],
+            timeout=settings["http"]["timeout_seconds"],
+            robots_policy=settings["robots"]["policy"],
+            out_path=pages_path,
+        )
+        discovery = {
+            "mode": "spider",
+            "max_depth_reached": result.max_depth_reached,
+            "links_seen": len(result.links),
+            "excluded": result.excluded,
+            "robots_note": result.robots_note,
+            "robots_blocked": len(result.robots_blocked),
+            "crawl_delay_applied": result.crawl_delay_applied,
+            "effective_delay_seconds": round(result.effective_delay, 3),
+        }
+    else:
+        result = collect_urls(
+            urls or [],
+            max_urls=settings["limits"]["max_urls"],
+            min_delay=settings["speed"]["min_delay_seconds"],
+            timeout=settings["http"]["timeout_seconds"],
+            out_path=pages_path,
+        )
+        discovery = {"mode": "list"}
+
+    evidence = build_evidence(result)
+    exports = LoadedExports()
+    exports.frames.update(evidence["frames"])
+    exports.found = list(evidence["found"])
+    exports.missing = list(evidence["missing"])
+
+    ctx = AuditContext(exports, load_config(None))
+    ctx.skip_unsupported(set(exports.frames))
+    run_rules(ctx)
+    audit = aggregate(
+        ctx,
+        {
+            "input_mode": "crawl" if url else "crawl-list",
+            "source": url or "url-list",
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "collector": "seohead.crawl",
+            "crawl_partial": result.partial,
+            "crawl_stopped_reason": result.stopped_reason,
+            # Resolved values of every setting that can change what was found.
+            # Without these two reports on the same site are not comparable.
+            "crawl_config": crawl_config.manifest(settings),
+            "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
+        },
+        {},
+        {},
+    ).to_json()
+
+    if out_dir:
+        with open(os.path.join(out_dir, "audit.json"), "w", encoding="utf-8") as fh:
+            json.dump(audit, fh, ensure_ascii=False, indent=2)
+
+    return {
+        "urls_collected": len(result.pages),
+        "partial": result.partial,
+        "stopped_reason": result.stopped_reason,
+        "discovery": discovery,
+        "limitations": result.limitations,
+        "summary": audit["summary"],
+        "checks_skipped": len(audit["run"].get("checks_skipped", [])),
+        "out_dir": out_dir,
+    }
 
 
 def images_download(
@@ -730,11 +861,12 @@ def sources_doctor() -> dict[str, Any]:
     return {"ok": True, "sources": sources, "spend_log": str(spend_core.log_path())}
 
 
-HANDLERS = {
+_RAW_HANDLERS = {
     "parse": parse,
     "redirects_generate": redirects_generate,
     "redirects_check": redirects_check,
     "sitemap_crawl": sitemap_crawl,
+    "crawl_site": crawl_site,
     "images_download": images_download,
     "images_optimize": images_optimize,
     "keywords_cluster": keywords_cluster,
@@ -774,3 +906,8 @@ HANDLERS = {
     "google_keywords": google_keywords,
     "google_serp": google_serp,
 }
+
+# Journaling sits here rather than in each interface: the CLI and the MCP server
+# both dispatch through this mapping, so one wrapper records every call exactly
+# once and no future tool can be added without being recorded.
+HANDLERS = {name: runlog.journaled(name, fn) for name, fn in _RAW_HANDLERS.items()}

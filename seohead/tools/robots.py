@@ -6,6 +6,7 @@ declared sitemaps, and can test whether specific paths are crawlable for a UA.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from urllib.parse import urlparse
 
@@ -24,6 +25,8 @@ def parse_robots(text: str) -> dict:
     groups: list[dict] = []
     sitemaps: list[str] = []
     current: dict | None = None
+    # Crawl-delay was parsed by nobody, so a site asking to be crawled slowly was
+    # crawled at whatever rate the operator chose.
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or ":" not in line:
@@ -33,12 +36,22 @@ def parse_robots(text: str) -> dict:
         value = value.strip()
         if field == "user-agent":
             if current is None or current.get("_has_rules"):
-                current = {"user_agents": [], "allow": [], "disallow": [], "_has_rules": False}
+                current = {
+                    "user_agents": [],
+                    "allow": [],
+                    "disallow": [],
+                    "crawl_delay": None,
+                    "_has_rules": False,
+                }
                 groups.append(current)
             current["user_agents"].append(value)
         elif field in ("allow", "disallow") and current is not None:
             current[field].append(value)
             current["_has_rules"] = True
+        elif field == "crawl-delay" and current is not None:
+            # A malformed delay is no delay, not a crash.
+            with contextlib.suppress(ValueError):
+                current["crawl_delay"] = float(value.replace(",", "."))
         elif field == "sitemap":
             sitemaps.append(value)
     for g in groups:
@@ -46,17 +59,37 @@ def parse_robots(text: str) -> dict:
     return {"groups": groups, "sitemaps": sitemaps}
 
 
+EMPTY_GROUP = {"allow": [], "disallow": [], "crawl_delay": None}
+
+
 def _rules_for(parsed: dict, user_agent: str) -> dict:
+    """The single group that applies, by longest matching product token.
+
+    RFC 9309 selects the most specific match, and exactly one group applies.
+    Taking the *last* match instead meant file order decided the outcome, and
+    matching by substring meant a group naming a browser engine captured any
+    agent whose string happened to contain it.
+    """
     ua = user_agent.lower()
-    match = None
-    star = None
-    for g in parsed["groups"]:
-        uas = [u.lower() for u in g["user_agents"]]
-        if "*" in uas:
-            star = g
-        if any(ua == u or (u != "*" and u in ua) for u in uas):
-            match = g
-    return match or star or {"allow": [], "disallow": []}
+    best: dict | None = None
+    best_length = -1
+    star: dict | None = None
+    for group in parsed["groups"]:
+        for token in (u.lower().strip() for u in group["user_agents"]):
+            if token == "*":
+                if star is None:
+                    star = group
+                continue
+            # A token matches when the agent name starts with it; "Googlebot"
+            # applies to "Googlebot-Image", but not the other way round.
+            if (ua == token or ua.startswith(token)) and len(token) > best_length:
+                best, best_length = group, len(token)
+    return best or star or dict(EMPTY_GROUP)
+
+
+def crawl_delay(parsed: dict, user_agent: str = "*") -> float | None:
+    """The delay the site asks this agent to keep, if it states one."""
+    return _rules_for(parsed, user_agent).get("crawl_delay")
 
 
 def _pattern_to_regex(pattern: str) -> re.Pattern:

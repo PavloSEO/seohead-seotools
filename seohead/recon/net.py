@@ -21,7 +21,7 @@ import shutil
 import socket
 import subprocess
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
 PRIVATE_NETWORK_ENV = "SEOHEAD_ALLOW_PRIVATE_NETWORKS"
@@ -52,11 +52,75 @@ def private_networks_enabled() -> bool:
     }
 
 
+# Ranges that carry a non-public address inside a globally-scoped one. Python's
+# ``is_global`` answers a question about the address family, not about where the
+# packet ends up: 64:ff9b::7f00:1 is 127.0.0.1 wrapped in the well-known NAT64
+# prefix and reports is_global=True, so on any NAT64 host — common in CI and in
+# mobile and cloud networks — the guard would pass a request to loopback.
+_TRANSLATED_PREFIXES = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "64:ff9b::/96",  # RFC 6052 well-known NAT64 prefix
+        "64:ff9b:1::/48",  # RFC 8215 local-use NAT64
+        "2002::/16",  # 6to4, embeds an IPv4 address
+        "::ffff:0:0/96",  # IPv4-mapped
+        "::/96",  # IPv4-compatible, deprecated but still parsed
+    )
+)
+
+
+def _embedded_ipv4(address: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address a translated IPv6 address actually reaches."""
+    packed = address.packed
+    if address in _TRANSLATED_PREFIXES[2]:  # 6to4 carries it in bytes 2..6
+        return ipaddress.IPv4Address(packed[2:6])
+    return ipaddress.IPv4Address(packed[-4:])
+
+
 def _is_public_address(value: str) -> bool:
     try:
-        return ipaddress.ip_address(value.split("%", 1)[0]).is_global
+        address = ipaddress.ip_address(value.split("%", 1)[0])
     except ValueError:
         return False
+    # Translated forms are checked first: the wrapper's own scope says nothing
+    # about the destination, and Python scores some of them non-global and
+    # others global regardless of what they carry.
+    if isinstance(address, ipaddress.IPv6Address) and any(
+        address in prefix for prefix in _TRANSLATED_PREFIXES
+    ):
+        try:
+            return _embedded_ipv4(address).is_global
+        except (ipaddress.AddressValueError, ValueError):
+            return False
+    return address.is_global
+
+
+def pinned_target(url: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Rewrite a URL to connect to a vetted address, keeping the hostname.
+
+    ``validate_url`` resolved DNS and then threw the answer away, so the HTTP
+    client resolved a second time and connected to whatever came back. That is a
+    time-of-check-to-time-of-use gap: a hostile resolver can answer the check
+    with a public address and the connection with a loopback one. Since the guard
+    also runs per redirect hop, it was one window per hop rather than one.
+
+    Returns the URL to request, headers carrying the original ``Host``, and the
+    request extensions carrying the hostname for SNI — so certificate
+    verification still happens against the name, not the address.
+    """
+    parts = urlsplit(url)
+    host = parts.hostname
+    if not host:
+        raise ValueError(f"no host to pin in {url!r}")
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+
+    address = resolve_socket_addresses(host, port)[0][3][0].split("%", 1)[0]
+    literal = f"[{address}]" if ":" in address else address
+    netloc = f"{literal}:{parts.port}" if parts.port else literal
+    pinned = urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
+
+    authority = f"{host}:{parts.port}" if parts.port else host
+    return pinned, {"Host": authority}, {"sni_hostname": host}
 
 
 def resolve_socket_addresses(host: str, port: int) -> list[tuple[int, int, int, Any]]:
