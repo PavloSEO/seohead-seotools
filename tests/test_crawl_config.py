@@ -38,7 +38,7 @@ def test_every_setting_is_classified_as_results_affecting_or_not():
 
 def test_results_affecting_names_only_real_settings():
     every = set(cfg._flatten(cfg.DEFAULTS))
-    assert cfg.RESULTS_AFFECTING <= every, sorted(cfg.RESULTS_AFFECTING - every)
+    assert every >= cfg.RESULTS_AFFECTING, sorted(cfg.RESULTS_AFFECTING - every)
 
 
 def test_store_and_crawl_are_independent_for_every_link_type():
@@ -97,7 +97,7 @@ def test_a_malformed_environment_value_is_refused_by_name(monkeypatch):
 def test_an_unknown_setting_is_refused_with_its_path(tmp_path):
     path = tmp_path / "crawl.json"
     path.write_text(json.dumps({"scope": {"exclude_pattern": ["typo"]}}))
-    with pytest.raises(cfg.ConfigError, match="scope.exclude_pattern"):
+    with pytest.raises(cfg.ConfigError, match=r"scope\.exclude_pattern"):
         cfg.load(str(path))
 
 
