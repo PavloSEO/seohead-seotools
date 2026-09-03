@@ -236,6 +236,23 @@ def _client(timeout: float):
     return http_client(timeout)[0]
 
 
+# Compound public suffixes common enough that treating the last two labels as
+# the registrable domain would merge unrelated sites. A full public suffix list
+# is large and changes; this only has to tell a subdomain from a separate site.
+_COMPOUND_SUFFIXES = frozenset({"com", "net", "org", "co", "gov", "edu", "ac", "spb", "msk"})
+
+
+def registrable_domain(host: str) -> str:
+    """Approximate the registrable domain of a hostname."""
+    host = (host or "").lower().strip(".")
+    parts = host.split(".")
+    if len(parts) <= 2:
+        return host
+    if parts[-2] in _COMPOUND_SUFFIXES and len(parts[-1]) <= 3:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
 def normalize_domain(value: str) -> str:
     """Normalize a URL or hostname to a lowercase, non-www ASCII domain."""
     raw = (value or "").strip()

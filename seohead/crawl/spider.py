@@ -12,6 +12,7 @@ is recorded as data rather than dropped silently.
 from __future__ import annotations
 
 import contextlib
+import re
 import time
 from collections import deque
 from collections.abc import Callable
@@ -21,7 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl.collect import CrawlResult, _write, fetch_one
 from seohead.crawl.throttle import Throttle
-from seohead.recon.net import http_client, normalize_url
+from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
 
 MAX_URLS_CEILING = 10_000
@@ -62,6 +63,55 @@ def _same_host(url: str, host: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == host
 
 
+@dataclass(frozen=True)
+class Scope:
+    """Which discovered URLs a crawl may fetch.
+
+    The seed is always fetched: a crawl whose own start URL is filtered out
+    would report an empty site rather than a configuration mistake. Everything
+    reached from it is tested here, and every rejection is counted in
+    ``SpiderResult.excluded`` under the rule that rejected it.
+    """
+
+    internal: str = "host"
+    include_patterns: tuple[re.Pattern[str], ...] = ()
+    exclude_patterns: tuple[re.Pattern[str], ...] = ()
+    exclude_hosts: frozenset[str] = frozenset()
+
+    @classmethod
+    def from_config(cls, scope: dict[str, Any] | None) -> Scope:
+        scope = scope or {}
+        return cls(
+            internal=scope.get("internal", "host"),
+            include_patterns=tuple(re.compile(p) for p in scope.get("include_patterns") or ()),
+            exclude_patterns=tuple(re.compile(p) for p in scope.get("exclude_patterns") or ()),
+            exclude_hosts=frozenset(
+                host.lower().lstrip(".") for host in scope.get("exclude_hosts") or ()
+            ),
+        )
+
+    def is_internal(self, url: str, start_host: str) -> bool:
+        host = (urlsplit(url).hostname or "").lower()
+        if not host:
+            return False
+        if self.internal == "registrable_domain":
+            return registrable_domain(host) == registrable_domain(start_host)
+        return host == start_host
+
+    def rejection(self, url: str, start_host: str) -> str:
+        """The rule that rejects this URL, or "" when it may be fetched."""
+        if not self.is_internal(url, start_host):
+            return "outside_host"
+        host = (urlsplit(url).hostname or "").lower()
+        if any(host == bad or host.endswith("." + bad) for bad in self.exclude_hosts):
+            return "excluded_host"
+        if any(pattern.search(url) for pattern in self.exclude_patterns):
+            return "excluded_by_pattern"
+        if self.include_patterns and not any(p.search(url) for p in self.include_patterns):
+            return "not_included_by_pattern"
+        return ""
+
+
 def _fetch_robots(
     start: str, fetcher: Callable[[str], Any] | None, client: Any
 ) -> tuple[dict, str]:
@@ -93,17 +143,19 @@ def crawl_site(
     min_delay: float = 0.5,
     timeout: float = 15.0,
     robots_policy: str = "respect",
+    scope: dict[str, Any] | Scope | None = None,
     out_path: str | None = None,
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> SpiderResult:
-    """Crawl one host breadth-first from ``start_url``."""
+    """Crawl one host breadth-first from ``start_url``, within ``scope``."""
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
     # normalize_url is lenient — it turns "not a url" into "https://not a url" —
     # so the host is checked here rather than trusted.
     if not start or not host or " " in host or "." not in host:
         raise ValueError(f"not a crawlable URL: {start_url!r}")
+    rules = scope if isinstance(scope, Scope) else Scope.from_config(scope)
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     depth_limit = max(0, min(int(max_depth), MAX_DEPTH_CEILING))
 
@@ -186,13 +238,14 @@ def crawl_site(
             # A redirect is a discovery too, and it stays inside the budget.
             if record.redirect_url and depth < depth_limit:
                 target = record.redirect_url
-                if _same_host(target, host):
+                reason = rules.rejection(target, host)
+                if reason:
+                    exclude("redirect_off_host" if reason == "outside_host" else reason)
+                else:
                     key = _canonical_key(target)
                     if key not in seen:
                         seen.add(key)
                         queue.append((target, depth + 1))
-                else:
-                    exclude("redirect_off_host")
 
             if parsed is None:
                 continue
@@ -214,8 +267,9 @@ def crawl_site(
                         nofollow=bool(link.get("nofollow")),
                     )
                 )
-                if not _same_host(href, host):
-                    exclude("outside_host")
+                reason = rules.rejection(href, host)
+                if reason:
+                    exclude(reason)
                     continue
                 key = _canonical_key(href)
                 if key in seen:
@@ -226,7 +280,7 @@ def crawl_site(
     result.excluded = excluded
     result.effective_delay = throttle.delay
     result.limitations = [
-        "same-host only: external links are recorded, never fetched",
+        f"scope {rules.internal}: links outside it are recorded, never fetched",
         "static HTML only: no JavaScript rendering",
         "no sitemap expansion",
     ]

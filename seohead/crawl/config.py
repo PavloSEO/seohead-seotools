@@ -23,6 +23,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from typing import Any
 
 DEFAULTS: dict[str, Any] = {
@@ -30,6 +31,9 @@ DEFAULTS: dict[str, Any] = {
         # Which discovered URLs count as internal. "host" is the conservative
         # reading; "registrable_domain" also accepts subdomains.
         "internal": "host",  # host | registrable_domain
+        # Regexes searched against the whole URL of every *discovered* link.
+        # The start URL is always fetched: a crawl that filters out its own seed
+        # would report an empty site rather than a configuration mistake.
         "include_patterns": [],
         "exclude_patterns": [],
         # Never fetched regardless of what links to them.
@@ -194,6 +198,14 @@ def validate(config: dict[str, Any]) -> None:
     scope = config["scope"]["internal"]
     if scope not in INTERNAL_SCOPES:
         raise ConfigError(f"scope.internal must be one of {INTERNAL_SCOPES}, got {scope!r}")
+    # A pattern that does not compile would otherwise fail mid-crawl, after the
+    # site has already been asked for a few hundred pages.
+    for key in ("include_patterns", "exclude_patterns"):
+        for pattern in config["scope"][key] or ():
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ConfigError(f"scope.{key}: {pattern!r} is not a valid regex: {exc}") from exc
 
     limits = config["limits"]
     if limits["max_urls"] < 1:
