@@ -18,6 +18,15 @@ from .context import AuditContext
 
 SEPARATORS = (" | ", " — ", " - ", " · ", " :: ", " // ")
 
+# A Tukey fence measures distance in units of spread, so it needs spread to
+# exist. A templated site has almost none: every page renders the same shell,
+# the interquartile range collapses to zero, and p75 + 1.5 * 0 degenerates into
+# "heavier than the median" — which reports a page 0.2% above it as an outlier,
+# on most of the site at once. Below this fraction of the median the sizes are
+# one value at the resolution that matters, and only the absolute and
+# multiple-of-median rules have anything to say.
+MIN_IQR_FRACTION_OF_MEDIAN = 0.10
+
 
 def _quantile(sorted_vals: list[float], q: float) -> float:
     if not sorted_vals:
@@ -55,8 +64,9 @@ def check_html_weight(ctx: AuditContext) -> dict[str, Any]:
     t = ctx.thresholds
     median = stats["median"] or 1
     abs_bytes = t["large_html_abs_kb"] * 1024
-    tukey_upper = stats["p75"] + 1.5 * stats["iqr"]
     k = t["large_html_x_median"]
+    has_spread = stats["iqr"] >= median * MIN_IQR_FRACTION_OF_MEDIAN
+    tukey_upper = stats["p75"] + 1.5 * stats["iqr"] if has_spread else None
 
     # rank the heaviest pages for the report
     ranked = sorted(
@@ -83,7 +93,7 @@ def check_html_weight(ctx: AuditContext) -> dict[str, Any]:
             continue
         ratio = size / median
         page.metrics["size_vs_median_ratio"] = round(ratio, 2)
-        is_outlier = size > median * k or size > tukey_upper
+        is_outlier = size > median * k or (tukey_upper is not None and size > tukey_upper)
         if size > abs_bytes or is_outlier:
             ctx.add(
                 "LARGE_HTML",
