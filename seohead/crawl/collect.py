@@ -59,6 +59,9 @@ class PageRecord:
     word_count: int = 0
     text_ratio: float | None = None
     crawl_depth: int = 0
+    # Every link found on the page, and how many of them left the host. Note
+    # that Screaming Frog's Outlinks column counts internal links only, so the
+    # projection in evidence.py subtracts rather than passing this through.
     outlinks: int = 0
     external_outlinks: int = 0
     jsonld_blocks_found: int = 0

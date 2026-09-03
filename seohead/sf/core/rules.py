@@ -657,11 +657,14 @@ def check_links_extra(ctx: AuditContext) -> None:
     t = ctx.thresholds
     for page in ctx.indexable_html_pages():
         rec = _rec(page)
+        # The Outlinks column counts internal links only; External Outlinks is
+        # a separate count, not a subset. Subtracting one from the other made
+        # any page with more external than internal links read as having no
+        # internal links at all.
         outlinks = rec.get("outlinks")
         external = rec.get("external_outlinks")
         if outlinks is not None:
-            internal = outlinks - (external or 0)
-            if internal <= 0:
+            if outlinks <= 0:
                 ctx.add(
                     "NO_INTERNAL_OUTLINKS",
                     target_url=page.url,

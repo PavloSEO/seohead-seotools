@@ -51,7 +51,8 @@ def _fired(res):
 def test_extended_checks_fire(tmp_path):
     rows = [
         # underscore URL, two canonicals, noarchive, http/1.1, very difficult,
-        # long sentences, no internal outlinks (outlinks == external)
+        # long sentences, no internal outlinks (Outlinks is the internal count,
+        # so zero means none; the five external links are counted separately)
         [
             "https://example.com/page_one",
             "text/html",
@@ -69,7 +70,7 @@ def test_extended_checks_fire(tmp_path):
             "Very Difficult",
             "18",
             "30",
-            "5",
+            "0",
             "5",
             "500",
         ],
