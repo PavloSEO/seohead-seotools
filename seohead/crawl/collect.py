@@ -22,7 +22,6 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
-
 from urllib.parse import urljoin
 
 from seohead.crawl.throttle import Throttle
