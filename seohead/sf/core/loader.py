@@ -32,7 +32,9 @@ EXPORT_MATCHERS: dict[str, dict[str, list[str]]] = {
     "inlinks_3xx": {"all": ["3xx", "inlinks"]},
     "all_inlinks": {"all": ["all_inlinks"]},
     # Sitemaps.
-    "sitemap_in": {"all": ["urls_in_sitemap"], "none": ["not", "non"]},
+    # Every other sitemap tab's filename also ends in "urls_in_sitemap", and
+    # sorted() reaches them first, so each is excluded by name.
+    "sitemap_in": {"all": ["urls_in_sitemap"], "none": ["not", "non", "redirect", "orphan"]},
     "sitemap_not_in": {"all": ["urls_not_in_sitemap"]},
     "sitemap_orphan": {"all": ["orphan"]},
     "sitemap_non_indexable": {"all": ["non", "indexable", "sitemap"]},
@@ -45,11 +47,16 @@ EXPORT_MATCHERS: dict[str, dict[str, list[str]]] = {
     "titles_duplicate": {"all": ["page_titles", "duplicate"]},
     "titles_multiple": {"all": ["page_titles", "multiple"]},
     # Native hreflang error report (Directives:Hreflang) — list of flagged URLs.
-    # Exclude the link-level "all_hreflang" bulk export so it routes to its own key.
-    "hreflang": {"all": ["hreflang"], "none": ["all_hreflang", "all-hreflang"]},
+    # Every URL routed here is reported as HREFLANG_ERROR, so the tabs that
+    # list annotated pages rather than problems ("All", "Contains Hreflang")
+    # are excluded, as is the link-level bulk export below.
+    "hreflang": {
+        "all": ["hreflang"],
+        "none": ["all_hreflang", "hreflang_all", "contains_hreflang"],
+    },
     # Bulk Export → Links → All Hreflang: one row per hreflang annotation
     # (Source → Destination + lang). Drives the hreflang-graph checks (§7).
-    "all_hreflang": {"all": ["all", "hreflang"]},
+    "all_hreflang": {"all": ["all_hreflang"]},
     "desc_duplicate": {"all": ["description", "duplicate"]},
     "redirect_chains": {"all": ["redirect_chains"]},
     "crawl_overview": {"all": ["crawl_overview"]},
@@ -96,7 +103,9 @@ def read_table(path: str) -> pd.DataFrame:
 
 
 def _matches(filename: str, matcher: dict[str, list[str]]) -> bool:
-    low = filename.lower()
+    # Word separators are normalised: the same export is saved as
+    # "all_hreflang.csv" or "all-hreflang.csv" depending on who exported it.
+    low = filename.lower().replace("-", "_").replace(" ", "_")
     for token in matcher.get("all", []):
         if token.lower() not in low:
             return False
