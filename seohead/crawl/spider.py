@@ -22,7 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 from seohead.crawl.collect import CrawlResult, _write, fetch_one
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url
-from seohead.tools.robots import crawl_delay, is_allowed, parse_robots
+from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
 
 MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
@@ -158,7 +158,7 @@ def crawl_site(
             url, depth = queue.popleft()
             result.max_depth_reached = max(result.max_depth_reached, depth)
 
-            if robots and not is_allowed(robots, urlsplit(url).path or "/", ROBOTS_TOKEN):
+            if robots and not is_allowed(robots, match_path(url), ROBOTS_TOKEN):
                 result.robots_blocked.append(url)
                 if enforce:
                     exclude("blocked_by_robots")
