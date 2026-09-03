@@ -128,3 +128,159 @@ def build_throttled_config(dest: str, *, urls_per_second: float, base: str | Non
     with open(dest, "wb") as fh:
         fh.write(patched)
     return os.path.abspath(dest)
+
+
+# ── module flags ─────────────────────────────────────────────────────────────
+#
+# Which registry checks a crawl can satisfy is decided by module switches inside
+# the same serialized config. Reading them is the difference between warning the
+# operator before a crawl and telling them after an hour that checks were skipped.
+#
+# The stream is standard Java serialization, so the layout is parsed, never
+# guessed: a class descriptor carries its fields in order (primitives first,
+# alphabetically, then object fields), the class data follows the descriptor,
+# and a primitive's offset is the sum of the sizes of the primitives before it.
+# Anything that does not match exactly is reported as unknown, never as "off".
+
+TC_CLASSDESC = 0x72
+TC_ENDBLOCKDATA = 0x78
+TC_NULL = 0x70
+TC_STRING = 0x74
+TC_REFERENCE = 0x71
+
+_PRIMITIVE_SIZES = {"B": 1, "Z": 1, "C": 2, "S": 2, "I": 4, "F": 4, "J": 8, "D": 8}
+
+# Module label -> (class name, boolean field). Every entry was read out of a real
+# config; a name that stops matching makes the flag unknown rather than wrong.
+MODULE_FLAG_FIELDS: dict[str, tuple[str, str]] = {
+    "structured_data_json_ld": ("seo.spider.config.SpiderStructuredDataConfig", "mExtractJsonLd"),
+    "structured_data_microdata": (
+        "seo.spider.config.SpiderStructuredDataConfig",
+        "mExtractMicrodata",
+    ),
+    "structured_data_rdfa": ("seo.spider.config.SpiderStructuredDataConfig", "mExtractRdfa"),
+    "structured_data_google_validation": (
+        "seo.spider.config.SpiderStructuredDataConfig",
+        "mGoogleValidation",
+    ),
+    "structured_data_schema_org_validation": (
+        "seo.spider.config.SpiderStructuredDataConfig",
+        "mSchemaDotOrgValidation",
+    ),
+    "spelling": ("seo.spider.config.LanguageToolConfig", "mSpellCheckEnabled"),
+    "grammar": ("seo.spider.config.LanguageToolConfig", "mGrammarCheckEnabled"),
+    "store_html": ("seo.spider.config.SpiderCrawlConfig", "mStoreOriginalHtml"),
+    "store_rendered_html": ("seo.spider.config.SpiderCrawlConfig", "mStoreRenderedHtml"),
+    "crawl_linked_xml_sitemaps": ("seo.spider.config.SpiderCrawlConfig", "mCrawlSitemaps"),
+    "auto_discover_sitemaps": ("seo.spider.config.SpiderCrawlConfig", "mAutoDiscoverSitemaps"),
+    "near_duplicates": ("seo.spider.config.DuplicateConfig", "mNearDuplicateChecking"),
+    "auto_crawl_analysis": ("seo.spider.config.CrawlAnalysisConfig", "mAutoAnalyse"),
+}
+
+# JavaScript rendering is an enum (SpiderCrawlConfig.mCrawlerMode), not a
+# boolean, so it is deliberately absent: reporting it would mean decoding an
+# enum reference, and a wrong answer here is worse than no answer.
+
+
+def _read_class_descriptor(blob: bytes, at: int) -> tuple[str, list[tuple[str, str]], int]:
+    """Parse one ``TC_CLASSDESC`` and return ``(name, fields, end)``.
+
+    ``fields`` are ``(typecode, name)`` in stream order. Raise
+    :class:`ValueError` on anything the layout does not explain.
+    """
+    if at < 0 or at >= len(blob) or blob[at] != TC_CLASSDESC:
+        raise ValueError("not a class descriptor at the given offset")
+    i = at + 1
+    try:
+        (name_len,) = struct.unpack(">H", blob[i : i + 2])
+        i += 2
+        name = blob[i : i + name_len].decode("utf-8")
+        i += name_len
+        i += 8  # serialVersionUID
+        i += 1  # class flags
+        (count,) = struct.unpack(">H", blob[i : i + 2])
+        i += 2
+        fields: list[tuple[str, str]] = []
+        for _ in range(count):
+            typecode = chr(blob[i])
+            i += 1
+            (field_len,) = struct.unpack(">H", blob[i : i + 2])
+            i += 2
+            field_name = blob[i : i + field_len].decode("utf-8")
+            i += field_len
+            if typecode in "L[":
+                # Object fields carry a type signature: a string or a back-reference.
+                if blob[i] == TC_STRING:
+                    i += 1
+                    (sig_len,) = struct.unpack(">H", blob[i : i + 2])
+                    i += 2 + sig_len
+                elif blob[i] == TC_REFERENCE:
+                    i += 5
+                else:
+                    raise ValueError(f"unexpected type signature marker {blob[i]:#02x}")
+            elif typecode not in _PRIMITIVE_SIZES:
+                raise ValueError(f"unknown field typecode {typecode!r}")
+            fields.append((typecode, field_name))
+    except (struct.error, IndexError, UnicodeDecodeError) as exc:
+        raise ValueError(f"class descriptor is malformed: {exc}") from exc
+    return name, fields, i
+
+
+def read_boolean_field(blob: bytes, class_name: str, field_name: str) -> bool:
+    """Read one boolean field of a config class out of the serialized stream.
+
+    Raise :class:`ValueError` when the class or field is absent, when the class
+    has a superclass with its own data (the offset would not be computable
+    here), or when the byte read is not a boolean.
+    """
+    marker = class_name.encode("utf-8")
+    at = blob.find(marker)
+    if at < 3:
+        raise ValueError(f"{class_name} is not present in this config")
+    name, fields, end = _read_class_descriptor(blob, at - 3)
+    if name != class_name:
+        raise ValueError(f"expected {class_name} at the descriptor, found {name}")
+
+    # Class data starts after the class annotation and the superclass descriptor.
+    # Only a null superclass ("xp") keeps the offset computable from here.
+    if blob[end : end + 2] != bytes((TC_ENDBLOCKDATA, TC_NULL)):
+        raise ValueError(
+            f"{class_name} has a superclass or annotation data — offset is not computable"
+        )
+    data_at = end + 2
+
+    offset = 0
+    for typecode, name_in_stream in fields:
+        if typecode not in _PRIMITIVE_SIZES:
+            # Object fields follow every primitive, so the target is not a primitive.
+            break
+        if name_in_stream == field_name:
+            if typecode != "Z":
+                raise ValueError(f"{class_name}.{field_name} is {typecode!r}, not a boolean")
+            position = data_at + offset
+            if position >= len(blob):
+                raise ValueError("config ends before the requested field")
+            value = blob[position]
+            if value not in (0, 1):
+                raise ValueError(
+                    f"{class_name}.{field_name} holds {value:#02x}, expected 0 or 1 — "
+                    "the layout does not match and the value cannot be trusted"
+                )
+            return bool(value)
+        offset += _PRIMITIVE_SIZES[typecode]
+    raise ValueError(f"{class_name} has no primitive field {field_name}")
+
+
+def read_module_flags(blob: bytes) -> dict[str, bool | None]:
+    """Return the module switches, with ``None`` for anything unreadable.
+
+    A module that cannot be read is reported as unknown on purpose. Reporting it
+    as off would tell the operator to fix a config that may already be correct.
+    """
+    flags: dict[str, bool | None] = {}
+    for label, (class_name, field_name) in MODULE_FLAG_FIELDS.items():
+        try:
+            flags[label] = read_boolean_field(blob, class_name, field_name)
+        except ValueError:
+            flags[label] = None
+    return flags

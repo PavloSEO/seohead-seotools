@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 from . import __version__
 from .config import load_config
@@ -144,7 +145,138 @@ def build_parser() -> argparse.ArgumentParser:
     doc.add_argument(
         "--sf-cli", default=None, help="Explicit SF CLI path to validate before searching elsewhere"
     )
+
+    # `save-config` materialises a base config so the GUI step is a one-time
+    # convenience rather than a hard dependency of every crawl.
+    save = sub.add_parser(
+        "save-config",
+        help="Copy the most recent Screaming Frog crawl configuration to a base config file",
+    )
+    save.add_argument(
+        "--out",
+        default="audit.seospiderconfig",
+        help="Where to write the base config (default: audit.seospiderconfig)",
+    )
+    save.add_argument(
+        "--force", action="store_true", help="Overwrite the destination when it already exists"
+    )
     return parser
+
+
+# Labels for the module switches, in the order an operator reads them.
+_MODULE_LABELS: tuple[tuple[str, str], ...] = (
+    ("structured_data_json_ld", "structured data: JSON-LD"),
+    ("structured_data_microdata", "structured data: Microdata"),
+    ("structured_data_rdfa", "structured data: RDFa"),
+    ("structured_data_google_validation", "structured data: Google validation"),
+    ("structured_data_schema_org_validation", "structured data: Schema.org validation"),
+    ("spelling", "spelling check"),
+    ("grammar", "grammar check"),
+    ("store_html", "store HTML"),
+    ("store_rendered_html", "store rendered HTML"),
+    ("crawl_linked_xml_sitemaps", "crawl linked XML sitemaps"),
+    ("auto_discover_sitemaps", "auto-discover XML sitemaps"),
+    ("near_duplicates", "near-duplicate checking"),
+    ("auto_crawl_analysis", "auto crawl analysis"),
+)
+
+
+# Which registry checks each module switch unlocks. The mapping is by exact
+# check source, because a whole export tab can mix modules: SF:Content holds
+# both spelling and grammar, and each has its own switch.
+_MODULE_GATES: tuple[tuple[str, str, str], ...] = (
+    ("structured_data_json_ld", "SF:Structured Data:", "structured data extraction"),
+    ("spelling", "SF:Content:Spelling", "spelling check"),
+    ("grammar", "SF:Content:Grammar", "grammar check"),
+    ("near_duplicates", "SF:Content:Near Duplicates", "near-duplicate checking"),
+)
+
+
+def _gated_checks(source_prefix: str) -> list[str]:
+    """Registry check ids whose SF source starts with this prefix."""
+    from .core.registry import CHECKS
+
+    return sorted(
+        check_id
+        for check_id, meta in CHECKS.items()
+        if str(meta.get("source", "")).startswith(source_prefix)
+    )
+
+
+def preflight_warnings(config_path: str | None) -> list[str]:
+    """Say which checks cannot run before the crawl starts, not an hour after.
+
+    Returns human-readable lines. An unreadable or absent config yields one line
+    saying so: silence would read as "everything is fine".
+    """
+    from .core.spiderconfig import find_base_config, read_module_flags
+
+    resolved = find_base_config(config_path or None)
+    if not resolved:
+        return [
+            "no Screaming Frog base config found — SF will use its own defaults "
+            "and module-dependent checks will be skipped (see: seohead sf save-config)"
+        ]
+    try:
+        with open(resolved, "rb") as fh:
+            flags = read_module_flags(fh.read())
+    except OSError as err:
+        return [f"base config {resolved} could not be read ({err}) — module state unknown"]
+
+    lines: list[str] = []
+    for key, prefix, label in _MODULE_GATES:
+        # True means on; None means unknown, and unknown is not a warning.
+        if flags.get(key) is not False:
+            continue
+        gated = _gated_checks(prefix)
+        if not gated:
+            continue
+        lines.append(f"{label} is off — {len(gated)} check(s) will be skipped: {', '.join(gated)}")
+    return lines
+
+
+def _report_base_config(cfg: dict) -> None:
+    """Report which base config a crawl would use and what it switches on.
+
+    Without this the operator only learns that module-dependent checks were
+    skipped after a full crawl, by reading ``checks_skipped`` in audit.json.
+    """
+    import os
+
+    from .core.spiderconfig import find_base_config, read_module_flags
+
+    configured = (cfg.get("sf_cli") or {}).get("seospiderconfig") or ""
+    print("\nBase Screaming Frog config:")
+    if configured:
+        state = "exists" if os.path.isfile(configured) else "MISSING"
+        print(f"  sf_cli.seospiderconfig: {configured} ({state})")
+    else:
+        print("  sf_cli.seospiderconfig: not set")
+
+    resolved = find_base_config(configured or None)
+    if not resolved:
+        print("  resolved: NO BASE CONFIG FOUND")
+        print("    → SF runs with its own defaults and the module-dependent checks")
+        print("      come back skipped. Create one with: seohead sf save-config")
+        return
+
+    mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(resolved)))
+    origin = "configured" if resolved == configured else "latest crawl config"
+    print(f"  resolved: {resolved}")
+    print(f"    source: {origin}, modified {mtime}")
+
+    try:
+        with open(resolved, "rb") as fh:
+            flags = read_module_flags(fh.read())
+    except OSError as err:
+        print(f"    modules: unreadable ({err})")
+        return
+
+    print("    modules (unknown = could not be read, not off):")
+    for key, label in _MODULE_LABELS:
+        value = flags.get(key)
+        mark = "unknown" if value is None else ("on" if value else "off")
+        print(f"      [{mark:>7}] {label}")
 
 
 def _run_doctor(args) -> int:
@@ -159,6 +291,8 @@ def _run_doctor(args) -> int:
             print("   -", g)
         print("  → set sf_cli.path in config.json, set $SF_CLI, or pass --sf-cli;")
         print("    otherwise use Mode B: sf-analyzer run --exports-dir ./exports")
+    _report_base_config(cfg)
+
     print("\nDependencies:")
     for mod, what in (
         ("pandas", "core"),
@@ -174,6 +308,37 @@ def _run_doctor(args) -> int:
         except ImportError:
             print(f"  [--] {mod} ({what})")
     return 0 if sf else 1
+
+
+def _run_save_config(args) -> int:
+    """Copy the latest crawl configuration into a reusable base config."""
+    import os
+    import shutil
+
+    from .core.spiderconfig import find_base_config, read_module_flags
+
+    if os.path.exists(args.out) and not args.force:
+        print(f"{args.out} already exists — pass --force to overwrite")
+        return 1
+    source = find_base_config(None)
+    if not source:
+        print("No Screaming Frog crawl configuration found to copy.")
+        print("  Run one crawl in the SF GUI with the modules you need, then repeat this command.")
+        return 1
+
+    shutil.copyfile(source, args.out)
+    print(f"Copied {source}\n     -> {args.out}")
+    try:
+        with open(args.out, "rb") as fh:
+            flags = read_module_flags(fh.read())
+    except OSError as err:
+        print(f"  written, but could not be read back: {err}")
+        return 0
+    on = [label for key, label in _MODULE_LABELS if flags.get(key)]
+    print("  modules on: " + (", ".join(on) if on else "none"))
+    if not on:
+        print("  → nothing module-dependent will run; enable the modules in the SF GUI and repeat.")
+    return 0
 
 
 def _resolve_input(args: argparse.Namespace) -> tuple[str, str | None, str | None]:
@@ -217,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_tasks(args)
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "save-config":
+        return _run_save_config(args)
     if args.command != "run":
         return 1
 
@@ -225,6 +392,12 @@ def main(argv: list[str] | None = None) -> int:
             print(msg, file=sys.stderr)
 
     input_mode, source, exports_dir = _resolve_input(args)
+    if input_mode in ("crawl", "crawl-list") and not args.quiet:
+        # Mode B already has the exports; only a fresh crawl can still be fixed.
+        for warning in preflight_warnings(
+            (load_config(args.config).get("sf_cli") or {}).get("seospiderconfig")
+        ):
+            print(f"[preflight] {warning}", file=sys.stderr)
     try:
         # Protected environments support two distinct authentication mechanisms.
         # Form login remains an SF-owned profile file; Basic authentication is

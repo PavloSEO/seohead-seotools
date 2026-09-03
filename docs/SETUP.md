@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 475 offline tests; runtime depends on extras
+pytest -q                             # 490 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
@@ -61,7 +61,23 @@ The last command runs a real audit (mode B) over the synthetic crawl in
 `tasks.json` + `tasks.md`. If that works, the toolkit works.
 
 `seohead sf doctor` prints environment diagnostics: where the SF CLI is (or
-is not), which optional dependencies are present.
+is not), which optional dependencies are present, which base Screaming Frog
+config a crawl would use, and which module switches that config turns on. A
+module the reader cannot decode is printed as `unknown`, never as `off`.
+
+Module switches decide whether the module-dependent checks can run at all.
+Without a base config SF crawls with its own defaults and those checks come
+back `skipped` — which you would otherwise only discover after the crawl. Two
+things make that visible up front:
+
+```bash
+seohead sf save-config                # copy the latest SF crawl config to audit.seospiderconfig
+seohead sf save-config --out base.seospiderconfig --force
+```
+
+`sf run` prints a `[preflight]` line before a fresh crawl for every check that
+the configuration in force cannot satisfy, so the config can be fixed first.
+Mode B (`--exports-dir`) already has the exports and is not affected.
 
 `sf-analyzer` is also installed as a focused audit-CLI alias (`[project.scripts]` in
 `pyproject.toml`). Use `seohead sf ...` when one entry point is preferable.
