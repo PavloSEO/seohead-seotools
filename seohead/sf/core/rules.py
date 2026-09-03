@@ -113,24 +113,26 @@ def check_indexability(ctx: AuditContext) -> None:
                 )
 
 
+# Permanence is carried by the status code, not by the Redirect Type column:
+# that column names the mechanism ("HTTP Redirect", "HSTS Policy",
+# "JavaScript Redirect", "MetaRefresh Redirect") and never the word temporary.
+TEMPORARY_REDIRECTS = (302, 303, 307)
+
+
 def check_redirect_type(ctx: AuditContext) -> None:
     for page in ctx.pages:
+        if page.status_code not in TEMPORARY_REDIRECTS:
+            continue
         rec = _rec(page)
-        rtype = (rec.get("redirect_type") or "").lower()
-        if (
-            page.status_code
-            and 300 <= page.status_code <= 399
-            and any(marker in rtype for marker in ("temporary", "302", "307"))
-        ):
-            ctx.add(
-                "BAD_REDIRECT_TYPE",
-                target_url=page.url,
-                status_code=page.status_code,
-                details={
-                    "redirect_type": rec.get("redirect_type"),
-                    "redirect_url": rec.get("redirect_url"),
-                },
-            )
+        ctx.add(
+            "BAD_REDIRECT_TYPE",
+            target_url=page.url,
+            status_code=page.status_code,
+            details={
+                "redirect_type": rec.get("redirect_type"),
+                "redirect_url": rec.get("redirect_url"),
+            },
+        )
 
 
 # --------------------------------------------------------------------------

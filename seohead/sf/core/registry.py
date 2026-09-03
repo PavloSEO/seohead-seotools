@@ -105,7 +105,7 @@ CHECKS: dict[str, dict[str, Any]] = {
     "BAD_REDIRECT_TYPE": {
         "severity": "notice",
         "source": "SF-derived",
-        "message": "Temporary redirect (302 or 307) used where a permanent redirect is expected",
+        "message": "Temporary redirect (302, 303 or 307) used where a permanent redirect is expected",
         "fix": "Use a 301 redirect when the move is permanent.",
     },
     # 7.C — title & meta description

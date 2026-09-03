@@ -52,7 +52,7 @@ Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
 | `URL_CONTAINS_SPACE` | warning | SF:URL:Contains Space | The URL contains a space | Remove spaces/%20 from the URL. |
 | `URL_TRACKING_PARAMS` | warning | SF-derived | The URL of an indexable page contains a tracking parameter (utm_/gclid/fbclid/…) | Remove tracking parameters from public links; to handle incoming traffic, add a self-referencing canonical or block the parameters in robots.txt/Search Console. |
 | `AMPHTML_PRESENT` | notice | SF-derived | An AMP version is declared (informational) | Verify that the AMP version is current and valid. |
-| `BAD_REDIRECT_TYPE` | notice | SF-derived | A temporary redirect (302/307) is used where a permanent redirect (301) is expected | If the move is permanent, use 301. |
+| `BAD_REDIRECT_TYPE` | notice | SF-derived | A temporary redirect (302/303/307) is used where a permanent redirect (301) is expected | If the move is permanent, use 301. |
 | `CANONICALISED` | notice | SF-derived | The canonical points to another URL | Verify that the canonicalization is intentional. |
 | `CANONICAL_RELATIVE` | notice | SF:Canonicals:Canonical Is Relative | Relative canonical | Use an absolute URL in the canonical. |
 | `DESC_TOO_LONG` | notice | SF-derived | The Meta Description exceeds the threshold | Shorten the description. |
