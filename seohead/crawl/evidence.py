@@ -110,7 +110,9 @@ def _row(record: Any) -> dict[str, Any]:
         "Size (bytes)": record.size_bytes,
         "Word Count": record.word_count,
         "Text Ratio": record.text_ratio if record.text_ratio is not None else "",
-        "Outlinks": record.outlinks,
+        # The collector counts every link it found; this column counts internal
+        # links only, and External Outlinks is the disjoint remainder.
+        "Outlinks": max(record.outlinks - record.external_outlinks, 0),
         "External Outlinks": record.external_outlinks,
         "Response Time": record.response_time if record.response_time is not None else "",
         "Redirect URL": record.redirect_url,
