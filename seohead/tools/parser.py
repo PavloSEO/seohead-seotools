@@ -221,24 +221,42 @@ def _extract_headings(soup: BeautifulSoup) -> dict[str, list[str]]:
     return headings
 
 
-def _extract_jsonld(soup: BeautifulSoup) -> list[Any]:
+# How much of a broken block to quote back, so the reader can find it in the
+# page without the report carrying the whole thing.
+_JSONLD_EXCERPT_CHARS = 200
+
+
+def _extract_jsonld(soup: BeautifulSoup) -> tuple[list[Any], list[dict[str, Any]]]:
     """Parse every ``<script type="application/ld+json">`` block.
 
-    Blocks that fail to parse as JSON are skipped (the TS version swallows
-    the error and moves on).
+    Returns the blocks that parsed and a record of those that did not. Dropping
+    the failures silently makes a page whose markup is broken indistinguishable
+    from a page with no markup — the opposite conclusion, and the more common
+    one: a single stray comment voids an entire @graph.
     """
     import json
 
     out: list[Any] = []
-    for tag in soup.find_all("script", attrs={"type": _ci("application/ld+json")}):
+    invalid: list[dict[str, Any]] = []
+    for index, tag in enumerate(
+        soup.find_all("script", attrs={"type": _ci("application/ld+json")}), 1
+    ):
         raw = tag.string or tag.get_text()
-        if not raw:
+        text = (raw or "").strip()
+        if not text:
+            invalid.append({"index": index, "error": "block is empty", "excerpt": ""})
             continue
         try:
-            out.append(json.loads(raw.strip()))
-        except (ValueError, TypeError):
-            continue
-    return out
+            out.append(json.loads(text))
+        except (ValueError, TypeError) as exc:
+            invalid.append(
+                {
+                    "index": index,
+                    "error": str(exc),
+                    "excerpt": text[:_JSONLD_EXCERPT_CHARS],
+                }
+            )
+    return out, invalid
 
 
 _BASE_HREF_RE = re.compile(r"<base\b[^>]*?\bhref\s*=\s*[\"']([^\"']*)[\"']", re.IGNORECASE)
@@ -503,7 +521,12 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         result["twitter"] = {}
 
     result["headings"] = _extract_headings(soup) if opts["headings"] else {}
-    result["jsonld"] = _extract_jsonld(soup) if opts["jsonld"] else []
+    # jsonld stays what it has always been — the blocks that parsed — and the
+    # ones that did not are reported beside it rather than dropped.
+    if opts["jsonld"]:
+        result["jsonld"], result["jsonld_invalid"] = _extract_jsonld(soup)
+    else:
+        result["jsonld"], result["jsonld_invalid"] = [], []
     result["links"] = _extract_links(soup, base_url, final_url) if opts["links"] else []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.

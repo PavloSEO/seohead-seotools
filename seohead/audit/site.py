@@ -48,6 +48,9 @@ SEVERITY_RULES: tuple[tuple[str, str], ...] = (
     ("canonical", "warning"),
     ("affiliate site", "warning"),
     ("two schema types at once", "warning"),
+    # The markup exists and is void: the owner believes they publish it.
+    ("cannot be parsed", "warning"),
+    ("json-ld block(s) on the page are invalid", "warning"),
     # These missing directives are visible to both search engines and browsers.
     ("missing strict-transport-security", "warning"),
     ("missing content-security-policy", "warning"),

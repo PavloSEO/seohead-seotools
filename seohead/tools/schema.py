@@ -209,10 +209,19 @@ def _block_vocab(block: Any) -> tuple[str, bool]:
     return ("https://schema.org", True)
 
 
-def _extract_blocks(html: str) -> tuple[list[Any], list[str]]:
-    """Extract page JSON-LD; malformed or empty blocks become explicit findings."""
+def _extract_blocks(html: str) -> tuple[list[Any], list[str], int]:
+    """Extract page JSON-LD.
+
+    Returns the blocks that parsed, one finding per block that did not, and how
+    many blocks the markup carries. The third number is the one that answers
+    "does this page ship structured data" — the length of the first is a
+    different question, and reporting it as the answer told operators that a
+    site whose markup is broken on every page has no markup at all.
+    """
     blocks, errors = [], []
+    found = 0
     for i, raw in enumerate(_JSONLD_RE.findall(html), 1):
+        found += 1
         text = raw.strip()
         if not text:
             errors.append(f"JSON-LD block #{i} is empty")
@@ -220,8 +229,28 @@ def _extract_blocks(html: str) -> tuple[list[Any], list[str]]:
         try:
             blocks.append(json.loads(text))
         except json.JSONDecodeError as exc:
-            errors.append(f"JSON-LD block #{i} cannot be parsed: {exc.msg} (line {exc.lineno})")
-    return blocks, errors
+            errors.append(
+                f"JSON-LD block #{i} cannot be parsed: {exc.msg} (line {exc.lineno})"
+                + json_syntax_hint(text)
+            )
+    return blocks, errors, found
+
+
+# JSON has no comments and permits no trailing comma. Both appear constantly in
+# templates filled in by hand, and both void the whole block, so naming the
+# cause turns a parse error into a one-line fix.
+_JSON_COMMENT_RE = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.DOTALL)
+_TRAILING_COMMA_RE = re.compile(r",\s*[}\]]")
+
+
+def json_syntax_hint(text: str) -> str:
+    """Name the two syntax mistakes that most often void a JSON-LD block."""
+    causes = []
+    if _JSON_COMMENT_RE.search(text):
+        causes.append("JSON permits no comments")
+    if _TRAILING_COMMA_RE.search(text):
+        causes.append("JSON permits no trailing comma")
+    return f" — {'; '.join(causes)}" if causes else ""
 
 
 def _flatten(payload: Any, out: list[dict[str, Any]], path: str = "") -> None:
@@ -423,7 +452,7 @@ def check_schema(
         result.update(url=target, final_url=str(resp.url), status_code=resp.status_code)
 
     vocab = load_vocab()
-    blocks, parse_errors = _extract_blocks(html)
+    blocks, parse_errors, blocks_found = _extract_blocks(html)
 
     nodes: list[dict[str, Any]] = []
     # Record each JSON-LD block's declared vocabulary. Resolve context once per
@@ -456,6 +485,8 @@ def check_schema(
             "properties": len(vocab["properties"]),
         },
         blocks=len(blocks),
+        blocks_found=blocks_found,
+        blocks_invalid=blocks_found - len(blocks),
         vocabularies=vocabularies,
         parse_errors=parse_errors,
         graph=_graph_shape(nodes),
@@ -475,7 +506,16 @@ def _findings(r: dict[str, Any]) -> list[str]:
     out += r["parse_errors"]
 
     if not r["blocks"]:
-        out.append("The page contains no JSON-LD blocks")
+        # "No blocks" and "block #1 cannot be parsed" cannot both be true, and
+        # the second is the fact: the page does ship structured data, and search
+        # engines discard all of it.
+        if r["blocks_found"]:
+            out.append(
+                f"All {r['blocks_found']} JSON-LD block(s) on the page are invalid, so every "
+                "search engine discards the structured data this page believes it publishes"
+            )
+        else:
+            out.append("The page contains no JSON-LD blocks")
         if r["other_markup"]["microdata"]:
             out.append(
                 "Microdata with itemscope is present; search engines can read it, "
