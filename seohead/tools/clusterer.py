@@ -3,7 +3,7 @@
 
 The shared handler layer calls :func:`run_clusterer` directly; the module has no
 subprocess or transport protocol. It supports K-Means, DBSCAN, and agglomerative
-clustering, with optional Snowball stemming and stop-word removal through NLTK.
+clustering, with optional Snowball stemming and stop-word removal.
 
 Heavy optional imports are guarded so the base SEOHEAD package remains importable
 without clustering dependencies. A clear result error is returned only when the
@@ -27,15 +27,14 @@ except ImportError as exc:  # pragma: no cover - exercised only without deps
     _SKLEARN_OK = False
     _SKLEARN_ERR = str(exc)
 
-# Optional stemming / stop-words.
+# Optional stemming. ``snowballstemmer`` is the reference Snowball
+# implementation: pure Python, no data corpora, and no network access.
 try:
-    import nltk
-    from nltk.corpus import stopwords
-    from nltk.stem.snowball import SnowballStemmer
+    import snowballstemmer
 
-    _NLTK_OK = True
+    _STEMMER_OK = True
 except ImportError:
-    _NLTK_OK = False
+    _STEMMER_OK = False
 
 
 # --- Pure helpers ----------------------------------------------------------
@@ -52,12 +51,12 @@ def preprocess(
     """
     processed = [kw.lower() for kw in keywords]
 
-    if do_stem and _NLTK_OK:
+    if do_stem and _STEMMER_OK:
         lang_map = {"russian": "russian", "english": "english", "auto": "russian"}
         stem_lang = lang_map.get(language, "russian")
         try:
-            stemmer = SnowballStemmer(stem_lang)
-            processed = [" ".join(stemmer.stem(w) for w in kw.split()) for kw in processed]
+            stemmer = snowballstemmer.stemmer(stem_lang)
+            processed = [" ".join(stemmer.stemWords(kw.split())) for kw in processed]
         except Exception:
             # Stemming is best-effort; fall back to the lower-cased forms.
             pass
@@ -66,24 +65,11 @@ def preprocess(
 
 
 def get_stop_words(language: str) -> list[str]:
-    """Return a stop-word list for ``language`` (NLTK if available, else builtin)."""
-    if _NLTK_OK:
-        try:
-            lang_map = {
-                "russian": "russian",
-                "english": "english",
-                "auto": "russian",
-            }
-            nltk_lang = lang_map.get(language, "russian")
-            try:
-                return list(stopwords.words(nltk_lang))
-            except LookupError:
-                nltk.download("stopwords", quiet=True)
-                return list(stopwords.words(nltk_lang))
-        except Exception:
-            pass
+    """Return the built-in stop-word list for ``language``.
 
-    # Basic fallback stop-words when NLTK is unavailable.
+    The list is bundled rather than downloaded: the clusterer must stay usable
+    offline and must not fetch corpora over the network at call time.
+    """
     ru_stops = [
         "и",
         "в",
@@ -355,7 +341,7 @@ def _cluster(
 
 # --- Smoke test (no network, no heavy deps required) -----------------------
 if __name__ == "__main__":
-    # Exercise pure helpers only — safe to run without sklearn/nltk/network.
+    # Exercise pure helpers only — safe to run without sklearn or network access.
     assert detect_language(["hello world", "quick brown fox"]) == "english"
     assert detect_language(["привет мир", "рыжая лиса"]) == "russian"
     assert detect_language([]) == "russian"

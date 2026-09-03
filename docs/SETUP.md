@@ -44,7 +44,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 | `render` | `playwright` | `render-check`, `regions-check --render` |
 | `sitemap` | `advertools`, `python-dateutil` | deep parsing of very large sitemaps |
 | `mcp` | `mcp` | the MCP server (the CLI stays) |
-| `cluster` | `scikit-learn`, `numpy`, `nltk` | `keywords-cluster` |
+| `cluster` | `scikit-learn`, `numpy`, `snowballstemmer` | `keywords-cluster` |
 | `dev` | `pytest`, `pytest-cov`, `ruff`, `respx` | the test suite |
 
 ## First run
