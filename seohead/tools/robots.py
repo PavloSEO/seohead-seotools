@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from seohead.recon.net import http_client
 
@@ -100,9 +100,21 @@ def _pattern_to_regex(pattern: str) -> re.Pattern:
     return re.compile("^" + regex + ("$" if anchored else ""))
 
 
+def match_path(url: str) -> str:
+    """The part of a URL that robots.txt patterns are matched against.
+
+    Path *and* query: a rule like ``Disallow: /*?`` exists to block query
+    strings, so comparing it against the path alone can never match.
+    """
+    parts = urlsplit(url)
+    return (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+
+
 def is_allowed(parsed: dict, path: str, user_agent: str = "*") -> bool:
     """Allow/Disallow decision (Google precedence: longest matching pattern wins;
-    Allow wins ties). Handles ``*`` wildcards and the ``$`` end-anchor."""
+    Allow wins ties). Handles ``*`` wildcards and the ``$`` end-anchor.
+
+    ``path`` is the value ``match_path`` returns, query string included."""
     rules = _rules_for(parsed, user_agent)
     best_len, decision = -1, True
     for kind in ("disallow", "allow"):

@@ -169,3 +169,28 @@ def test_the_link_graph_is_collected():
 def test_a_non_crawlable_start_url_is_refused(bad):
     with pytest.raises(ValueError):
         crawl_site(bad, fetcher=_fetcher(SITE))
+
+
+# --- robots.txt is matched on path and query, not the path alone ------------
+QUERY_SITE = {
+    "https://example.com/robots.txt": FakeResponse(
+        "User-agent: *\nDisallow: /*?\n", headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": page("/blog", "/blog?page=2"),
+    "https://example.com/blog": page(),
+    "https://example.com/blog?page=2": page(),
+}
+
+
+def test_query_string_disallow_is_enforced():
+    # "Disallow: /*?" exists to block query strings; dropping the query before
+    # the comparison made it unmatchable and the rule silently inert.
+    result = _crawl(QUERY_SITE)
+    assert "https://example.com/blog?page=2" not in {p.url for p in result.pages}
+    assert result.robots_blocked == ["https://example.com/blog?page=2"]
+
+
+def test_query_string_disallow_is_reported_under_report_only():
+    result = _crawl(QUERY_SITE, robots_policy="report_only")
+    assert "https://example.com/blog?page=2" in {p.url for p in result.pages}
+    assert result.robots_blocked == ["https://example.com/blog?page=2"]
