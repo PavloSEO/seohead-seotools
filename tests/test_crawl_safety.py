@@ -171,3 +171,95 @@ def test_a_configured_delay_higher_than_the_stated_one_is_kept():
 
 def test_a_delay_is_not_applied_when_robots_is_not_fetched():
     assert _crawl("ignore").crawl_delay_applied is None
+
+
+# ── pinned transport ────────────────────────────────────────────────────────
+
+
+def test_a_request_is_pinned_to_the_address_that_was_vetted():
+    """Resolving twice leaves a window between the check and the connection."""
+    from seohead.recon.net import pinned_target
+
+    url, headers, extensions = pinned_target("https://example.com/path?a=1")
+    assert headers["Host"] == "example.com"
+    assert extensions["sni_hostname"] == "example.com"
+    assert "example.com" not in url  # the connection goes to an address
+    assert url.endswith("/path?a=1")
+
+
+def test_pinning_preserves_a_non_default_port():
+    from seohead.recon.net import pinned_target
+
+    url, headers, _ = pinned_target("https://example.com:8443/")
+    assert headers["Host"] == "example.com:8443"
+    assert url.endswith(":8443/")
+
+
+def test_pinning_refuses_a_url_without_a_host():
+    from seohead.recon.net import pinned_target
+
+    with pytest.raises(ValueError, match="no host"):
+        pinned_target("file:///etc/passwd")
+
+
+def test_pinning_refuses_a_private_target():
+    from seohead.recon.net import pinned_target
+
+    with pytest.raises(ValueError):
+        pinned_target("http://127.0.0.1:8080/")
+
+
+# ── circuit breaker ─────────────────────────────────────────────────────────
+
+
+def test_a_single_429_is_treated_as_an_overload_signal():
+    from seohead.crawl.throttle import Throttle
+
+    t = Throttle(min_delay=0.5)
+    before = t.delay
+    t.record_server_error(429)
+    assert t.delay > before * 2
+
+
+def test_retry_after_raises_the_delay_to_at_least_what_was_asked():
+    from seohead.crawl.throttle import Throttle
+
+    t = Throttle(min_delay=0.5)
+    t.record_server_error(503, retry_after=30.0)
+    assert t.delay >= 30.0
+
+
+def test_a_non_numeric_retry_after_is_not_mistaken_for_a_duration():
+    from seohead.crawl.collect import _retry_after
+
+    assert _retry_after("Wed, 21 Oct 2026 07:28:00 GMT") is None
+    assert _retry_after("120") == 120.0
+    assert _retry_after(None) is None
+
+
+def test_repeated_server_refusals_stop_the_crawl():
+    site = {
+        "https://example.com/robots.txt": FakeResponse("User-agent: *\n", ct="text/plain"),
+        "https://example.com/": page(*[f"/p{i}" for i in range(9)]),
+    }
+    for i in range(9):
+        site[f"https://example.com/p{i}"] = FakeResponse("", status_code=503)
+    result = crawl_site(
+        "https://example.com/",
+        min_delay=0,
+        sleeper=lambda _s: None,
+        fetcher=lambda u: site.get(u) or FakeResponse("", 404),
+        max_urls=50,
+    )
+    assert result.partial is True
+    assert "refused repeatedly" in result.stopped_reason
+
+
+def test_a_success_clears_the_refusal_streak():
+    from seohead.crawl.throttle import Throttle
+
+    t = Throttle()
+    for _ in range(4):
+        t.record_server_error(503)
+    t.record_success()
+    assert t.host_is_failing() is False

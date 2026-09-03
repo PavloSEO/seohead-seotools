@@ -52,7 +52,7 @@ works, and the affected tool answers `{"ok": false, "error": ...,
 ```bash
 seohead --version                     # seohead 3.0.0
 seohead --help                        # the command list
-pytest -q                             # 637 offline tests; runtime depends on extras
+pytest -q                             # 646 offline tests; runtime depends on extras
 seohead sf run --exports-dir examples/exports --out /tmp/report --tasks
 ```
 
@@ -130,6 +130,14 @@ either misses broken images or triples its request count.
 comparable, and nobody can tell why they differ. `run.effective_max_requests_per_second` records the
 politeness the run actually permitted, because politeness is a combination of settings rather than
 any single one.
+
+The crawler stops on its own when a host is failing: repeated timeouts, or repeated 429 and 5xx
+responses, end the run rather than continuing at the same rate. A single 429 is treated as an
+overload signal rather than a retryable blip — it is the server explicitly asking for less. A
+numeric `Retry-After` raises the delay to at least what was asked.
+
+`Crawl-delay` from robots.txt is honoured as a **floor** beneath the configured delay: the site's
+request can raise politeness and can never lower it.
 
 `robots.policy` accepts `respect` (obey), `report_only` (fetch it, report what it would block, crawl
 anyway — the honest audit setting), and `ignore` (do not fetch it at all).

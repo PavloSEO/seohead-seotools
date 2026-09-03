@@ -21,7 +21,7 @@ import shutil
 import socket
 import subprocess
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
 PRIVATE_NETWORK_ENV = "SEOHEAD_ALLOW_PRIVATE_NETWORKS"
@@ -93,6 +93,34 @@ def _is_public_address(value: str) -> bool:
         except (ipaddress.AddressValueError, ValueError):
             return False
     return address.is_global
+
+
+def pinned_target(url: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Rewrite a URL to connect to a vetted address, keeping the hostname.
+
+    ``validate_url`` resolved DNS and then threw the answer away, so the HTTP
+    client resolved a second time and connected to whatever came back. That is a
+    time-of-check-to-time-of-use gap: a hostile resolver can answer the check
+    with a public address and the connection with a loopback one. Since the guard
+    also runs per redirect hop, it was one window per hop rather than one.
+
+    Returns the URL to request, headers carrying the original ``Host``, and the
+    request extensions carrying the hostname for SNI — so certificate
+    verification still happens against the name, not the address.
+    """
+    parts = urlsplit(url)
+    host = parts.hostname
+    if not host:
+        raise ValueError(f"no host to pin in {url!r}")
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+
+    address = resolve_socket_addresses(host, port)[0][3][0].split("%", 1)[0]
+    literal = f"[{address}]" if ":" in address else address
+    netloc = f"{literal}:{parts.port}" if parts.port else literal
+    pinned = urlunsplit((parts.scheme, netloc, parts.path or "/", parts.query, ""))
+
+    authority = f"{host}:{parts.port}" if parts.port else host
+    return pinned, {"Host": authority}, {"sni_hostname": host}
 
 
 def resolve_socket_addresses(host: str, port: int) -> list[tuple[int, int, int, Any]]:

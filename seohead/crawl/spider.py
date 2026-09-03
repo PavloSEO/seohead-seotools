@@ -172,6 +172,12 @@ def crawl_site(
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
                 break
+            if throttle.host_is_failing():
+                # The host has refused repeatedly. Continuing would measure the
+                # crawler rather than the site.
+                result.partial = True
+                result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
+                break
 
             # A redirect is a discovery too, and it stays inside the budget.
             if record.redirect_url and depth < depth_limit:

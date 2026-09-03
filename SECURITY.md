@@ -20,8 +20,11 @@ The main trust boundaries are:
 - remote HTML, XML, headers, redirects, robots.txt, and provider responses are untrusted data;
 - URL tools block private and non-public network targets unless explicitly enabled for an
   authorized staging or intranet environment;
-- direct TLS probes resolve once, reject non-global addresses by default, and connect to the
-  vetted address while retaining the original hostname for SNI and certificate verification;
+- URL fetches and direct TLS probes resolve once, reject non-global addresses by default, and
+  connect to the vetted address while retaining the original hostname for SNI and certificate
+  verification, so a resolver cannot answer the check and the connection differently;
+- addresses that carry a non-public destination inside a globally-scoped form — NAT64, 6to4,
+  IPv4-mapped — are judged by the address they carry, not by the wrapper;
 - file-producing tools should run inside a dedicated working directory or mounted container
   volume;
 - operations that probe paths, rewrite files, verify bots over DNS, or spend provider credits

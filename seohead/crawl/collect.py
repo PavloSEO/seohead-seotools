@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from seohead.crawl.throttle import Throttle
-from seohead.recon.net import UA, http_client, validate_url
+from seohead.recon.net import UA, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
 
 SCHEMA_VERSION = "crawl.v1"
@@ -149,7 +149,18 @@ def fetch_one(
 
     started = time.monotonic()
     try:
-        response = fetcher(url) if fetcher else client.get(url, headers={"User-Agent": UA})
+        if fetcher:
+            response = fetcher(url)
+        else:
+            # Connect to the address that was vetted, keeping the hostname for
+            # SNI and certificate verification. Resolving twice would leave a
+            # window between the check and the connection.
+            target, headers, extensions = pinned_target(url)
+            response = client.get(
+                target,
+                headers={"User-Agent": UA, **headers},
+                extensions=extensions,
+            )
     except Exception as exc:
         record.error = str(exc)
         if throttle is not None and _is_timeout(str(exc)):
@@ -169,7 +180,11 @@ def fetch_one(
     ok = record.status_code is not None and 200 <= record.status_code < 300
     if throttle is not None:
         throttle.record_response(elapsed, ok)
-        throttle.record_success()
+        code = record.status_code or 0
+        if code == 429 or 500 <= code < 600:
+            throttle.record_server_error(code, _retry_after(headers.get("retry-after")))
+        else:
+            throttle.record_success()
 
     parsed = None
     if record.size_bytes > MAX_RESPONSE_BYTES:
@@ -185,6 +200,16 @@ def fetch_one(
         text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
         record.text_ratio = round(text_len / record.size_bytes, 4) if record.size_bytes else None
     return record, parsed
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Seconds from a Retry-After header. Only the numeric form is honoured."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value.strip()))
+    except ValueError:
+        return None  # HTTP-date form: respected as "back off", not as a duration
 
 
 def _is_timeout(message: str) -> bool:
@@ -243,6 +268,10 @@ def collect_urls(
             if throttle.should_stop():
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                break
+            if throttle.host_is_failing():
+                result.partial = True
+                result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
                 break
 
     result.limitations = [
