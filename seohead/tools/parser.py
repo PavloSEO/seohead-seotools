@@ -128,6 +128,79 @@ def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     return None
 
 
+# <title> also exists in the SVG and MathML vocabularies, where it is an
+# accessible name for a graphic, not the title of the document. An inline icon
+# therefore places a <title> before the real one — often before any <title> at
+# all — and BeautifulSoup's ``soup.title`` returns the first in document order.
+_FOREIGN_CONTENT = ("svg", "math")
+
+
+def document_title(soup: BeautifulSoup) -> str | None:
+    """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
+    for tag in soup.find_all("title"):
+        if any(parent.name in _FOREIGN_CONTENT for parent in tag.parents):
+            continue
+        return collapse_whitespace(tag.get_text()) or None
+    return None
+
+
+# A robots directive is addressed to a named crawler; ``robots`` addresses all
+# of them. Google reads the union of the generic tag and the ones naming it, so
+# a page can be noindex without the word appearing in <meta name="robots">.
+ROBOTS_META_NAMES = (
+    "robots",
+    "googlebot",
+    "googlebot-news",
+    "bingbot",
+    "msnbot",
+    "yandex",
+    "slurp",
+)
+
+# Directives that carry a value after a colon, so the colon is not a
+# user-agent prefix.
+_VALUED_DIRECTIVES = (
+    "max-snippet",
+    "max-image-preview",
+    "max-video-preview",
+    "unavailable_after",
+)
+
+
+def robots_meta_values(soup: BeautifulSoup) -> list[str]:
+    """Return the ``content`` of every robots-directive meta, in document order."""
+    out: list[str] = []
+    for tag in soup.find_all("meta"):
+        name = tag.get("name")
+        if not isinstance(name, str) or name.lower() not in ROBOTS_META_NAMES:
+            continue
+        content = tag.get("content")
+        if isinstance(content, str) and content.strip():
+            out.append(collapse_whitespace(content))
+    return out
+
+
+def robots_directives(*values: str | None) -> set[str]:
+    """Split robots directive strings into lowercase tokens.
+
+    Handles the two forms that defeat a substring search: ``none``, which is
+    shorthand for ``noindex, nofollow``, and the ``<user-agent>: <directive>``
+    prefix that an ``X-Robots-Tag`` header may carry.
+    """
+    tokens: set[str] = set()
+    for value in values:
+        for raw in str(value or "").replace(";", ",").split(","):
+            token = raw.strip().lower()
+            if ":" in token and not token.startswith(_VALUED_DIRECTIVES):
+                token = token.split(":", 1)[1].strip()
+            if not token:
+                continue
+            tokens.add(token)
+            if token == "none":
+                tokens.update(("noindex", "nofollow"))
+    return tokens
+
+
 def _ci(value: str):
     """A case-insensitive attribute matcher for BeautifulSoup ``find``."""
     target = value.lower()
@@ -390,14 +463,17 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
     result: dict[str, Any] = {}
 
     if opts["meta"]:
-        title_tag = soup.title
-        result["title"] = (collapse_whitespace(title_tag.get_text()) if title_tag else None) or None
+        result["title"] = document_title(soup)
         result["meta_description"] = _meta_content(soup, name="description")
         result["robots"] = _meta_content(soup, name="robots")
+        # Separate from "robots": that key keeps its literal meaning, this one
+        # carries every crawler-addressed tag, which is what indexability needs.
+        result["robots_meta"] = robots_meta_values(soup)
     else:
         result["title"] = None
         result["meta_description"] = None
         result["robots"] = None
+        result["robots_meta"] = []
 
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})

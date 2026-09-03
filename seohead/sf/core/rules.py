@@ -12,6 +12,8 @@ import urllib.parse
 from collections import defaultdict
 from typing import Any
 
+from seohead.tools.parser import robots_directives
+
 from .context import AuditContext
 from .models import Page
 from .normalize import norm_url
@@ -251,9 +253,7 @@ def check_canonical_directives(ctx: AuditContext) -> None:
                         target_url=page.url,
                         details={"canonical": canonical},
                     )
-        robots = " ".join(
-            str(v) for v in (rec.get("meta_robots"), rec.get("x_robots")) if v
-        ).lower()
+        robots = robots_directives(rec.get("meta_robots"), rec.get("x_robots"))
         if "noindex" in robots:
             ctx.add("NOINDEX", target_url=page.url, details={"meta_robots": rec.get("meta_robots")})
         elif "nofollow" in robots and page.is_indexable:
@@ -491,9 +491,7 @@ def check_content_quality(ctx: AuditContext) -> None:
 def check_directives_extra(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         rec = _rec(page)
-        robots = " ".join(
-            str(v) for v in (rec.get("meta_robots"), rec.get("x_robots")) if v
-        ).lower()
+        robots = robots_directives(rec.get("meta_robots"), rec.get("x_robots"))
         if "noarchive" in robots:
             ctx.add("NOARCHIVE", target_url=page.url)
         if "nosnippet" in robots:
