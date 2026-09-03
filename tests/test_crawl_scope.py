@@ -44,17 +44,22 @@ def _urls(result) -> set[str]:
     return {p.url for p in result.pages}
 
 
+def _fetched(result, url: str) -> bool:
+    """Exact-match membership: a URL was fetched or it was not."""
+    return any(page.url == url for page in result.pages)
+
+
 # --- exclude_patterns -------------------------------------------------------
 def test_exclude_patterns_keep_assets_out_of_the_budget():
     result = _crawl(SITE, scope={"exclude_patterns": [r"\.jpg$", "/assets/"]})
-    assert "https://example.com/assets/img/logo.jpg" not in _urls(result)
-    assert "https://example.com/blog/post" in _urls(result)
+    assert not _fetched(result, "https://example.com/assets/img/logo.jpg")
+    assert _fetched(result, "https://example.com/blog/post")
     assert result.excluded.get("excluded_by_pattern") == 1
 
 
 def test_without_exclude_patterns_assets_are_fetched():
     # The behaviour the setting is supposed to change.
-    assert "https://example.com/assets/img/logo.jpg" in _urls(_crawl(SITE))
+    assert _fetched(_crawl(SITE), "https://example.com/assets/img/logo.jpg")
 
 
 # --- include_patterns -------------------------------------------------------
@@ -67,19 +72,19 @@ def test_include_patterns_restrict_the_crawl():
 def test_the_seed_is_fetched_even_when_it_matches_no_include_pattern():
     # Otherwise a filtered crawl reports an empty site rather than a mistake.
     result = _crawl(SITE, scope={"include_patterns": ["/blog/"]})
-    assert "https://example.com/" in _urls(result)
+    assert _fetched(result, "https://example.com/")
 
 
 # --- scope.internal ---------------------------------------------------------
 def test_host_scope_excludes_subdomains():
     result = _crawl(SUBDOMAIN_SITE)
-    assert "https://shop.example.com/x" not in _urls(result)
+    assert not _fetched(result, "https://shop.example.com/x")
 
 
 def test_registrable_domain_scope_includes_subdomains():
     result = _crawl(SUBDOMAIN_SITE, scope={"internal": "registrable_domain"})
-    assert "https://shop.example.com/x" in _urls(result)
-    assert "https://other.com/y" not in _urls(result)
+    assert _fetched(result, "https://shop.example.com/x")
+    assert not _fetched(result, "https://other.com/y")
 
 
 # --- exclude_hosts ----------------------------------------------------------
@@ -88,7 +93,7 @@ def test_exclude_hosts_wins_over_a_widened_scope():
         SUBDOMAIN_SITE,
         scope={"internal": "registrable_domain", "exclude_hosts": ["shop.example.com"]},
     )
-    assert "https://shop.example.com/x" not in _urls(result)
+    assert not _fetched(result, "https://shop.example.com/x")
     assert result.excluded.get("excluded_host") == 1
 
 
