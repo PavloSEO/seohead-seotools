@@ -42,8 +42,20 @@ jobs:
       - name: Enforce core/interface boundary
         run: |
           if grep -rnE "^\s*from seohead\.(servers|cli)|^\s*import seohead\.(servers|cli)" \
-               seohead/sf seohead/tools seohead/recon seohead/data_sources; then
+               seohead/sf seohead/tools seohead/recon seohead/data_sources seohead/crawl; then
             echo "::error::core modules must not import the CLI or server layer"
+            exit 1
+          fi
+      - name: Enforce collector/analyzer boundary
+        run: |
+          # The collector gathers evidence; the analyzer judges it. They meet
+          # only at the exports contract, so neither may import the other.
+          if grep -rnE "^\s*from seohead\.sf|^\s*import seohead\.sf" seohead/crawl; then
+            echo "::error::seohead/crawl must not import the analyzer"
+            exit 1
+          fi
+          if grep -rnE "^\s*from seohead\.crawl|^\s*import seohead\.crawl" seohead/sf; then
+            echo "::error::seohead/sf must not import the collector"
             exit 1
           fi
       - name: Run the synthetic crawl audit

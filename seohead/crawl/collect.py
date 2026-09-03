@@ -1,0 +1,231 @@
+"""Bounded fetching of an explicit URL list.
+
+List mode is a strict subset of a crawler: no frontier, no scope model, no
+traps, so its output is deterministic by construction. It is also the slice that
+does real work on day one — verifying a redirect map after a migration,
+re-checking the URLs a developer says are fixed, auditing a Search Console
+export.
+
+Rows are written as they are collected. Screaming Frog writes its exports only
+at the end, which is why a measured 75-minute polite crawl of a struggling host
+produced nothing at all; a collector that batches to the end inherits that
+failure exactly where crawling is hardest.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import time
+from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+from seohead.crawl.throttle import Throttle
+from seohead.recon.net import UA, http_client, validate_url
+from seohead.tools.parser import parse_html
+
+SCHEMA_VERSION = "crawl.v1"
+
+MAX_URLS_CEILING = 10_000
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+DEFAULT_TIMEOUT_S = 15.0
+
+
+@dataclass
+class PageRecord:
+    """One fetched URL, in the collector's own vocabulary."""
+
+    url: str
+    status_code: int | None = None
+    content_type: str = ""
+    size_bytes: int = 0
+    response_time: float | None = None
+    redirect_url: str = ""
+    title: str = ""
+    meta_description: str = ""
+    h1: str = ""
+    h1_2: str = ""
+    h2: str = ""
+    canonical: str = ""
+    meta_robots: str = ""
+    x_robots: str = ""
+    og_title: str = ""
+    og_description: str = ""
+    og_image: str = ""
+    word_count: int = 0
+    text_ratio: float | None = None
+    outlinks: int = 0
+    external_outlinks: int = 0
+    jsonld_blocks_found: int = 0
+    jsonld_blocks_parsed: int = 0
+    error: str = ""
+
+    @property
+    def is_html(self) -> bool:
+        return "html" in (self.content_type or "").lower()
+
+
+@dataclass
+class CrawlResult:
+    schema_version: str = SCHEMA_VERSION
+    pages: list[PageRecord] = field(default_factory=list)
+    partial: bool = False
+    stopped_reason: str = ""
+    limitations: list[str] = field(default_factory=list)
+
+
+def _text_of(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _first_heading(parsed: dict, level: str, index: int = 0) -> str:
+    items = (parsed.get("headings") or {}).get(level) or []
+    return _text_of(items[index]) if len(items) > index else ""
+
+
+def _record_from_parsed(parsed: dict) -> dict[str, Any]:
+    og = parsed.get("og") or {}
+    links = parsed.get("links") or []
+    return {
+        "title": _text_of(parsed.get("title")),
+        "meta_description": _text_of(parsed.get("meta_description")),
+        "h1": _first_heading(parsed, "h1", 0),
+        "h1_2": _first_heading(parsed, "h1", 1),
+        "h2": _first_heading(parsed, "h2", 0),
+        "canonical": _text_of(parsed.get("canonical")),
+        "meta_robots": _text_of(parsed.get("robots")),
+        "og_title": _text_of(og.get("title")),
+        "og_description": _text_of(og.get("description")),
+        "og_image": _text_of(og.get("image")),
+        "word_count": int(parsed.get("word_count") or 0),
+        "outlinks": len(links),
+        "external_outlinks": len([link for link in links if link.get("external")]),
+    }
+
+
+def _jsonld_counts(html: str, parsed: dict) -> tuple[int, int]:
+    """Blocks present in the markup, and blocks that actually parsed.
+
+    A page carrying one malformed JSON-LD block must be reported as "found 1,
+    parsed 0". Reporting "no structured data" would describe a different page.
+    """
+    found = html.lower().count("application/ld+json")
+    return found, len(parsed.get("jsonld") or [])
+
+
+def collect_urls(
+    urls: Iterable[str],
+    *,
+    max_urls: int = 500,
+    timeout: float = DEFAULT_TIMEOUT_S,
+    min_delay: float = 0.0,
+    out_path: str | None = None,
+    fetcher: Callable[[str], Any] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> CrawlResult:
+    """Fetch an explicit list of URLs in the order given.
+
+    ``out_path`` receives one JSON object per line as each URL completes, so an
+    interrupted run still leaves usable evidence behind.
+    """
+    limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
+    result = CrawlResult()
+    throttle = Throttle(min_delay=min_delay)
+    seen: set[str] = set()
+    with contextlib.ExitStack() as stack:
+        handle = None
+        if out_path:
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+            handle = stack.enter_context(open(out_path, "w", encoding="utf-8"))
+
+        client = None
+        if fetcher is None:
+            client, _ = http_client(timeout)
+            stack.callback(client.close)
+
+        for raw in urls:
+            if len(result.pages) >= limit:
+                result.partial = True
+                result.stopped_reason = f"url limit reached ({limit})"
+                break
+            url = (raw or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+
+            record = PageRecord(url=url)
+            try:
+                validate_url(url)
+            except Exception as exc:  # guarded target, bad scheme, private network
+                record.error = str(exc)
+                result.pages.append(record)
+                _write(handle, record)
+                continue
+
+            if throttle.delay:
+                sleeper(throttle.delay)
+
+            started = time.monotonic()
+            try:
+                response = fetcher(url) if fetcher else client.get(url, headers={"User-Agent": UA})
+            except Exception as exc:
+                message = str(exc)
+                record.error = message
+                if "timed out" in message.lower() or "timeout" in message.lower():
+                    throttle.record_timeout()
+                    if throttle.should_stop():
+                        result.pages.append(record)
+                        _write(handle, record)
+                        result.partial = True
+                        result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                        break
+                result.pages.append(record)
+                _write(handle, record)
+                continue
+
+            elapsed = time.monotonic() - started
+            record.response_time = round(elapsed, 3)
+            record.status_code = getattr(response, "status_code", None)
+            headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
+            record.content_type = headers.get("content-type", "")
+            record.x_robots = headers.get("x-robots-tag", "")
+            record.redirect_url = headers.get("location", "")
+
+            body = getattr(response, "text", "") or ""
+            record.size_bytes = len(body.encode("utf-8", "ignore"))
+            ok = record.status_code is not None and 200 <= record.status_code < 300
+            throttle.record_response(elapsed, ok)
+            throttle.record_success()
+
+            if record.size_bytes > MAX_RESPONSE_BYTES:
+                # Too large to parse, but a 200 is still a 200: it must not be
+                # reported as unreachable.
+                record.error = "response too large to parse"
+            elif record.is_html and body:
+                parsed = parse_html(body, url)
+                for key, value in _record_from_parsed(parsed).items():
+                    setattr(record, key, value)
+                found, parsed_count = _jsonld_counts(body, parsed)
+                record.jsonld_blocks_found = found
+                record.jsonld_blocks_parsed = parsed_count
+                text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
+                record.text_ratio = (
+                    round(text_len / record.size_bytes, 4) if record.size_bytes else None
+                )
+
+            result.pages.append(record)
+            _write(handle, record)
+    result.limitations = [
+        "list mode: no link discovery, no sitemap expansion",
+        "static HTML only: no JavaScript rendering",
+    ]
+    return result
+
+
+def _write(handle, record: PageRecord) -> None:
+    if handle is None:
+        return
+    handle.write(json.dumps(asdict(record), ensure_ascii=False) + "\n")
+    handle.flush()
