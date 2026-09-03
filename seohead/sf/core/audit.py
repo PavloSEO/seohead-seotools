@@ -131,6 +131,10 @@ def run_audit(
     ctx = AuditContext(exports, cfg)
     log(f"[audit] {len(ctx.pages)} URLs ({len(ctx.html_pages())} HTML)")
 
+    # Declared-missing evidence is skipped before any check runs, so a check
+    # that never fired cannot be mistaken for a check that found nothing.
+    ctx.skip_unsupported(set(exports.frames))
+
     run_rules(ctx)
     run_inlinks(ctx)
     size_stats = run_heuristics(ctx)

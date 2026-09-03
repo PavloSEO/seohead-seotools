@@ -154,6 +154,19 @@ class AuditContext:
         self.groups.append(group)
         return group
 
+    def skip_unsupported(self, available: set[str]) -> None:
+        """Skip every check whose declared export frame is absent.
+
+        Declaring the dependency once beats each check discovering its own
+        absence, and it makes the gap countable instead of invisible.
+        """
+        from seohead.sf.core.registry import CHECK_REQUIRES, missing_requirements
+
+        for check_id in CHECK_REQUIRES:
+            gone = missing_requirements(check_id, available)
+            if gone:
+                self.skip(check_id, "missing export: " + ", ".join(gone))
+
     def skip(self, check_id: str, reason: str) -> None:
         if check_id in self._skipped_ids:
             return

@@ -620,3 +620,36 @@ def check_meta(check_id: str) -> dict[str, Any]:
     return CHECKS.get(
         check_id, {"severity": "notice", "source": "SF-derived", "message": check_id, "fix": None}
     )
+
+
+# ── export preconditions ─────────────────────────────────────────────────────
+#
+# Which loader frame a check needs before it can say anything. Without this a
+# check whose evidence never arrived reports nothing, and a report renders
+# nothing as clean — the toolkit's one remaining place where "not measured" and
+# "no problem" looked identical.
+#
+# Response-code checks are deliberately absent: they read status codes straight
+# from ``internal_all`` and need no separate frame, so declaring one would turn
+# an honest "no 5xx found" into a false "skipped".
+# Only frames other than ``internal_all`` are listed: the master table is
+# required for a run at all, and checks derived from its columns guard
+# themselves per column. A check absent from this map and lacking its own skip
+# path is caught by ``test_every_check_can_be_skipped``.
+CHECK_REQUIRES: dict[str, tuple[str, ...]] = {
+    "REDIRECT_CHAIN": ("redirect_chains",),
+    "REDIRECT_LOOP": ("redirect_chains",),
+    "IMG_MISSING_ALT": ("images_missing_alt",),
+    "IMG_OVER_KB": ("images_over_kb",),
+    "IMG_MISSING_DIMENSIONS": ("images_missing_size",),
+    "MIXED_CONTENT": ("security_mixed",),
+    "MISSING_HSTS": ("security_hsts",),
+    "STRUCTURED_DATA_MISSING": ("structured_data_missing",),
+    "HREFLANG_ERROR": ("hreflang",),
+    "HREFLANG_BROKEN_TARGET": ("all_hreflang",),
+}
+
+
+def missing_requirements(check_id: str, available: set[str]) -> tuple[str, ...]:
+    """Frames a check needs that the run does not have."""
+    return tuple(f for f in CHECK_REQUIRES.get(check_id, ()) if f not in available)

@@ -47,6 +47,10 @@ def _dedupe(issues: list[Issue]) -> list[Issue]:
 # a fraction of a site as if it were the whole one is still worth flagging.
 PARTIAL_CRAWL_RATIO = 0.2
 
+# Below this share of the registry the score stops meaning anything: a source
+# serving a fifth of the checks would grade a site on almost no evidence.
+MIN_COVERAGE_TO_SCORE = 0.5
+
 
 def _crawl_validity(
     n_pages: int, by_check: dict[str, int], urls_crawled: int
@@ -138,6 +142,47 @@ def aggregate(
     if not crawl_valid:
         summary["health_score"] = None
         summary["health_score_reason"] = invalid_reason
+
+    # A score built from half the checks is not comparable to one built from all
+    # of them, and the difference is invisible in the number. Fewer checks means
+    # less penalty means a HIGHER score, so silence here rewards missing data.
+    from seohead.sf.core.registry import CHECKS
+
+    checks_total = len(CHECKS)
+    checks_skipped = len({s.id for s in ctx.skipped})
+    checks_available = checks_total - checks_skipped
+    # "Silent" checks neither produced an issue nor declared a skip. Some are
+    # genuinely clean; some had no evidence and said nothing. Today those two are
+    # indistinguishable, and naming the population is how the gap stops being
+    # invisible — every declaration added moves a check out of this bucket.
+    fired_checks = {i.check for i in issues}
+    declared = {s.id for s in ctx.skipped}
+    summary["check_coverage"] = {
+        "checks_total": checks_total,
+        "checks_fired": len(fired_checks),
+        "checks_skipped": checks_skipped,
+        "checks_silent": len(set(CHECKS) - fired_checks - declared),
+        "coverage": round(checks_available / checks_total, 3) if checks_total else None,
+    }
+    # Below this, the number stops meaning anything: a source serving a fifth of
+    # the registry would score a site on almost no evidence. Suppressing is the
+    # same discipline as everywhere else — better a stated absence than a
+    # confident wrong number. Note the score is deliberately NOT rescaled by
+    # coverage: estimating what the checks that never ran would have found is
+    # invention, so comparability is refused instead of faked.
+    coverage_ratio = summary["check_coverage"]["coverage"] or 0.0
+    if coverage_ratio < MIN_COVERAGE_TO_SCORE and summary["health_score"] is not None:
+        summary["health_score"] = None
+        summary["health_score_reason"] = (
+            f"only {checks_available} of {checks_total} checks could run "
+            f"({coverage_ratio:.0%} coverage); too little evidence to score"
+        )
+
+    if checks_skipped:
+        summary["health_score_basis"] = (
+            f"{checks_available} of {checks_total} checks could run; the score is not "
+            "comparable to a run with full evidence"
+        )
 
     # A crawl far below the declared sitemap still scores, but says so: the
     # score describes what was crawled, not the site.

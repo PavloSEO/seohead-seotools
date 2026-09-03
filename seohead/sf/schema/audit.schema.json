@@ -65,6 +65,8 @@
           "type": ["integer", "null"], "minimum": 0, "maximum": 100
         },
         "health_score_reason": {"type": "string"},
+        "health_score_basis": {"type": "string"},
+        "check_coverage": {"type": "object"},
         "health_score_scope": {"type": "string"},
         "size_stats_bytes": {"type": "object"},
         "sitemap": {"type": "object"}
