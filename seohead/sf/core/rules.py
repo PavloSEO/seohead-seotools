@@ -58,6 +58,19 @@ def _path_of(url: str) -> str:
     return urllib.parse.urlsplit(url).path
 
 
+def _decoded_path(url: str) -> str:
+    """The path as a reader sees it, with percent-escapes resolved.
+
+    Exports carry the URL as crawled, so a path written in a non-Latin script
+    arrives percent-encoded, one three-character escape per byte. RFC 3986
+    prefers uppercase hex digits in those escapes, which makes the encoded form
+    of every such URL look uppercase and none of them look non-ASCII — the
+    exact opposite of the truth. Both questions are about the characters the
+    path denotes, so both are asked of the decoded form.
+    """
+    return urllib.parse.unquote(_path_of(url))
+
+
 # --------------------------------------------------------------------------
 # 7.A — response codes & indexing
 # --------------------------------------------------------------------------
@@ -309,7 +322,7 @@ def check_url_and_perf(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         rec = _rec(page)
         url = page.url
-        path = _path_of(url)
+        path = _decoded_path(url)
         if len(url) > t["url_max_chars"]:
             ctx.add(
                 "URL_TOO_LONG",
