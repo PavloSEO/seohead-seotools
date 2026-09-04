@@ -129,7 +129,7 @@ jobs:
           import asyncio
           from seohead.servers.mcp_server import build_server
           tools = asyncio.run(build_server().list_tools())
-          assert len(tools) == 50, f"expected 50 MCP tools, got {len(tools)}"
+          assert len(tools) == 50, f'expected 50 MCP tools, got {len(tools)}'
           print(f'MCP tools available in the slim image: {len(tools)}')
           "
       - uses: docker/build-push-action@v7
