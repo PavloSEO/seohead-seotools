@@ -88,7 +88,7 @@ def test_link_score_skips_without_the_all_inlinks_export(tmp_path):
     assert "all_inlinks" in reasons["LOW_LINK_SCORE"]
 
 
-def test_a_page_reached_only_by_nofollow_links_scores_low(tmp_path):
+def _nofollow_floor_fixture(tmp_path) -> str:
     # Six "core" pages fully interlink with ordinary follow links, so real
     # link equity concentrates among them; "nofollowed" is linked from every
     # one of them, but every one of those links is nofollow, so none of that
@@ -110,8 +110,27 @@ def test_a_page_reached_only_by_nofollow_links_scores_low(tmp_path):
     internal_rows.append(
         ["https://example.com/nofollowed", "text/html", "200", "OK", "Indexable", "2"]
     )
-    exports_dir = _write(tmp_path, internal_rows, inlink_rows)
+    return _write(tmp_path, internal_rows, inlink_rows)
+
+
+def test_a_page_reached_only_by_nofollow_links_scores_low(tmp_path):
+    exports_dir = _nofollow_floor_fixture(tmp_path)
     res = run_audit(input_mode="parse-exports", exports_dir=exports_dir, log=lambda m: None)
     low = {i.target_url for i in res.issues if i.check == "LOW_LINK_SCORE"}
     assert "https://example.com/nofollowed" in low
     assert "https://example.com/core0" not in low
+
+
+def test_a_threshold_change_costs_no_requests_and_changes_the_result(tmp_path):
+    """The graph is already stored; tightening the ratio must reclassify it
+    without a byte of new evidence, the same contract redirect_hop_cap has."""
+    exports_dir = _nofollow_floor_fixture(tmp_path)
+    from seohead.sf.config import load_config
+
+    strict = load_config(None)
+    strict["thresholds"]["link_score_low_ratio"] = 0.01  # far stricter than the default
+    res = run_audit(
+        input_mode="parse-exports", exports_dir=exports_dir, config=strict, log=lambda m: None
+    )
+    low = {i.target_url for i in res.issues if i.check == "LOW_LINK_SCORE"}
+    assert "https://example.com/nofollowed" not in low
