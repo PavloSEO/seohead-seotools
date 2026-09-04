@@ -7,6 +7,9 @@ All notable public changes are documented here.
 - Add `crawl-site --config-help`, generated from `seohead/crawl/config.py`, and hide `--max-depth`
   and `--min-delay` from `--help` (still accepted) so the flag surface stops growing with every
   crawler setting.
+- Split technology fingerprinting into a fetch step and a pure `analyze_tech` step,
+  capture analytics/tag-manager ids instead of only names, and add a `tag_coverage`
+  report that groups presence by URL template and stamps how each page was measured.
 - Add community, citation, and no-key agent onboarding files.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
