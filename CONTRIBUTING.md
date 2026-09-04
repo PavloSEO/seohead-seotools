@@ -26,6 +26,9 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 
 ## Design rules
 
+- New modules and test files follow [docs/NAMING.md](docs/NAMING.md): a basename says what the
+  thing does, not where it lives, and repeats across packages only for an entry point (`cli.py`)
+  or an output-format token (`md.py`).
 - Core modules do not import the CLI or server layer.
 - Missing data is not reported as a clean result.
 - Provider production mode and paid operations are explicit.
