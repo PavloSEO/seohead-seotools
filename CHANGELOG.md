@@ -13,6 +13,23 @@ All notable public changes are documented here.
   `header` and `aside` join `nav` and `footer` in `DEFAULT_EXCLUDE_TAGS` for the fallback
   path. A configured selector still wins, and one that matches nothing still falls back to
   `fallback_default_body` rather than silently auto-detecting a different region.
+- `URL_NOT_IN_SITEMAP` now compares pages with pages (#94). It compared a sitemap's URLs
+  against every destination in the crawl's link graph, so on a live 124-page site it fired
+  392 times — 362 image files a gallery links to directly, five off-host links, and 30 URLs
+  the crawl never fetched — which was 74% of that report and buried the findings that were
+  real. The observed side is now the pages a sitemap is supposed to declare: fetched, 2xx,
+  HTML, same-host and indexable. `reconcile_sitemap` takes that population as a separate
+  `comparable` argument, so `SITEMAP_ORPHAN` keeps asking about reachability against every
+  link destination and cannot invent orphans; what was set aside is returned under
+  `linked_not_comparable` rather than dropped.
+- Fix the canonical checks on a site that serves both slash forms of a URL (#95).
+  `norm_url` folds a trailing slash away on purpose, so a canonical written without one
+  matches the page that has it — but the normalised index kept only one page per key, and
+  a crawl of a typical WordPress site holds two: `/x` (301) and `/x/` (200). Reading
+  whichever was inserted first made `CANONICAL_TO_REDIRECT` report 78 live pages whose
+  canonical answers 200. `AuditContext` now exposes `pages_by_norm` with every page under
+  a key, `page_by_norm` returns the variant that answered 2xx, and `CANONICAL_TO_REDIRECT`
+  and `CANONICAL_NON_INDEXABLE` only fire when no variant contradicts them.
 - Fix `size_bytes`: it is now the response body as it arrived on the wire, measured before
   the body is decoded (#99). It was measured from the decoded string, so every byte that is
   not valid UTF-8 became U+FFFD and re-encoded to three — a 739 KB WebP from a real crawl
