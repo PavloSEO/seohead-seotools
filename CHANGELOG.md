@@ -4,6 +4,14 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
+  arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
+  taste: each declares the catalogued issues it resolves, and
+  `tests/test_scenario_coverage.py` asserts that every issue this toolkit claims to find
+  appears in at least one, that no scenario names an issue the map does not list, and that
+  none omits its limits. All 143 findable issues are covered. Every command in every file
+  is still executed against the fixture site in CI — the suite runs 2008 tests, of which
+  the doc-command gate is now the largest single group.
 - Assert the sitemap protocol's own limits (#124): `SITEMAP_TOO_MANY_URLS` above 50,000
   entries in one file, `SITEMAP_TOO_LARGE` above 50 MB uncompressed, and
   `SITEMAP_URL_DUPLICATED` for a URL declared in more than one sitemap, naming both

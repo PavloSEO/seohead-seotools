@@ -4,6 +4,12 @@
 
 > We have 400 pages and a writer for two weeks. Which pages are worth their time?
 
+## Covers
+
+- **Page Titles** — Missing · Duplicate
+- **Meta Description** — Missing · Duplicate
+- **Content** — Low Content Pages
+
 ## The chain
 
 **1. One crawl, everything downstream reads it.**

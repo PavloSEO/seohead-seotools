@@ -1,8 +1,12 @@
-# Scenario 4 — Rendering: does a crawler see what a visitor sees
+# Scenario 35 — Rendering: does a crawler see what a visitor sees
 
 ## The question
 
 > The page looks fine in my browser. Why does the audit say it has no content?
+
+## Covers
+
+- **JavaScript** — Contains JavaScript Content · Contains JavaScript Links · Pages with Blocked Resources
 
 ## The chain
 

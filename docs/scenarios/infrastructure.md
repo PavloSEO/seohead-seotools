@@ -1,8 +1,13 @@
-# Scenario 7 — Infrastructure: what this site runs on, and whether it is safe
+# Scenario 51 — Infrastructure: what this site runs on, and whether it is safe
 
 ## The question
 
 > We are taking over this site. What is it, where is it, and what is going to bite us?
+
+## Covers
+
+- **Security** — HTTP URLs · Missing HSTS Header · Missing Content-Security-Policy Header
+- **Response Codes** — Internal Blocked by Robots.txt
 
 ## The chain
 

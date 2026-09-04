@@ -1,8 +1,14 @@
-# Scenario 8 — AI visibility: will an assistant cite this site
+# Scenario 54 — AI visibility: will an assistant cite this site
 
 ## The question
 
 > People ask ChatGPT instead of Google now. Are we even readable to it?
+
+## Covers
+
+Nothing in the published catalogue. Visibility to AI assistants is not one of the
+issues that catalogue enumerates, which is itself worth knowing: the shared checklist this
+field uses predates the question.
 
 ## The chain
 

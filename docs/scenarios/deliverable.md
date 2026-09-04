@@ -1,4 +1,4 @@
-# Scenario 10 — From audit to deliverable: the last mile
+# Scenario 56 — From audit to deliverable: the last mile
 
 ## The question
 
@@ -6,6 +6,11 @@
 
 This is the step most tooling skips, and it is the one that decides whether any of the analysis
 turns into work.
+
+## Covers
+
+Nothing in the published catalogue. This is an operating scenario: what to do with
+findings once you have them.
 
 ## The chain
 

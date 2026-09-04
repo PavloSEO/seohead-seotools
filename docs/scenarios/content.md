@@ -1,8 +1,12 @@
-# Scenario 6 — Content extraction: how much of this page is actually the page
+# Scenario 3 — Content extraction: how much of this page is actually the page
 
 ## The question
 
 > The audit says these pages are fine. Read one and tell me what it really says.
+
+## Covers
+
+- **Content** — Low Content Pages · Near Duplicates
 
 ## The chain
 

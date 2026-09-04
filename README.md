@@ -92,10 +92,12 @@ believe the answer. It routes to the 21 method skills and carries its own sub-sk
 reference archive of defects found on live sites.
 
 Individual tools are listed below; **[docs/scenarios/](docs/scenarios/README.md)** describes the
-chains — several tools in order, ending in something a person can act on. Ten of them, each
-with the real commands, the artifact that comes out, what it costs, and what that chain cannot
-answer. Start there if you are evaluating what this repository is for; every command shown in
-those files is executed against a fixture site on every CI run.
+chains — several tools in order, ending in something a person can act on. Fifty-six of them,
+each with the real commands, the artifact that comes out, what it costs, and what that chain
+cannot answer. Every issue this toolkit can find appears in at least one, checked by a test
+against [docs/COVERAGE_SF_ISSUES.md](docs/COVERAGE_SF_ISSUES.md). Start there if you are
+evaluating what this repository is for; every command shown in those files is executed against
+a fixture site on every CI run.
 
 ### 49 core CLI commands and MCP tools
 
