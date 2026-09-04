@@ -15,6 +15,7 @@ state, interrupt-safe requeuing, and the duration budget.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import asdict
 from itertools import pairwise
@@ -154,27 +155,59 @@ def test_wall_clock_drops_with_concurrency_up_to_the_cap():
     concurrent_elapsed = time.monotonic() - started
 
     # Generous margin against CI scheduling noise: a purely sequential
-    # implementation would show no improvement at all (ratio ~= 1.0).
+    # implementation would show no improvement at all (ratio ~= 1.0). Unlike an absolute
+    # timing assertion, this one is a ratio between two runs on the same machine moments
+    # apart, so machine load moves both sides together rather than only the numerator —
+    # which is why this stays a real-time measurement while the pacing test below does not
+    # (#107). Overlapping real wait time is the property, and it has no virtual equivalent.
     assert concurrent_elapsed < sequential_elapsed * 0.7
 
 
 # --- politeness: the floor is shared, not multiplied by the worker count ---
 
 
+class _VirtualClock:
+    """A clock that only moves when something sleeps.
+
+    The property under test is a decision — "the gate spaced these dispatches at least
+    ``delay`` apart" — not a duration. Measuring real elapsed time made the assertion a
+    statement about how busy the machine was, and it failed under load on unchanged code
+    (#107). Here every sleep advances the clock by exactly what was asked for, so the
+    dispatch instants are the crawler's own arithmetic, reproducible to the microsecond.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+        self._lock = threading.Lock()
+
+    def __call__(self) -> float:
+        with self._lock:
+            return self.now
+
+    def sleep(self, seconds: float) -> None:
+        with self._lock:
+            self.slept.append(seconds)
+            self.now += seconds
+
+
 def test_min_delay_paces_dispatch_across_workers_not_per_worker():
     """N concurrent workers must not turn one floor into N times the rate.
 
-    Real (small) sleeps are used so actual dispatch timestamps are meaningful;
-    the assertion is a lower bound, so it cannot flake toward false failure.
+    Asserted against the crawler's own clock, never the wall clock: a per-worker sleep
+    would let several of these dispatch instants collapse onto each other.
     """
     site, leaves = _fanned_out_site(6)
     delay = 0.03
+    clock = _VirtualClock()
     dispatch_times: list[float] = []
     leaf_urls = {f"https://example.com{leaf}" for leaf in leaves}
+    order_lock = threading.Lock()
 
     def fetch(url: str):
         if url in leaf_urls:
-            dispatch_times.append(time.monotonic())
+            with order_lock:
+                dispatch_times.append(clock())
         value = site.get(url)
         return value if value is not None else FakeResponse("", status_code=404)
 
@@ -184,13 +217,31 @@ def test_min_delay_paces_dispatch_across_workers_not_per_worker():
         min_delay=delay,
         max_urls=50,
         concurrency=4,
+        clock=clock,
+        sleeper=clock.sleep,
     )
 
     assert len(dispatch_times) == len(leaves)
-    gaps = [b - a for a, b in pairwise(dispatch_times)]
-    # Each gap must respect the floor; a per-worker-independent sleep would
-    # let several of these collapse toward zero instead.
-    assert all(gap >= delay * 0.8 for gap in gaps), gaps
+    # Workers finish in whatever order the pool schedules them; what the gate promises is
+    # about the instants it handed out, not about which worker got which.
+    gaps = [b - a for a, b in pairwise(sorted(dispatch_times))]
+    assert all(gap >= delay for gap in gaps), gaps
+
+
+def test_the_gate_hands_out_one_turn_per_delay_no_matter_how_many_ask():
+    """The unit underneath the crawl-level test above: four workers, one shared clock."""
+    from seohead.crawl.spider import _DispatchGate
+
+    clock = _VirtualClock()
+    throttle = Throttle(min_delay=0.25, max_delay=60.0, max_concurrency=4, adaptive=False)
+    gate = _DispatchGate(throttle, clock.sleep, clock)
+
+    instants = []
+    for _ in range(4):
+        gate.wait_turn()
+        instants.append(clock())
+
+    assert instants == [0.0, 0.25, 0.5, 0.75]
 
 
 # --- circuit breaker: the shared signal still stops the crawl --------------

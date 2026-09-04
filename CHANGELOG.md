@@ -4,6 +4,12 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- The cross-worker pacing test no longer measures the wall clock (#107). `_DispatchGate`
+  now reads the crawl's injected clock instead of `time.monotonic()` directly, so the test
+  drives it with a virtual clock that advances only when something sleeps: the dispatch
+  instants are the crawler's own arithmetic and the assertion is exact. The old form
+  compared real elapsed gaps against a 0.024s floor and failed on unchanged code whenever
+  the machine was busy.
 - Close the second half of the unwired-settings audit (#91). `http.headers` is merged into
   every request beside the credential headers; `speed.adaptive` gates the throttle's delay
   and concurrency adjustment (the timeout and server-error counters keep running — giving
