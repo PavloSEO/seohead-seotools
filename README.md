@@ -77,6 +77,13 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
+### Start here
+
+**[docs/GUIDELINE.md](docs/GUIDELINE.md)** — what this is, your first run, how to choose a crawl
+rate and tell whose fault the errors are, how to read an audit without being misled by it, the
+mistakes everybody makes first, and what it cannot answer at all. Written for a person, in the
+order a person meets the tool.
+
 ### What it does end to end
 
 For an agent: **[.claude/skills/control/SKILL.md](.claude/skills/control/SKILL.md)** is the
