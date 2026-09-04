@@ -19,6 +19,21 @@ from .registry import check_meta
 _norm_url = norm_url
 
 
+def _representative(pages: list[Page]) -> Page:
+    """The page a consumer means when it resolves a normalised URL to one record.
+
+    Two crawled URLs can share a normalised key — typically ``/x`` (301) and ``/x/`` (200).
+    Reading whichever was inserted first made CANONICAL_TO_REDIRECT report 78 live pages as
+    canonicalising to a redirect when the canonical target answers 200 (issue #95). A URL that
+    answered 2xx is the destination; a redirect under the same key is the route to it.
+    """
+    for page in pages:
+        code = page.status_code
+        if code is not None and 200 <= int(code) < 300:
+            return page
+    return pages[0]
+
+
 class AuditContext:
     def __init__(self, exports: LoadedExports, config: dict[str, Any]):
         self.exports = exports
@@ -34,7 +49,14 @@ class AuditContext:
         self.internal_df: pd.DataFrame = exports.get("internal_all")
         self.pages: list[Page] = []
         self.page_by_url: dict[str, Page] = {}
-        self.page_by_norm: dict[str, Page] = {}  # normalized-URL index
+        # norm_url is deliberately many-to-one: it folds a trailing slash away so a canonical
+        # written without one still matches the page that has it. A crawl of a site that serves
+        # both forms therefore holds two pages under one key — on most WordPress installations
+        # the slashless form 301s to the slashed one and both get crawled. pages_by_norm keeps
+        # every page under the key; page_by_norm is the representative a consumer that wants
+        # one page should read, and it prefers a page that answered 2xx (see _representative).
+        self.pages_by_norm: dict[str, list[Page]] = {}
+        self.page_by_norm: dict[str, Page] = {}  # normalized-URL index: the representative
         self.redirect_map: dict[str, str] = {}
         self._html_pages: list[Page] | None = None
         self._indexable_html_pages: list[Page] | None = None
@@ -64,7 +86,9 @@ class AuditContext:
             page.metrics["_record"] = rec  # private: full record for checks
             self.pages.append(page)
             self.page_by_url[url] = page
-            self.page_by_norm.setdefault(_norm_url(url), page)
+            norm = _norm_url(url)
+            self.pages_by_norm.setdefault(norm, []).append(page)
+            self.page_by_norm[norm] = _representative(self.pages_by_norm[norm])
             if rec.get("redirect_url"):
                 self.redirect_map[url] = rec["redirect_url"]
 
