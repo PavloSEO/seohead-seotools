@@ -31,10 +31,17 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
-from seohead.crawl.collect import CrawlResult, PageRecord, _is_timeout, _write, fetch_one
+from seohead.crawl.collect import (
+    MAX_RESPONSE_BYTES,
+    CrawlResult,
+    PageRecord,
+    _is_timeout,
+    _write,
+    fetch_one,
+)
 from seohead.crawl.settings import resolve_credential_headers
-from seohead.crawl.throttle import Throttle
-from seohead.recon.net import http_client, normalize_url, registrable_domain
+from seohead.crawl.throttle import MAX_DELAY_S, Throttle
+from seohead.recon.net import UA, http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
 
 MAX_URLS_CEILING = 10_000
@@ -230,11 +237,17 @@ class Scope:
 
 def _fetch_robots(
     start: str, fetcher: Callable[[str], Any] | None, client: Any
-) -> tuple[dict, str]:
-    """Read robots.txt. A 5xx means stop, not "crawl allowed".
+) -> tuple[dict, str, bool]:
+    """Read robots.txt. Returns ``(parsed_or_empty, note, unavailable)``.
 
-    RFC 9309 treats an unavailable robots.txt as a full disallow, and the
-    practical reason is sharper than the standard: a host answering 5xx is
+    ``unavailable`` is true only when the fetch itself failed (network error)
+    or the server answered 5xx — a host that could not say what is disallowed,
+    as distinct from one that has nothing to say. A 4xx robots.txt means "no
+    restrictions" per RFC 9309 and is not "unavailable". What happens when it
+    is unavailable — stop the crawl, or continue as if unrestricted — is
+    ``robots.unavailable_means_stop``, decided by the caller: RFC 9309 treats
+    an unavailable robots.txt as a full disallow, and the practical reason for
+    the default (stop) is sharper than the standard — a host answering 5xx is
     already failing, and crawling it harder is the wrong response.
     """
     parts = urlsplit(start)
@@ -242,13 +255,13 @@ def _fetch_robots(
     try:
         response = fetcher(robots_url) if fetcher else client.get(robots_url)
     except Exception as exc:
-        return {"allow": [], "disallow": [], "groups": []}, f"robots.txt unreachable: {exc}"
+        return dict(EMPTY_ROBOTS), f"robots.txt unreachable: {exc}", True
     code = getattr(response, "status_code", None)
     if code is not None and 500 <= code < 600:
-        return {}, f"robots.txt returned {code}"
+        return dict(EMPTY_ROBOTS), f"robots.txt returned {code}", True
     if code is not None and code >= 400:
-        return {"allow": [], "disallow": [], "groups": []}, "no robots.txt"
-    return parse_robots(getattr(response, "text", "") or ""), ""
+        return dict(EMPTY_ROBOTS), "no robots.txt", False
+    return parse_robots(getattr(response, "text", "") or ""), "", False
 
 
 def crawl_site(
@@ -270,6 +283,16 @@ def crawl_site(
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
     concurrency: int = 1,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+    max_url_length: int = 2000,
+    max_query_variants_per_path: int = 5,
+    retry_on_timeout: int = 0,
+    user_agent: str = "",
+    robots_token: str = ROBOTS_TOKEN,
+    unavailable_means_stop: bool = True,
+    stop_after_consecutive_timeouts: int = STOP_AFTER_CONSECUTIVE_FAILURES,
+    max_delay_seconds: float = MAX_DELAY_S,
+    follow_nofollow: bool = False,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
@@ -302,6 +325,12 @@ def crawl_site(
     enqueueing, and the checkpoint — before anything downstream sees them, so
     the output (and the saved frontier, on an early stop) is identical to
     ``concurrency=1`` aside from ``response_time``.
+
+    ``max_url_length`` and ``max_query_variants_per_path`` are enforced at
+    enqueue time — a rejected URL is never fetched, and is counted in
+    ``excluded`` like any other scope rejection. ``follow_nofollow`` decides
+    whether a ``rel=nofollow`` link is still recorded in ``links`` (it always
+    is) but also enqueued (only when true).
     """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
@@ -317,12 +346,31 @@ def crawl_site(
         crawl_state.ensure_safe_dir(os.path.dirname(os.path.abspath(state_path)) or ".")
 
     result = SpiderResult()
-    throttle = Throttle(min_delay=min_delay, max_concurrency=max_concurrency)
+    throttle = Throttle(
+        min_delay=min_delay, max_delay=max_delay_seconds, max_concurrency=max_concurrency
+    )
     excluded: dict[str, int] = {}
+    # Distinct query strings already enqueued for a given path, so the Nth+1
+    # facet/filter variant on the same path is excluded rather than fetched.
+    query_budget: dict[str, set[str]] = {}
     crawl_started = clock()
 
     def exclude(reason: str) -> None:
         excluded[reason] = excluded.get(reason, 0) + 1
+
+    def extra_rejection(candidate: str) -> str:
+        """Checks beyond scope: a URL too long, or a path's query budget spent."""
+        if max_url_length and len(candidate) > max_url_length:
+            return "url_too_long"
+        if max_query_variants_per_path:
+            parts = urlsplit(candidate)
+            path_key = parts.path or "/"
+            variants = query_budget.setdefault(path_key, set())
+            if parts.query not in variants:
+                if len(variants) >= max_query_variants_per_path:
+                    return "query_variants_limit"
+                variants.add(parts.query)
+        return ""
 
     with contextlib.ExitStack() as stack:
         client = None
@@ -331,17 +379,20 @@ def crawl_site(
             # follow_redirects on, a 301 is recorded as a 200 carrying the
             # target's title and body, the Location is never seen, and redirect
             # auditing is impossible — the old and new URL become duplicates.
-            client, _ = http_client(timeout, follow_redirects=False)
+            client, _ = http_client(
+                timeout, follow_redirects=False, headers={"User-Agent": user_agent or UA}
+            )
             stack.callback(client.close)
 
         enforce = robots_policy == "respect"
         if robots_policy == "ignore":
             # Not fetched at all, so there is nothing to report either.
-            robots, note = dict(EMPTY_ROBOTS), "robots.txt not fetched (policy: ignore)"
+            robots = dict(EMPTY_ROBOTS)
+            note, unavailable = "robots.txt not fetched (policy: ignore)", False
         else:
-            robots, note = _fetch_robots(start, fetcher, client)
+            robots, note, unavailable = _fetch_robots(start, fetcher, client)
         result.robots_note = note
-        if enforce and not robots:
+        if enforce and unavailable and unavailable_means_stop:
             result.partial = True
             result.stopped_reason = note or "robots.txt unavailable"
             result.finish_reason = "robots_unavailable"
@@ -349,7 +400,7 @@ def crawl_site(
 
         # A site asking to be crawled slowly is asking the crawler, not the
         # operator. The configured delay is a floor, never a ceiling on politeness.
-        asked = crawl_delay(robots, ROBOTS_TOKEN) if robots else None
+        asked = crawl_delay(robots, robots_token) if robots else None
         if asked and asked > throttle.min_delay:
             throttle.min_delay = asked
             throttle.delay = max(throttle.delay, asked)
@@ -382,7 +433,7 @@ def crawl_site(
             seed = (seed or "").strip()
             if not seed:
                 continue
-            reason = rules.rejection(seed, host)
+            reason = rules.rejection(seed, host) or extra_rejection(seed)
             if reason:
                 exclude(reason)
                 continue
@@ -409,7 +460,7 @@ def crawl_site(
 
         def robots_blocks(url: str) -> bool:
             """True when this URL must not be fetched under the current policy."""
-            if robots and not is_allowed(robots, match_path(url), ROBOTS_TOKEN):
+            if robots and not is_allowed(robots, match_path(url), robots_token):
                 result.robots_blocked.append(url)
                 if enforce:
                     exclude("blocked_by_robots")
@@ -420,7 +471,7 @@ def crawl_site(
             # A redirect is a discovery too, and it stays inside the budget.
             if record.redirect_url and depth < depth_limit:
                 target = record.redirect_url
-                reason = rules.rejection(target, host)
+                reason = rules.rejection(target, host) or extra_rejection(target)
                 if reason:
                     exclude("redirect_off_host" if reason == "outside_host" else reason)
                 else:
@@ -441,15 +492,22 @@ def crawl_site(
                 href = (link.get("href") or "").strip()
                 if not href:
                     continue
+                nofollow = bool(link.get("nofollow"))
+                # Recorded regardless: "store" and "crawl" are independent
+                # questions, and an edge that will not be enqueued below is
+                # still real evidence of what the page links to.
                 result.links.append(
                     LinkEdge(
                         source=url,
                         destination=href,
                         anchor=(link.get("text") or "")[:200],
-                        nofollow=bool(link.get("nofollow")),
+                        nofollow=nofollow,
                     )
                 )
-                reason = rules.rejection(href, host)
+                if nofollow and not follow_nofollow:
+                    exclude("nofollow")
+                    continue
+                reason = rules.rejection(href, host) or extra_rejection(href)
                 if reason:
                     exclude(reason)
                     continue
@@ -471,7 +529,7 @@ def crawl_site(
             consecutive_timeouts, consecutive_server_errors = _fold_failure_streaks(
                 record, consecutive_timeouts, consecutive_server_errors
             )
-            if consecutive_timeouts >= STOP_AFTER_CONSECUTIVE_FAILURES:
+            if consecutive_timeouts >= stop_after_consecutive_timeouts:
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
                 result.finish_reason = "errors"
@@ -520,6 +578,9 @@ def crawl_site(
                         fetcher=fetcher,
                         throttle=throttle,
                         extra_headers=_extra_headers_for(url),
+                        user_agent=user_agent,
+                        max_response_bytes=max_response_bytes,
+                        retry_on_timeout=retry_on_timeout,
                     )
                 except KeyboardInterrupt:
                     # Not processed: put it back so a resume retries it rather
@@ -542,6 +603,9 @@ def crawl_site(
                     fetcher=fetcher,
                     throttle=throttle,
                     extra_headers=_extra_headers_for(url),
+                    user_agent=user_agent,
+                    max_response_bytes=max_response_bytes,
+                    retry_on_timeout=retry_on_timeout,
                 )
                 return url, depth, record, parsed
 

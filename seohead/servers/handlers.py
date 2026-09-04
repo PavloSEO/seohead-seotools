@@ -194,6 +194,16 @@ def crawl_site(
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
             concurrency=settings["speed"]["concurrency"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            max_query_variants_per_path=settings["limits"]["max_query_variants_per_path"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            robots_token=settings["robots"]["user_agent_token"],
+            unavailable_means_stop=settings["robots"]["unavailable_means_stop"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
+            follow_nofollow=settings["discovery"]["follow_nofollow"],
         )
         discovery = {
             "mode": "spider",
@@ -218,6 +228,12 @@ def crawl_site(
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
         )
         discovery = {"mode": "list"}
 
@@ -284,6 +300,19 @@ def crawl_site(
         "checks_skipped": len(audit["run"].get("checks_skipped", [])),
         "out_dir": out_dir,
     }
+
+
+def crawl_describe_settings() -> dict[str, Any]:
+    """Every crawl-site config setting: path, type, default, and description.
+
+    The MCP half of #23: an agent can ask what it can configure instead of
+    guessing a key name or reading the source. Backed by the same
+    ``describe_settings`` that ``crawl-site --config-help`` prints, so the CLI
+    and MCP surfaces cannot describe the same setting two different ways.
+    """
+    from seohead.crawl import settings as crawl_config
+
+    return {"settings": crawl_config.describe_settings()}
 
 
 def images_download(
@@ -1042,6 +1071,7 @@ _RAW_HANDLERS = {
     "redirects_check": redirects_check,
     "sitemap_crawl": sitemap_crawl,
     "crawl_site": crawl_site,
+    "crawl_describe_settings": crawl_describe_settings,
     "images_download": images_download,
     "images_optimize": images_optimize,
     "keywords_cluster": keywords_cluster,

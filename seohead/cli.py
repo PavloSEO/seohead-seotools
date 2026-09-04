@@ -24,6 +24,7 @@ from seohead.servers import handlers
 COMMANDS = (
     "parse",
     "crawl-site",
+    "crawl-describe-settings",
     "compare-crawls",
     "redirects-generate",
     "redirects-check",

@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from seohead.crawl.settings import resolve_credential_headers
-from seohead.crawl.throttle import Throttle
+from seohead.crawl.throttle import MAX_DELAY_S, Throttle
 from seohead.recon.net import UA, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
 
@@ -143,6 +143,9 @@ def fetch_one(
     fetcher: Callable[[str], Any] | None = None,
     throttle: Throttle | None = None,
     extra_headers: dict[str, str] | None = None,
+    user_agent: str = "",
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+    retry_on_timeout: int = 0,
 ) -> tuple[PageRecord, dict[str, Any] | None]:
     """Fetch and parse one URL. Returns the record and the parsed document.
 
@@ -152,6 +155,11 @@ def fetch_one(
     ``extra_headers`` is resolved by the caller for this URL's own host, so it
     never survives a redirect to a different host: the next hop is a fresh
     call with headers resolved for the new host, not these carried forward.
+
+    ``retry_on_timeout`` retries only a timeout — a connection, TLS, or read
+    timeout, per ``_is_timeout`` — never any other failure: retrying a 4xx/5xx
+    or a DNS error would not change the answer, only the load on an origin that
+    already answered.
     """
     record = PageRecord(url=url)
     if fetcher is None:
@@ -165,24 +173,30 @@ def fetch_one(
             return record, None
 
     started = time.monotonic()
-    try:
-        if fetcher:
-            response = fetcher(url)
-        else:
-            # Connect to the address that was vetted, keeping the hostname for
-            # SNI and certificate verification. Resolving twice would leave a
-            # window between the check and the connection.
-            target, headers, extensions = pinned_target(url)
-            response = client.get(
-                target,
-                headers={"User-Agent": UA, **headers, **(extra_headers or {})},
-                extensions=extensions,
-            )
-    except Exception as exc:
-        record.error = str(exc)
-        if throttle is not None and _is_timeout(str(exc)):
-            throttle.record_timeout()
-        return record, None
+    attempt = 0
+    while True:
+        try:
+            if fetcher:
+                response = fetcher(url)
+            else:
+                # Connect to the address that was vetted, keeping the hostname for
+                # SNI and certificate verification. Resolving twice would leave a
+                # window between the check and the connection.
+                target, headers, extensions = pinned_target(url)
+                response = client.get(
+                    target,
+                    headers={"User-Agent": user_agent or UA, **headers, **(extra_headers or {})},
+                    extensions=extensions,
+                )
+            break
+        except Exception as exc:
+            if _is_timeout(str(exc)) and attempt < retry_on_timeout:
+                attempt += 1
+                continue
+            record.error = str(exc)
+            if throttle is not None and _is_timeout(str(exc)):
+                throttle.record_timeout()
+            return record, None
 
     elapsed = time.monotonic() - started
     record.response_time = round(elapsed, 3)
@@ -207,7 +221,7 @@ def fetch_one(
             throttle.record_success()
 
     parsed = None
-    if record.size_bytes > MAX_RESPONSE_BYTES:
+    if record.size_bytes > max_response_bytes:
         # Too large to parse, but a 200 is still a 200: not "unreachable".
         record.error = "response too large to parse"
     elif record.is_html and body:
@@ -255,16 +269,24 @@ def collect_urls(
     sleeper: Callable[[float], None] = time.sleep,
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+    max_url_length: int = 2000,
+    retry_on_timeout: int = 0,
+    user_agent: str = "",
+    stop_after_consecutive_timeouts: int = 5,
+    max_delay_seconds: float = MAX_DELAY_S,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
     ``out_path`` receives one JSON object per line as each URL completes, so an
     interrupted run still leaves usable evidence behind. ``max_seconds`` is a
-    wall-clock budget for the whole call; 0 means none.
+    wall-clock budget for the whole call; 0 means none. ``max_url_length`` is
+    checked before a URL is fetched, not merely before it is parsed: a URL over
+    the limit is skipped rather than requested.
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
-    throttle = Throttle(min_delay=min_delay)
+    throttle = Throttle(min_delay=min_delay, max_delay=max_delay_seconds)
     started = clock()
 
     seen: set[str] = set()
@@ -280,7 +302,9 @@ def collect_urls(
             # follow_redirects on, a 301 is recorded as a 200 carrying the
             # target's title and body, the Location is never seen, and redirect
             # auditing is impossible — the old and new URL become duplicates.
-            client, _ = http_client(timeout, follow_redirects=False)
+            client, _ = http_client(
+                timeout, follow_redirects=False, headers={"User-Agent": user_agent or UA}
+            )
             stack.callback(client.close)
 
         for raw in urls:
@@ -297,6 +321,10 @@ def collect_urls(
             url = (raw or "").strip()
             if not url or url in seen:
                 continue
+            if max_url_length and len(url) > max_url_length:
+                # Not fetched at all, per limits.max_url_length: too long even
+                # to be worth a wasted request.
+                continue
             seen.add(url)
 
             if throttle.delay:
@@ -307,12 +335,19 @@ def collect_urls(
                 resolve_credential_headers(credential_headers, host) if credential_headers else None
             )
             record, _ = fetch_one(
-                url, client=client, fetcher=fetcher, throttle=throttle, extra_headers=extra_headers
+                url,
+                client=client,
+                fetcher=fetcher,
+                throttle=throttle,
+                extra_headers=extra_headers,
+                user_agent=user_agent,
+                max_response_bytes=max_response_bytes,
+                retry_on_timeout=retry_on_timeout,
             )
             result.pages.append(record)
             _write(handle, record)
 
-            if throttle.should_stop():
+            if throttle.should_stop(limit=stop_after_consecutive_timeouts):
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
                 result.finish_reason = "errors"
