@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from seohead.sf.reporters import write_json, write_markdown
-from seohead.sf.reporters.json_reporter import validate
+from seohead.sf.reporters.jsonfile import validate
 
 
 def test_json_validates_against_schema(result):
