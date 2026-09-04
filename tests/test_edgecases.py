@@ -11,7 +11,7 @@ from seohead.sf.core.audit import run_audit
 from seohead.sf.core.context import AuditContext
 from seohead.sf.core.loader import load_exports
 from seohead.sf.core.normalize import to_float, to_int
-from seohead.sf.reporters.md_reporter import _esc
+from seohead.sf.reporters.md import _esc
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 

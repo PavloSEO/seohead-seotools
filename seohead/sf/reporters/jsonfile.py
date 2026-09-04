@@ -1,4 +1,9 @@
-"""Write the ``audit.json`` machine-readable contract."""
+"""Write the ``audit.json`` machine-readable contract.
+
+Named ``jsonfile`` rather than ``json``, matching ``reports/csvfile.py``: this module
+does ``import json`` for the standard library, and a sibling named ``json.py`` is the
+kind of thing that eventually gets "fixed" back into a real collision.
+"""
 
 from __future__ import annotations
 

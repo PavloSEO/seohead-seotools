@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from seohead.sf.config import load_config
-from seohead.sf.reporters.json_reporter import to_dict
+from seohead.sf.reporters.jsonfile import to_dict
 from seohead.sf.tasks import build_tasks, render_tasks_md
 
 

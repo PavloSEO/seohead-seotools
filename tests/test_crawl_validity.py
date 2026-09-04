@@ -11,7 +11,7 @@ from seohead.sf.config import load_config
 from seohead.sf.core.aggregate import aggregate
 from seohead.sf.core.context import AuditContext
 from seohead.sf.core.loader import load_exports
-from seohead.sf.reporters.md_reporter import write_markdown
+from seohead.sf.reporters.md import write_markdown
 from seohead.sf.tasks import build_tasks, render_tasks_md
 
 HEADER = ["Address", "Content Type", "Status Code", "Status", "Indexability"]

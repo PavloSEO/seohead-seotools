@@ -15,7 +15,7 @@ from . import __version__
 from .config import load_config
 from .core.audit import run_audit
 from .reporters import write_json, write_markdown
-from .reporters.json_reporter import to_dict
+from .reporters.jsonfile import to_dict
 from .tasks import build_tasks, write_tasks
 
 
