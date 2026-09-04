@@ -186,6 +186,25 @@ def test_describe_settings_reports_type_default_and_results_affecting():
     assert out_dir["results_affecting"] is False
 
 
+# ── fingerprint (resumable crawl checkpoint invalidation, #16) ──────────────
+
+
+def test_fingerprint_is_stable_for_the_same_manifest():
+    assert cfg.fingerprint(cfg.load()) == cfg.fingerprint(cfg.load())
+
+
+def test_fingerprint_changes_with_a_results_affecting_setting():
+    first = cfg.fingerprint(cfg.load(overrides={"limits.max_depth": 3}))
+    second = cfg.fingerprint(cfg.load(overrides={"limits.max_depth": 4}))
+    assert first != second
+
+
+def test_fingerprint_ignores_a_cost_only_setting():
+    first = cfg.fingerprint(cfg.load(overrides={"output.dir": "/tmp/a"}))
+    second = cfg.fingerprint(cfg.load(overrides={"output.dir": "/tmp/b"}))
+    assert first == second
+
+
 # ── politeness ──────────────────────────────────────────────────────────────
 
 

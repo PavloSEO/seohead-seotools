@@ -103,6 +103,33 @@ def test_url_limit_marks_the_result_partial():
     result = collect_urls(urls, max_urls=2, fetcher=_fetch({u: FakeResponse(HTML) for u in urls}))
     assert len(result.pages) == 2
     assert result.partial is True
+    assert result.finish_reason == "url_limit"
+
+
+def test_a_normal_run_reports_finished_with_no_partial_flag():
+    urls = [f"https://example.com/{i}" for i in range(3)]
+    result = collect_urls(urls, fetcher=_fetch({u: FakeResponse(HTML) for u in urls}))
+    assert result.finish_reason == "finished"
+    assert result.partial is False
+
+
+def test_max_seconds_stops_the_run_with_a_duration_finish_reason():
+    urls = [f"https://example.com/{i}" for i in range(10)]
+    ticking = {"t": 0.0}
+
+    def fake_clock():
+        ticking["t"] += 2
+        return ticking["t"]
+
+    result = collect_urls(
+        urls,
+        max_seconds=5,
+        clock=fake_clock,
+        fetcher=_fetch({u: FakeResponse(HTML) for u in urls}),
+    )
+    assert result.finish_reason == "duration_limit"
+    assert result.partial is True
+    assert len(result.pages) < len(urls)
 
 
 def test_an_oversized_response_is_not_reported_as_unreachable():

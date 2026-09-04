@@ -82,6 +82,24 @@ def test_a_full_crawl_is_not_marked_partial(tmp_path):
     assert "health_score_scope" not in result.summary
 
 
+def test_a_truncated_crawl_stays_partial_with_no_sitemap_to_compare_against(tmp_path):
+    """A URL-limit or duration-limit stop is partial on its own; aggregate must
+    not overwrite that with a sitemap comparison that has nothing to compare
+    against — that used to silently erase the caller's finding."""
+    ctx = _ctx(tmp_path, [["https://example.com/", "text/html", "200", "OK", "Indexable"]])
+    run = {**_run(), "crawl_partial": True, "crawl_finish_reason": "url_limit"}
+    result = aggregate(ctx, run, {}, {})  # no sitemap_summary at all
+    assert result.run["crawl_partial"] is True
+
+
+def test_a_truncated_crawl_and_a_sitemap_gap_are_both_reported(tmp_path):
+    ctx = _ctx(tmp_path, [["https://example.com/", "text/html", "200", "OK", "Indexable"]])
+    run = {**_run(), "crawl_partial": True}
+    result = aggregate(ctx, run, {}, {"urls_in_sitemap": 1000})
+    assert result.run["crawl_partial"] is True
+    assert "1 of 1000" in result.summary["health_score_scope"]
+
+
 def test_markdown_leads_with_the_failure_not_a_score(tmp_path):
     ctx = _ctx(tmp_path, [["https://example.com/", "", "0", "No Response", "Non-Indexable"]])
     out = tmp_path / "audit.md"

@@ -12,6 +12,9 @@ is recorded as data rather than dropped silently.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+import json
+import os
 import re
 import time
 from collections import deque
@@ -20,7 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from seohead.crawl.collect import CrawlResult, _write, fetch_one
+from seohead.crawl import state as crawl_state
+from seohead.crawl.collect import CrawlResult, PageRecord, _write, fetch_one
 from seohead.crawl.config import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
@@ -52,6 +56,8 @@ class SpiderResult(CrawlResult):
     robots_blocked: list[str] = field(default_factory=list)
     crawl_delay_applied: float | None = None
     effective_delay: float = 0.0
+    # Why the checkpoint was or wasn't used, for the run output — see state.py.
+    resume_note: str = ""
 
 
 def _canonical_key(url: str) -> str:
@@ -62,6 +68,33 @@ def _canonical_key(url: str) -> str:
 
 def _same_host(url: str, host: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == host
+
+
+_PAGE_RECORD_FIELDS = {f.name for f in dataclasses.fields(PageRecord)}
+
+
+def _read_pages_jsonl(path: str) -> list[PageRecord]:
+    """Reconstruct previously fetched pages from a prior run's output.
+
+    Unknown keys are dropped rather than rejected, so a state file written by
+    an older build with fewer fields still resumes.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except FileNotFoundError:
+        return []
+    pages = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except ValueError:
+            continue  # a truncated final line must not discard the rest
+        if isinstance(raw, dict):
+            pages.append(PageRecord(**{k: v for k, v in raw.items() if k in _PAGE_RECORD_FIELDS}))
+    return pages
 
 
 @dataclass(frozen=True)
@@ -141,16 +174,28 @@ def crawl_site(
     *,
     max_urls: int = 200,
     max_depth: int = 5,
+    max_seconds: float = 0,
     min_delay: float = 0.5,
     timeout: float = 15.0,
     robots_policy: str = "respect",
     scope: dict[str, Any] | Scope | None = None,
     out_path: str | None = None,
+    state_path: str | None = None,
+    config_fingerprint: str = "",
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     credential_headers: list[dict[str, Any]] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> SpiderResult:
-    """Crawl one host breadth-first from ``start_url``, within ``scope``."""
+    """Crawl one host breadth-first from ``start_url``, within ``scope``.
+
+    ``max_seconds`` is a wall-clock budget for the whole call; 0 means none.
+    ``state_path``, when given, checkpoints the frontier there so a later call
+    with the same path and start URL resumes instead of restarting —
+    ``config_fingerprint`` is compared too, so a scope or limit change since the
+    checkpoint starts fresh rather than mixing frontiers built under different
+    rules.
+    """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
     # normalize_url is lenient — it turns "not a url" into "https://not a url" —
@@ -160,18 +205,18 @@ def crawl_site(
     rules = scope if isinstance(scope, Scope) else Scope.from_config(scope)
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     depth_limit = max(0, min(int(max_depth), MAX_DEPTH_CEILING))
+    if state_path:
+        crawl_state.ensure_safe_dir(os.path.dirname(os.path.abspath(state_path)) or ".")
 
     result = SpiderResult()
     throttle = Throttle(min_delay=min_delay)
     excluded: dict[str, int] = {}
+    crawl_started = clock()
 
     def exclude(reason: str) -> None:
         excluded[reason] = excluded.get(reason, 0) + 1
 
     with contextlib.ExitStack() as stack:
-        handle = None
-        if out_path:
-            handle = stack.enter_context(open(out_path, "w", encoding="utf-8"))
         client = None
         if fetcher is None:
             # A crawler must observe redirects, not be moved by them. With
@@ -191,6 +236,7 @@ def crawl_site(
         if enforce and not robots:
             result.partial = True
             result.stopped_reason = note or "robots.txt unavailable"
+            result.finish_reason = "robots_unavailable"
             return result
 
         # A site asking to be crawled slowly is asking the crawler, not the
@@ -201,13 +247,39 @@ def crawl_site(
             throttle.delay = max(throttle.delay, asked)
             result.crawl_delay_applied = asked
 
-        queue: deque[tuple[str, int]] = deque([(start, 0)])
-        seen: set[str] = {_canonical_key(start)}
+        loaded_state, resume_note = (
+            crawl_state.load(state_path, start, config_fingerprint) if state_path else (None, "")
+        )
+        result.resume_note = resume_note
+        result.resumed = loaded_state is not None
+
+        handle = None
+        if out_path:
+            if loaded_state:
+                # Prior pages already live on disk; append rather than replace,
+                # and bring them back into this run's evidence.
+                result.pages.extend(_read_pages_jsonl(out_path))
+            mode = "a" if loaded_state else "w"
+            handle = stack.enter_context(open(out_path, mode, encoding="utf-8"))
+
+        if loaded_state:
+            queue: deque[tuple[str, int]] = deque(loaded_state.queue)
+            seen: set[str] = set(loaded_state.seen)
+            result.max_depth_reached = loaded_state.max_depth_reached
+        else:
+            queue = deque([(start, 0)])
+            seen = {_canonical_key(start)}
 
         while queue:
             if len(result.pages) >= limit:
                 result.partial = True
                 result.stopped_reason = f"url limit reached ({limit})"
+                result.finish_reason = "url_limit"
+                break
+            if max_seconds and (clock() - crawl_started) >= max_seconds:
+                result.partial = True
+                result.stopped_reason = f"duration limit reached ({max_seconds:.0f}s)"
+                result.finish_reason = "duration_limit"
                 break
             url, depth = queue.popleft()
             result.max_depth_reached = max(result.max_depth_reached, depth)
@@ -218,9 +290,6 @@ def crawl_site(
                     exclude("blocked_by_robots")
                     continue
 
-            if throttle.delay:
-                sleeper(throttle.delay)
-
             # Resolved for this hop's own host, never carried over from the
             # last one — that is what keeps a credential off a cross-host
             # redirect target.
@@ -229,9 +298,24 @@ def crawl_site(
                 if credential_headers
                 else None
             )
-            record, parsed = fetch_one(
-                url, client=client, fetcher=fetcher, throttle=throttle, extra_headers=extra_headers
-            )
+            try:
+                if throttle.delay:
+                    sleeper(throttle.delay)
+                record, parsed = fetch_one(
+                    url,
+                    client=client,
+                    fetcher=fetcher,
+                    throttle=throttle,
+                    extra_headers=extra_headers,
+                )
+            except KeyboardInterrupt:
+                # Not processed: put it back so a resume retries it rather than
+                # silently dropping it from the frontier.
+                queue.appendleft((url, depth))
+                result.partial = True
+                result.stopped_reason = "interrupted"
+                result.finish_reason = "interrupted"
+                break
             record.crawl_depth = depth
             result.pages.append(record)
             _write(handle, record)
@@ -239,12 +323,14 @@ def crawl_site(
             if throttle.should_stop():
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                result.finish_reason = "errors"
                 break
             if throttle.host_is_failing():
                 # The host has refused repeatedly. Continuing would measure the
                 # crawler rather than the site.
                 result.partial = True
                 result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
+                result.finish_reason = "errors"
                 break
 
             # A redirect is a discovery too, and it stays inside the budget.
@@ -288,6 +374,23 @@ def crawl_site(
                     continue
                 seen.add(key)
                 queue.append((href, depth + 1))
+
+        if state_path:
+            if result.finish_reason == "finished":
+                # Nothing left to resume: a later call with the same path
+                # should crawl fresh, not "resume" into an empty frontier.
+                crawl_state.clear(state_path)
+            else:
+                crawl_state.save(
+                    state_path,
+                    crawl_state.CrawlState(
+                        start_url=start,
+                        queue=list(queue),
+                        seen=sorted(seen),
+                        max_depth_reached=result.max_depth_reached,
+                        config_fingerprint=config_fingerprint,
+                    ),
+                )
 
     result.excluded = excluded
     result.effective_delay = throttle.delay

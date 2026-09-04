@@ -136,18 +136,24 @@ def crawl_site(
         if out_dir and settings["output"]["write_pages_jsonl"]
         else None
     )
+    max_seconds = settings["limits"]["max_crawl_seconds"]
 
     if url:
         result = _spider(
             url,
             max_urls=settings["limits"]["max_urls"],
             max_depth=settings["limits"]["max_depth"],
+            max_seconds=max_seconds,
             min_delay=settings["speed"]["min_delay_seconds"],
             timeout=settings["http"]["timeout_seconds"],
             robots_policy=settings["robots"]["policy"],
             scope=settings["scope"],
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
+            # Checkpointed only when there is somewhere durable to put it; a
+            # crawl with no out_dir has nothing to resume into anyway.
+            state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
+            config_fingerprint=crawl_config.fingerprint(settings),
         )
         discovery = {
             "mode": "spider",
@@ -158,11 +164,13 @@ def crawl_site(
             "robots_blocked": len(result.robots_blocked),
             "crawl_delay_applied": result.crawl_delay_applied,
             "effective_delay_seconds": round(result.effective_delay, 3),
+            "resume_note": result.resume_note,
         }
     else:
         result = collect_urls(
             urls or [],
             max_urls=settings["limits"]["max_urls"],
+            max_seconds=max_seconds,
             min_delay=settings["speed"]["min_delay_seconds"],
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
@@ -188,6 +196,10 @@ def crawl_site(
             "collector": "seohead.crawl",
             "crawl_partial": result.partial,
             "crawl_stopped_reason": result.stopped_reason,
+            # Categorical and always present, unlike stopped_reason which is
+            # only a sentence when something went wrong.
+            "crawl_finish_reason": result.finish_reason,
+            "crawl_resumed": result.resumed,
             # Resolved values of every setting that can change what was found.
             # Without these two reports on the same site are not comparable.
             "crawl_config": crawl_config.manifest(settings),
@@ -205,6 +217,8 @@ def crawl_site(
         "urls_collected": len(result.pages),
         "partial": result.partial,
         "stopped_reason": result.stopped_reason,
+        "finish_reason": result.finish_reason,
+        "resumed": result.resumed,
         "discovery": discovery,
         "limitations": result.limitations,
         "summary": audit["summary"],
