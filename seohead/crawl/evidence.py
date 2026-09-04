@@ -113,6 +113,18 @@ def _row(record: Any) -> dict[str, Any]:
         "Doctype": record.doctype,
         "Viewport": record.viewport,
         "Meta Charset": record.charset,
+        # Element-position evidence (issue #123): same story as the four
+        # columns above — an SF export never carries this, so it stays blank
+        # there and the position/skeleton checks skip honestly (see rules.py).
+        "Title Outside Head": record.title_outside_head,
+        "Meta Description Outside Head": record.meta_description_outside_head,
+        "Canonical Outside Head": record.canonical_outside_head,
+        "Directives Outside Head": record.directives_outside_head,
+        "Hreflang Outside Head": record.hreflang_outside_head,
+        "Head Count": record.head_count,
+        "Body Count": record.body_count,
+        "Head Not First": record.head_not_first,
+        "Invalid Head Elements": record.invalid_head_elements,
         "OG:Title": record.og_title,
         "OG:Description": record.og_description,
         "OG:Image": record.og_image,

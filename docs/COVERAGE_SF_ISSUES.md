@@ -15,17 +15,17 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| check | 96 | a registry check finds it |
+| check | 108 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
 | partial | 17 | we find part of it; the missing part is stated |
-| gap | 38 | we should find it and do not |
+| gap | 26 | we should find it and do not |
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-remaining 212 issues, **129 are found today**, 17 are
-found in part, 38 are gaps worth closing, and
+remaining 212 issues, **141 are found today**, 17 are
+found in part, 26 are gaps worth closing, and
 28 need something we have decided not to build.
 
 A gap is not a defect. It is a named, deliberate absence — which is the only kind worth
@@ -90,7 +90,7 @@ having, because the alternative is an absence nobody has noticed.
 |---|---|---|---|
 | Missing | check | `TITLE_MISSING` |  |
 | Multiple | check | `TITLE_MULTIPLE` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `TITLE_OUTSIDE_HEAD` |  |
 | Duplicate | check | `TITLE_DUPLICATE` |  |
 | Over 60 Characters | check | `TITLE_TOO_LONG` |  |
 | Below 30 Characters | check | `TITLE_TOO_SHORT` |  |
@@ -103,7 +103,7 @@ having, because the alternative is an absence nobody has noticed.
 | Issue | Status | Found by | Note |
 |---|---|---|---|
 | Multiple | gap | — | only the first meta description is kept during parsing |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `DESC_OUTSIDE_HEAD` |  |
 | Missing | check | `DESC_MISSING` |  |
 | Duplicate | check | `DESC_DUPLICATE` |  |
 | Over 155 Characters | check | `DESC_TOO_LONG` |  |
@@ -168,7 +168,7 @@ having, because the alternative is an absence nobody has noticed.
 | Non-Indexable Canonical | check | `CANONICAL_NON_INDEXABLE` |  |
 | Invalid Attribute In Annotation | gap | — | rel attribute values are not validated |
 | Contains Fragment URL | check | `CANONICAL_FRAGMENT` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `CANONICAL_OUTSIDE_HEAD` |  |
 | Canonicalised | check | `CANONICALISED` |  |
 | Missing | check | `CANONICAL_MISSING` |  |
 | Unlinked | check | `UNLINKED_CANONICAL` |  |
@@ -191,7 +191,7 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `DIRECTIVES_OUTSIDE_HEAD` |  |
 | NoImageIndex | check | `NOIMAGEINDEX` |  |
 | Noindex | check | `NOINDEX` |  |
 | Nofollow | check | `NOFOLLOW_PAGE` |  |
@@ -214,7 +214,7 @@ having, because the alternative is an absence nobody has noticed.
 | Incorrect Language & Region Codes | check | `HREFLANG_INVALID_CODE` |  |
 | Multiple Entries | check | `HREFLANG_MULTIPLE_ENTRIES` |  |
 | Not Using Canonical | check | `HREFLANG_NOT_CANONICAL` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `HREFLANG_OUTSIDE_HEAD` |  |
 | Unlinked Hreflang URLs | gap | — | hreflang targets are not tested against the link graph |
 | Missing Self Reference | check | `HREFLANG_MISSING_SELF_REFERENCE` |  |
 | Missing X-Default | check | `HREFLANG_MISSING_XDEFAULT` |  |
@@ -342,15 +342,15 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Missing <head> Tag | gap | — | document skeleton validity is not asserted |
-| Multiple <head> Tags | gap | — | document skeleton validity is not asserted |
-| Missing <body> Tag | gap | — | document skeleton validity is not asserted |
-| Multiple <body> Tags | gap | — | document skeleton validity is not asserted |
+| Missing <head> Tag | check | `HEAD_MISSING` |  |
+| Multiple <head> Tags | check | `HEAD_MULTIPLE` |  |
+| Missing <body> Tag | check | `BODY_MISSING` |  |
+| Multiple <body> Tags | check | `BODY_MULTIPLE` |  |
 | HTML Document Over 2MB | check | `LARGE_HTML` |  |
 | Resource Over 2MB | partial | — | a body above the configured ceiling is recorded and not parsed; it is a limit, not a finding |
-| Invalid HTML Elements In <head> | gap | — | element position within the document is not read |
-| <body> Element Preceding <html> | gap | — | document skeleton validity is not asserted |
-| <head> Not First In <html> Element | gap | — | document skeleton validity is not asserted |
+| Invalid HTML Elements In <head> | check | `INVALID_HEAD_ELEMENT` |  |
+| <body> Element Preceding <html> | check | `HEAD_NOT_FIRST` |  |
+| <head> Not First In <html> Element | check | `HEAD_NOT_FIRST` |  |
 | High Carbon Rating | out of scope | — | a derived score over transfer weight; the weight itself is already reported and the rating adds a model, not a measurement |
 
 ## Accessibility

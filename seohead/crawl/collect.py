@@ -70,6 +70,21 @@ class PageRecord:
     charset: str = ""
     doctype: str = ""
     viewport: str = ""
+    # Document-position evidence for issue #123: like the four fields above, a
+    # native Screaming Frog export never carries this either, because "was
+    # this element inside <head> once the parser recovered" needs the parse
+    # tree, not a crawl column. ``None`` means the element itself is absent
+    # (a different finding); the joined string mirrors how other multi-value
+    # fields on this record (e.g. ``meta_robots``) are carried as text.
+    title_outside_head: bool | None = None
+    meta_description_outside_head: bool | None = None
+    canonical_outside_head: bool | None = None
+    directives_outside_head: bool | None = None
+    hreflang_outside_head: bool | None = None
+    head_count: int = 0
+    body_count: int = 0
+    head_not_first: bool = False
+    invalid_head_elements: str = ""
     # Every link found on the page, and how many of them left the host. Note
     # that Screaming Frog's Outlinks column counts internal links only, so the
     # projection in evidence.py subtracts rather than passing this through.
@@ -138,6 +153,7 @@ def _first_heading(parsed: dict, level: str, index: int = 0) -> str:
 def _record_from_parsed(parsed: dict) -> dict[str, Any]:
     og = parsed.get("og") or {}
     links = parsed.get("links") or []
+    position = parsed.get("position") or {}
     return {
         "title": _text_of(parsed.get("title")),
         "meta_description": _text_of(parsed.get("meta_description")),
@@ -157,6 +173,15 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "charset": _text_of(parsed.get("charset")),
         "doctype": _text_of(parsed.get("doctype")),
         "viewport": _text_of(parsed.get("viewport")),
+        "title_outside_head": position.get("title_outside_head"),
+        "meta_description_outside_head": position.get("meta_description_outside_head"),
+        "canonical_outside_head": position.get("canonical_outside_head"),
+        "directives_outside_head": position.get("directives_outside_head"),
+        "hreflang_outside_head": position.get("hreflang_outside_head"),
+        "head_count": int(position.get("head_count") or 0),
+        "body_count": int(position.get("body_count") or 0),
+        "head_not_first": bool(position.get("head_not_first")),
+        "invalid_head_elements": ", ".join(position.get("invalid_head_elements") or []),
     }
 
 

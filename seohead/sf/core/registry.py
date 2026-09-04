@@ -735,6 +735,73 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "HTML response is served uncompressed above the size where gzip/br would help",
         "fix": "Enable gzip, Brotli, or deflate compression for text responses on the origin server or CDN.",
     },
+    # --- extension: element position & document skeleton (issue #123) ---
+    "TITLE_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "The <title> element is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so <title> is read from <head> again.",
+    },
+    "DESC_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "The meta description is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the description is read from <head> again.",
+    },
+    "CANONICAL_OUTSIDE_HEAD": {
+        "severity": "critical",
+        "source": "SF-derived",
+        "message": "The canonical link is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the canonical is read from <head> again; Google ignores a canonical outside <head>.",
+    },
+    "DIRECTIVES_OUTSIDE_HEAD": {
+        "severity": "critical",
+        "source": "SF-derived",
+        "message": "A robots-directive meta tag is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the directive is read from <head> again; a noindex/nofollow outside <head> does not apply.",
+    },
+    "HREFLANG_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "An hreflang alternate link is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the alternate is read from <head> again.",
+    },
+    "HEAD_MISSING": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Document has no <head> element",
+        "fix": "Add a <head> element; a browser inserts one implicitly, but every metadata tag then depends on exactly where it lands.",
+    },
+    "HEAD_MULTIPLE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Document has more than one <head> element",
+        "fix": "Merge into a single <head>; a browser keeps both as siblings rather than combining their contents.",
+    },
+    "BODY_MISSING": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Document has no <body> element",
+        "fix": "Add a <body> element; a browser inserts one implicitly around the visible content.",
+    },
+    "BODY_MULTIPLE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Document has more than one <body> element",
+        "fix": "Merge into a single <body>; a browser keeps both as siblings rather than combining their contents.",
+    },
+    "INVALID_HEAD_ELEMENT": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "An element the head content model does not allow is written inside <head>",
+        "fix": "Move title/base/link/meta/style/script/noscript/template content into <head> and everything else into <body>; an invalid element is what forces the parser to close <head> early.",
+    },
+    "HEAD_NOT_FIRST": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "<head> is not the first element under <html> once the parser resolves the document",
+        "fix": "Fix the markup order so <head> opens immediately after <html>, before any <body> content.",
+    },
     # --- extension: export-dependent native filters (active when the export is available) ---
     "MIXED_CONTENT": {
         "severity": "warning",

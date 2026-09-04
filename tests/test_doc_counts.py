@@ -93,6 +93,11 @@ EXEMPT = (
     "96 checks (the count before",
     "of the 320",
     "~320",
+    # CHECKLIST_AUDIT.md is a frozen snapshot of the registry as it stood when
+    # issue #30 was being worked, superseded by COVERAGE_SF_ISSUES.md — its own
+    # header says so. The count it names is the one that was live *then*, not
+    # a claim this suite should keep matching to the current registry.
+    "121 checks today, up from 104",
 )
 
 # Documents claim "over 1100 offline tests" rather than an exact figure: an

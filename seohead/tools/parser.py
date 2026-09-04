@@ -28,7 +28,14 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.models import LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
+from seohead.models import (
+    DocumentPosition,
+    LinkInfo,
+    ParsedPage,
+    ParseFailed,
+    ParseFetched,
+    ParseResult,
+)
 from seohead.recon.net import http_client
 from seohead.tools.content_area import extract_area_text, resolve_content_area
 
@@ -173,9 +180,14 @@ def document_doctype(html: str) -> str | None:
     return match.group(0).strip() if match else None
 
 
+def _first_meta_tag(soup: BeautifulSoup, *, name: str) -> Any:
+    """Return the first ``<meta name=...>`` tag (case-insensitive), or ``None``."""
+    return soup.find("meta", attrs={"name": _ci(name)})
+
+
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     """Return the ``content`` of ``<meta name=...>`` (case-insensitive)."""
-    tag = soup.find("meta", attrs={"name": _ci(name)})
+    tag = _first_meta_tag(soup, name=name)
     # "content" is not one of BeautifulSoup's multi-valued attributes, so this
     # is always a plain string at runtime; the stub types it broadly because
     # .get() is generic across every attribute.
@@ -192,13 +204,19 @@ def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
 _FOREIGN_CONTENT = ("svg", "math")
 
 
-def document_title(soup: BeautifulSoup) -> str | None:
-    """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
+def _title_tag(soup: BeautifulSoup) -> Any:
+    """Return the tag ``document_title`` would read, ignoring SVG/MathML ``<title>``."""
     for tag in soup.find_all("title"):
         if any(parent.name in _FOREIGN_CONTENT for parent in tag.parents):
             continue
-        return collapse_whitespace(tag.get_text()) or None
+        return tag
     return None
+
+
+def document_title(soup: BeautifulSoup) -> str | None:
+    """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
+    tag = _title_tag(soup)
+    return (collapse_whitespace(tag.get_text()) or None) if tag else None
 
 
 # A robots directive is addressed to a named crawler; ``robots`` addresses all
@@ -224,16 +242,35 @@ _VALUED_DIRECTIVES = (
 )
 
 
-def robots_meta_values(soup: BeautifulSoup) -> list[str]:
-    """Return the ``content`` of every robots-directive meta, in document order."""
-    out: list[str] = []
+def _robots_directive_tags(soup: BeautifulSoup) -> list[Any]:
+    """Return every non-empty robots-directive ``<meta>`` tag, in document order."""
+    out: list[Any] = []
     for tag in soup.find_all("meta"):
         name = tag.get("name")
         if not isinstance(name, str) or name.lower() not in ROBOTS_META_NAMES:
             continue
         content = tag.get("content")
         if isinstance(content, str) and content.strip():
-            out.append(collapse_whitespace(content))
+            out.append(tag)
+    return out
+
+
+def robots_meta_values(soup: BeautifulSoup) -> list[str]:
+    """Return the ``content`` of every robots-directive meta, in document order."""
+    return [collapse_whitespace(tag.get("content")) for tag in _robots_directive_tags(soup)]
+
+
+def _hreflang_tags(soup: BeautifulSoup) -> list[Any]:
+    """Return every ``<link rel="alternate" hreflang="...">`` tag, in document order."""
+    out: list[Any] = []
+    for tag in soup.find_all("link"):
+        hreflang = tag.get("hreflang")
+        if not hreflang:
+            continue
+        rel_attr = tag.get("rel") or []
+        rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
+        if any(isinstance(t, str) and t.lower() == "alternate" for t in rel_tokens):
+            out.append(tag)
     return out
 
 
@@ -354,6 +391,130 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
         return urljoin(final_url, href)
     except ValueError:
         return final_url
+
+
+# issue #123: a browser closes <head> at the first element that does not belong
+# there, so a canonical or robots directive placed after one silently stops
+# applying — from the source it looks fine, and every check that reads a tag
+# wherever it finds it agrees. These helpers read where the parser itself
+# resolved each element, which is the only view that matches what a browser
+# (and Google, which follows the same HTML5 parsing algorithm) actually acts
+# on. Verified directly against lxml's own recovery behaviour rather than
+# assumed: a body-only element inside <head> (a bare <div>, <p>, <img>, ...)
+# closes <head> there and moves it and everything after into <body>, while an
+# element the head content model actually allows (title/base/link/meta/style/
+# script/noscript/template, and comments) does not. That also means no
+# *resolved* tree can ever show an invalid element still sitting inside
+# <head> — by the time parsing recovers, it has already been moved out — so
+# "invalid elements in head" is read from the head span as written in the
+# source instead (see invalid_head_elements).
+def _in_head(tag: Any) -> bool:
+    """True when ``tag``'s ancestor chain includes a ``<head>`` element."""
+    return any(getattr(parent, "name", None) == "head" for parent in tag.parents)
+
+
+def _head_not_first(html_tag: Any, head_count: int) -> bool:
+    """True when some element under ``<html>`` precedes its ``<head>``.
+
+    Covers both "<head> Not First In <html> Element" and "<body> Element
+    Preceding <html>" from the Screaming Frog catalogue: once lxml recovers
+    from either shape of malformed markup, both collapse into one resolved
+    tree where something other than <head> is the first element child of the
+    single <html> root — there is no separate signal left to tell them apart.
+    """
+    if html_tag is None or head_count == 0:
+        return False
+    for child in html_tag.children:
+        name = getattr(child, "name", None)
+        if name is None:  # text/comment/doctype between the tags
+            continue
+        return name != "head"
+    return False
+
+
+# Elements the HTML head content model allows. A bare block-level element
+# (div/p/img/...) verified directly against lxml forces it to close <head>
+# early and move everything after into <body> — which is exactly the "outside
+# <head>" symptom these checks exist to catch — so this whitelist is also,
+# in effect, what a resolved tree could never still contain inside <head>.
+_ALLOWED_HEAD_TAGS = frozenset(
+    {"title", "base", "link", "meta", "style", "script", "noscript", "template"}
+)
+_HEAD_OPEN_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_BODY_OPEN_RE = re.compile(r"<body\b", re.IGNORECASE)
+# GTM's <noscript><iframe ...></noscript> fallback is the common real case: with
+# scripting enabled (the only case that matters here — the parser is producing
+# what a search engine's crawler sees) a browser treats <noscript>'s content as
+# opaque text, not markup, so nothing inside it ever forces <head> to close.
+# Stripped before scanning so it isn't flagged as an invalid element.
+_NOSCRIPT_RE = re.compile(r"<noscript\b.*?</noscript\s*>", re.IGNORECASE | re.DOTALL)
+# An opening tag only: "<" immediately followed by a letter excludes both a
+# closing tag ("</title>") and a comment/doctype ("<!--", "<!DOCTYPE").
+_OPEN_TAG_NAME_RE = re.compile(r"<([a-zA-Z][a-zA-Z0-9:-]*)")
+
+
+def invalid_head_elements(html: str) -> list[str]:
+    """Tag names written inside ``<head>...</head>`` that do not belong there.
+
+    Read from the source text, not the resolved tree: an invalid element is
+    exactly what makes the parser close <head> early, so by the time parsing
+    finishes recovering, the resolved <head> can no longer contain it (see the
+    block comment above). The literal span is the only place left to look.
+    """
+    open_match = _HEAD_OPEN_RE.search(html)
+    if not open_match:
+        return []
+    start = open_match.end()
+    close_match = _HEAD_CLOSE_RE.search(html, start)
+    body_match = _BODY_OPEN_RE.search(html, start)
+    if close_match and (body_match is None or close_match.start() < body_match.start()):
+        end = close_match.start()
+    elif body_match:
+        end = body_match.start()
+    else:
+        end = len(html)
+    span = _NOSCRIPT_RE.sub("", html[start:end])
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _OPEN_TAG_NAME_RE.finditer(span):
+        name = match.group(1).lower()
+        if name in _ALLOWED_HEAD_TAGS or name in seen:
+            continue
+        seen.add(name)
+        found.append(name)
+    return found
+
+
+def document_position(soup: BeautifulSoup, html: str) -> DocumentPosition:
+    """Where key elements sit relative to ``<head>``, as the parser resolved the tree.
+
+    Each ``*_outside_head`` flag is ``None`` when the element is simply absent
+    (a different, already-covered finding) and a bool only when it exists —
+    ``True`` iff every instance the parser found sits outside ``<head>``.
+    """
+    head_tags = soup.find_all("head")
+    body_tags = soup.find_all("body")
+    title_tag = _title_tag(soup)
+    desc_tag = _first_meta_tag(soup, name="description")
+    canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
+    robots_tags = _robots_directive_tags(soup)
+    hreflang_tags = _hreflang_tags(soup)
+    return {
+        "head_count": len(head_tags),
+        "body_count": len(body_tags),
+        "head_not_first": _head_not_first(soup.find("html"), len(head_tags)),
+        "invalid_head_elements": invalid_head_elements(html),
+        "title_outside_head": (not _in_head(title_tag)) if title_tag else None,
+        "meta_description_outside_head": (not _in_head(desc_tag)) if desc_tag else None,
+        "canonical_outside_head": (not _in_head(canonical_tag)) if canonical_tag else None,
+        "directives_outside_head": (
+            any(not _in_head(tag) for tag in robots_tags) if robots_tags else None
+        ),
+        "hreflang_outside_head": (
+            any(not _in_head(tag) for tag in hreflang_tags) if hreflang_tags else None
+        ),
+    }
 
 
 def _extract_links(
@@ -682,6 +843,12 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["content_area_strategy"] = None
         result["word_count"] = 0
 
+    # Always computed, regardless of the option flags above: it is a handful of
+    # already-parsed-tree lookups, not a separate extraction pass, and every
+    # option that turns off title/canonical/etc. text still leaves the tree to
+    # read positions from. See document_position (issue #123).
+    result["position"] = document_position(soup, html)
+
     # Built imperatively above (one assignment per option branch) rather than as
     # one literal, so a plain dict is the natural builder; cast once at the
     # boundary instead of restructuring the loop above around a TypedDict literal.
@@ -833,6 +1000,33 @@ if __name__ == "__main__":
     assert "Hello world from the body." in parsed["text"]
     assert "ignore" not in parsed["text"]  # script stripped
     assert parsed["word_count"] > 0
+
+    # Element position (issue #123): a clean head reports nothing outside it.
+    pos = parsed["position"]
+    assert pos["head_count"] == 1 and pos["body_count"] == 1
+    assert pos["head_not_first"] is False
+    assert pos["invalid_head_elements"] == []
+    assert pos["canonical_outside_head"] is False
+    assert pos["title_outside_head"] is False
+
+    # A body-only element in <head> forces everything after it out — the
+    # classic real-world cause (a stray <div>, here) pushes the canonical that
+    # follows it into <body>, exactly as a browser would read it.
+    broken_head = """
+    <html><head>
+      <title>T</title>
+      <script>ignore()</script>
+      <div>oops</div>
+      <link rel="canonical" href="https://example.com/c">
+    </head><body>hi</body></html>
+    """
+    broken = parse_html(broken_head, "https://example.com/page")
+    assert broken["position"]["canonical_outside_head"] is True
+    assert broken["position"]["invalid_head_elements"] == ["div"]
+    assert broken["canonical"] == "https://example.com/c"  # still found — just misplaced
+
+    two_bodies = "<html><head><title>T</title></head><body>a</body><body>b</body></html>"
+    assert parse_html(two_bodies, "https://example.com/page")["position"]["body_count"] == 2
 
     # Option flags disable their extraction.
     off = parse_html(sample, "https://example.com/page", {"headings": False, "links": False})
