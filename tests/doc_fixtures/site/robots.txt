@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+Disallow: /private/
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: http://127.0.0.1/sitemap.xml

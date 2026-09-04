@@ -1,0 +1,48 @@
+"""A tiny loopback HTTP server standing in for the live internet in doc-command tests.
+
+``tests/test_docs_commands_execute.py`` needs every documented ``seohead ...`` command
+that names a URL to actually run, without opening a real socket to the outside world.
+This server answers on 127.0.0.1 with the static fixtures in ``tests/doc_fixtures/site/``:
+``robots.txt``, ``sitemap.xml`` and ``llms.txt`` are served as themselves; every other
+path falls back to ``index.html`` so a doc example can point at ``/page``, ``/about``,
+``/product/example`` or anything else without a matching file on disk.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import http.server
+import threading
+from collections.abc import Iterator
+from pathlib import Path
+
+SITE_DIR = Path(__file__).with_name("site")
+EXACT_FILES = {"/robots.txt", "/sitemap.xml", "/llms.txt", "/image.png"}
+
+
+class _FixtureHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(SITE_DIR), **kwargs)
+
+    def do_GET(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path not in EXACT_FILES:
+            self.path = "/index.html"
+        super().do_GET()
+
+    def log_message(self, format: str, *args) -> None:
+        pass  # keep pytest output clean; failures still surface through assertions
+
+
+@contextlib.contextmanager
+def run_fixture_site() -> Iterator[str]:
+    """Serve the fixture site on an OS-assigned loopback port for the duration of the block."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture Product Page — Example Tools Co</title>
+  <meta name="description" content="A small fixture page used to execute documented seohead commands offline against a local server instead of the live internet.">
+  <link rel="canonical" href="http://127.0.0.1/">
+  <meta property="og:title" content="Fixture Product Page">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="http://127.0.0.1/">
+  <meta property="og:image" content="http://127.0.0.1/image.png">
+  <meta property="og:image:alt" content="Fixture product photo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Fixture Product Page">
+  <meta name="twitter:description" content="A small fixture page for offline documentation tests.">
+  <meta name="twitter:image" content="http://127.0.0.1/image.png">
+  <meta name="twitter:image:alt" content="Fixture product photo">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "@id": "http://127.0.0.1/#product",
+    "name": "Fixture Widget",
+    "description": "A widget used only to exercise documentation commands offline.",
+    "brand": {"@type": "Brand", "name": "Example Tools Co"},
+    "offers": {
+      "@type": "Offer",
+      "priceCurrency": "USD",
+      "price": "19.99",
+      "availability": "https://schema.org/InStock"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h1>Fixture Widget: what it is and why it exists</h1>
+  <p>This fixture page answers a direct question: what does the fixture widget do?
+  It stands in for a real page so that every documented command can run against a
+  known, stable answer instead of the live internet. The widget itself has no
+  physical form; it exists only so that parsers, checkers, and schema tools have
+  something concrete to read.</p>
+
+  <h2>Specifications</h2>
+  <p>The widget ships with 4 configurable settings and a single 12-month warranty.
+  Roughly 87% of test runs that touch this page finish in under one second, because
+  nothing here reaches the real network. The remaining 13% depend on how fast the
+  local loopback socket is, not on anything the widget does.</p>
+
+  <h3>Frequently confirmed facts</h3>
+  <ul>
+    <li>The page returns HTTP 200 for any path the fixture server does not recognize.</li>
+    <li>The canonical URL always points back to the fixture origin.</li>
+    <li>The JSON-LD block validates as a Schema.org Product.</li>
+  </ul>
+
+  <h2>Related pages</h2>
+  <p>
+    <a href="/page">Read the general fixture page</a>,
+    <a href="/product/example">see another product</a>, or
+    <a href="/about">learn about Example Tools Co</a>.
+    An external reference is available at <a href="https://www.iana.org/help/example-domains" rel="nofollow">IANA's example domains page</a>.
+  </p>
+
+  <h4>Change log</h4>
+  <h5>Version 1</h5>
+  <h6>Initial fixture</h6>
+  <p>First published for the documentation-execution test suite.</p>
+</body>
+</html>
