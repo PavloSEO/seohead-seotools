@@ -543,6 +543,12 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "Canonical points to a redirecting URL (3xx)",
         "fix": "Point the canonical to the final 200-status URL; otherwise search engines must resolve conflicting canonical signals.",
     },
+    "UNLINKED_CANONICAL": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Canonical target has no hyperlink pointing to it anywhere in the crawl",
+        "fix": "Add an ordinary internal link to the canonical target, or confirm relying on the canonical alone for discovery is intentional.",
+    },
     "HREFLANG_BROKEN_TARGET": {
         "severity": "warning",
         "source": "inlinks:All Hreflang",
@@ -579,12 +585,30 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "Hreflang points to a URL that is not itself the canonical version",
         "fix": "Point hreflang annotations at each target's canonical URL, not at a duplicate that canonicalizes elsewhere.",
     },
+    "HREFLANG_MISSING_RETURN_LINK": {
+        "severity": "warning",
+        "source": "inlinks:All Hreflang",
+        "message": "Another page's hreflang points here, but this page does not point back",
+        "fix": "Add a reciprocal hreflang annotation back to every page that names this one.",
+    },
     # --- extension: pagination ---
     "PAGINATION_NONINDEXABLE": {
         "severity": "warning",
         "source": "SF-derived",
         "message": "Pagination page is non-indexable",
         "fix": "Pagination pages should generally remain crawlable and indexable unless a deliberate alternative architecture is in place.",
+    },
+    "PAGINATION_LOOP": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": 'A rel="next" pagination series loops back on itself',
+        "fix": 'Fix the rel="next"/rel="prev" values so the series terminates instead of cycling.',
+    },
+    "UNLINKED_PAGINATION_SERIES": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": 'A pagination series is reachable only by following rel="next", never by a hyperlink',
+        "fix": 'Add an ordinary internal link to the first page of the series so it does not depend on rel="next" alone for discovery.',
     },
     # --- extension: links ---
     "NO_INTERNAL_OUTLINKS": {
@@ -610,6 +634,36 @@ CHECKS: dict[str, dict[str, Any]] = {
         "source": "inlinks:Anchor Text",
         "message": "Non-descriptive anchor text such as 'here', 'read more', or 'click here'",
         "fix": "Replace it with meaningful anchor text that describes the destination for both search engines and screen-reader users.",
+    },
+    "LOW_LINK_SCORE": {
+        "severity": "notice",
+        "source": "inlinks:All Inlinks",
+        "message": "Internal link score is far below the site median",
+        "fix": "Add internal, followed links to the page from well-linked pages elsewhere on the site.",
+    },
+    "ONLY_NOFOLLOW_INLINKS": {
+        "severity": "warning",
+        "source": "inlinks:All Inlinks",
+        "message": "Every internal link to this page is nofollow",
+        "fix": "Add at least one ordinary, followed internal link so link equity and crawl priority reach the page.",
+    },
+    "ONLY_NONINDEXABLE_SOURCE_INLINKS": {
+        "severity": "warning",
+        "source": "inlinks:All Inlinks",
+        "message": "Every internal link to this page comes from a non-indexable source",
+        "fix": "Link to the page from at least one indexable page so it is reachable from the part of the site search engines actually rank.",
+    },
+    "DEEP_DISCOVERY_PATH": {
+        "severity": "notice",
+        "source": "inlinks:All Inlinks",
+        "message": "The shortest hyperlink route from the start page exceeds the configured depth",
+        "fix": "Add a shorter internal-linking route (e.g. from a hub or category page) so the page is reachable in fewer clicks.",
+    },
+    "INSECURE_SUBRESOURCE": {
+        "severity": "warning",
+        "source": "inlinks:All Inlinks",
+        "message": "An HTTPS page loads a resource (image, script, stylesheet, ...) over plain HTTP",
+        "fix": "Serve every page resource over HTTPS and update its URL accordingly.",
     },
     # --- extension: technical checks ---
     "HTTP1_ONLY": {
@@ -689,6 +743,19 @@ CHECKS: dict[str, dict[str, Any]] = {
         "source": "SF:Images:Missing Size Attributes",
         "message": "Image is missing width and height attributes",
         "fix": "Declare intrinsic width and height values to reserve layout space and reduce CLS.",
+    },
+    # 9.A — link position (native crawl only; SF exports carry their own Link
+    # Position column, handled separately in sf.core.inlinks). Computed the
+    # same way SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP are: from evidence a
+    # native crawl produces that an SF export cannot, added directly by the
+    # handler layer rather than through a registered export requirement.
+    "INLINK_BOILERPLATE_ONLY": {
+        "severity": "warning",
+        "source": "crawl:link_position",
+        "message": "Page is linked only from navigation, header, sidebar, or footer, never "
+        "from body content",
+        "fix": "Add a contextual link to the page from relevant body copy; a page reachable "
+        "only through boilerplate is not linked the way a page in the content graph is.",
     },
 }
 

@@ -84,6 +84,10 @@ INTERNAL_FIELD_MAP: dict[str, list[str]] = {
     "meta_charset": ["Meta Charset", "Charset"],
     "doctype": ["Doctype", "Doctype Declaration"],
     "viewport": ["Viewport", "Meta Viewport", "Mobile Viewport"],
+    # Not an SF column -- seohead.crawl's own evidence.py projection adds it
+    # (#18). An SF export simply never has this column, so it resolves to
+    # None there, same as any other frame a list-mode run cannot fill.
+    "representation": ["Representation"],
 }
 
 # Canonical field -> headers for a ``*:Inlinks`` bulk export.

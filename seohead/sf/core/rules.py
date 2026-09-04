@@ -653,6 +653,49 @@ def check_canonical_to_redirect(ctx: AuditContext) -> None:
             )
 
 
+def check_unlinked_canonical(ctx: AuditContext) -> None:
+    """UNLINKED_CANONICAL — a canonical target no hyperlink ever points to.
+
+    A URL that is only ever named as *someone else's* canonical is reachable
+    by a search engine following the annotation, but never by a user or crawler
+    following a link — and "never" is knowable only once the crawl is complete
+    (issue #15, item 4: a set difference between canonical targets and hyperlink
+    targets). This reuses the canonical edge graph ``check_canonical_chain``
+    already builds and Internal:All's own Inlinks column — no new export is
+    needed, since Inlinks already counts every hyperlink the finished crawl
+    found pointing at that URL. On a partial crawl "never" cannot be proven,
+    so ``aggregate.aggregate`` withholds this finding rather than report it.
+    """
+    edges, has_any = _canonical_edges(ctx)
+    if not has_any:
+        ctx.skip("UNLINKED_CANONICAL", "no Canonical column in Internal:All")
+        return
+    if not any(_rec(p).get("inlinks") is not None for p in ctx.pages):
+        ctx.skip("UNLINKED_CANONICAL", "no Inlinks column in Internal:All")
+        return
+    sources_by_target: dict[str, list[str]] = defaultdict(list)
+    for source_norm, target_norm in edges.items():
+        sources_by_target[target_norm].append(source_norm)
+    for target_norm, source_norms in sources_by_target.items():
+        target = ctx.page_by_norm.get(target_norm)
+        if target is None:
+            continue  # canonical points outside the crawl — cannot classify
+        rec = _rec(target)
+        if rec.get("crawl_depth") == 0:
+            continue  # the homepage is never "unlinked"
+        inlinks = rec.get("inlinks")
+        if inlinks is None or inlinks > 0:
+            continue
+        sources = sorted(
+            ctx.page_by_norm[n].url if n in ctx.page_by_norm else n for n in source_norms
+        )
+        ctx.add(
+            "UNLINKED_CANONICAL",
+            target_url=target.url,
+            details={"canonicalized_from": sources},
+        )
+
+
 def check_pagination(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         rec = _rec(page)
@@ -662,6 +705,78 @@ def check_pagination(ctx: AuditContext) -> None:
                 target_url=page.url,
                 details={"indexability_status": page.indexability_status},
             )
+
+
+def check_pagination_series(ctx: AuditContext) -> None:
+    """PAGINATION_LOOP / UNLINKED_PAGINATION_SERIES — the rel="next" graph.
+
+    rel="next"/rel="prev" edges form a discovery graph exactly like redirects
+    and canonicals: a hop's role in the series is only known once every page's
+    own rel="next" is on hand, so this is a post-crawl pass over the same
+    Internal:All columns ``check_pagination`` already reads (issue #15, item
+    5). A loop is provable when a next-pointer walk revisits a URL already in
+    its own chain, mirroring ``check_canonical_chain``. "Unlinked" — a series
+    whose first page has no hyperlink inlink, so it is reachable only by
+    following rel="next" from itself — can only be trusted on a complete
+    crawl, so ``aggregate.aggregate`` withholds ``UNLINKED_PAGINATION_SERIES``
+    on a partial one.
+    """
+    next_map: dict[str, str] = {}
+    for page in ctx.html_pages():
+        nxt = _rec(page).get("rel_next")
+        if nxt:
+            next_map[norm_url(page.url)] = norm_url(nxt)
+    if not next_map:
+        ctx.skip("PAGINATION_LOOP", 'no rel="next" column in Internal:All')
+        ctx.skip("UNLINKED_PAGINATION_SERIES", 'no rel="next" column in Internal:All')
+        return
+
+    hop_cap = ctx.thresholds.get("redirect_hop_cap", 20)
+    has_predecessor = set(next_map.values())
+    reported: set[str] = set()
+
+    def _url_of(n: str) -> str:
+        page = ctx.page_by_norm.get(n)
+        return page.url if page is not None else n
+
+    for start in next_map:
+        if start in reported:
+            continue
+        path = [start]
+        seen = {start}
+        cur = start
+        is_loop = False
+        for _ in range(hop_cap):
+            nxt = next_map.get(cur)
+            if nxt is None:
+                break
+            if nxt in seen:
+                is_loop = True
+                break
+            path.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+        if is_loop:
+            reported.update(path)
+            ctx.add(
+                "PAGINATION_LOOP",
+                target_url=_url_of(start),
+                details={"series": [_url_of(n) for n in path], "loops_back_to": _url_of(nxt)},
+            )
+            continue
+        if start in has_predecessor:
+            continue  # not the head of its series
+        page = ctx.page_by_norm.get(start)
+        if page is None or not page.is_indexable or _rec(page).get("crawl_depth") == 0:
+            continue
+        inlinks = _rec(page).get("inlinks")
+        if inlinks is None or inlinks > 0 or len(path) < 2:
+            continue
+        ctx.add(
+            "UNLINKED_PAGINATION_SERIES",
+            target_url=page.url,
+            details={"series": [_url_of(n) for n in path], "length": len(path)},
+        )
 
 
 def check_links_extra(ctx: AuditContext) -> None:
@@ -981,7 +1096,9 @@ ALL_CHECKS = [
     check_canonical_extra,
     check_canonical_chain,
     check_canonical_to_redirect,
+    check_unlinked_canonical,
     check_pagination,
+    check_pagination_series,
     check_links_extra,
     check_tech_extra,
     check_charset,

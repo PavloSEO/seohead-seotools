@@ -43,7 +43,13 @@ else:  # pragma: no cover - exercised by the 3.10/3.11 CI jobs
     from typing_extensions import TypedDict
 
 
-class LinkInfo(TypedDict):
+class _LinkInfoOptional(TypedDict, total=False):
+    # Only present when the caller opts in via options["classify_links"]=True
+    # (off by default) — see parser.parse_html / tools/link_position.py.
+    position: str
+
+
+class LinkInfo(_LinkInfoOptional):
     """One `<a href>` extracted from a page."""
 
     href: str

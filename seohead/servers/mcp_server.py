@@ -101,6 +101,14 @@ def build_server():  # -> FastMCP
             out_dir=out_dir,
         )
 
+    @mcp.tool(annotations=pure, structured_output=True)
+    def seo_crawl_describe_settings() -> dict[str, Any]:
+        """List every crawl-site config setting: dotted path, type, default value,
+        description, and whether it changes what the audit finds (results-affecting)
+        or only cost/duration. The same source ``crawl-site --config-help`` reads, so
+        an agent can discover the configuration surface without a filesystem."""
+        return handlers.crawl_describe_settings()
+
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_sitemap_crawl(url: str, concurrency: int = 3) -> dict[str, Any]:
         """Recursively parse a sitemap (index/urlset, gzip supported) into a URL tree,
