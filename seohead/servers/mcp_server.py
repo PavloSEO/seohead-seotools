@@ -480,11 +480,14 @@ def build_server():  # -> FastMCP
     @mcp.tool(annotations=create_files, structured_output=True)
     def seo_report_build(audit: dict, fmt: str = "xlsx", out: str | None = None) -> dict[str, Any]:
         """Turn an audit document into a file: xlsx, docx, csv, md or json. Pass the dict
-        returned by seo_site_audit (or a path to its JSON). xlsx has four sheets with
-        filters and a live Excel chart — for work; docx is prose with headings — for the
-        client; csv is flat data for a tracker (two files: findings and pages); md is for
-        reading and for git. The generators compute nothing and reach no network: what is
-        not in the JSON does not appear in the report."""
+        returned by seo_site_audit, an SF Analyzer audit.json from sf_audit_run (or a
+        path to either one's JSON) — both schemas are recognized and normalized before
+        rendering. xlsx has four sheets with filters and a live Excel chart — for work;
+        docx is prose with headings — for the client; csv is flat data for a tracker (two
+        files: findings and pages); md is for reading and for git. The generators compute
+        nothing and reach no network: what is not in the JSON does not appear in the
+        report. A document matching neither schema is refused with ok: false naming the
+        mismatch, never rendered as an empty report."""
         return _checked(handlers.report_build(audit=audit, fmt=fmt, out=out))
 
     @mcp.tool(annotations=pure, structured_output=True)
