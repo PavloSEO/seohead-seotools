@@ -37,6 +37,12 @@ ROOT = Path(__file__).resolve().parent.parent
 NEEDS_LIVE_INFRASTRUCTURE = {
     "domain-profile",
     "mirror-check",
+    # Needs a headless browser. Playwright is an optional extra, so a runner without it gets a
+    # truthful ok:false ("playwright is not installed") — which, since #155 made ok:false reach
+    # the exit code, is now a non-zero exit rather than a silently swallowed success. That is the
+    # command working, not failing: the same distinction sf doctor and save-config already draw
+    # between "this environment lacks the dependency" and "this command is broken".
+    "render-check",
     # Its target-domain matching deliberately rejects a bare IP address (the fixture server has
     # no name, only 127.0.0.1) — the same "needs a real domain, not just an HTTP-answering host"
     # gap as domain-profile and mirror-check above, just surfaced only once ok:false reached the
