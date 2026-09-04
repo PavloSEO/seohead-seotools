@@ -8,6 +8,12 @@ JavaScript the page depends on.
 Fingerprints are declared in :data:`SIGNATURES`: adding a technology means adding
 a data row rather than changing matching logic. Every match includes the marker
 that triggered it so findings remain inspectable and reproducible.
+
+:func:`detect_tech` fetches a page and hands it to :func:`analyze_tech`, the pure
+half that a crawl can call once per already-downloaded page without a second
+request. :func:`tag_coverage` aggregates those per-page results into a site-wide
+report: which templates carry which tag, whether two pages disagree on the id,
+and how the underlying pages were measured (static markup vs. a rendered DOM).
 """
 
 # ruff: noqa: RUF001
@@ -514,6 +520,16 @@ _GENERATOR_RE = re.compile(
 _VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)?)")
 MAX_HTML_BYTES = 3_000_000  # fingerprints occur early; cap memory on oversized pages
 
+# A SIGNATURES marker proves a technology is present but not which deployment of
+# it: two properties can both load Google Tag Manager while pointing at different
+# containers. These patterns capture the id itself, so a site-wide report can tell
+# "GTM is everywhere" apart from "two conflicting GTM containers are both live".
+IDENTIFIER_PATTERNS: dict[str, re.Pattern[str]] = {
+    "Google Analytics 4": re.compile(r"\b(G-[A-Z0-9]{6,10})\b"),
+    "Google Tag Manager": re.compile(r"\b(GTM-[A-Z0-9]{4,8})\b"),
+    "Яндекс.Метрика": re.compile(r"ym\(\s*(\d{5,9})\s*,\s*[\"']init[\"']"),
+}
+
 
 def _script_sources(html: str) -> list[str]:
     """Extract script ``src`` values with Beautiful Soup instead of regex."""
@@ -554,7 +570,7 @@ def _match(
 
 
 def detect_tech(url: str, timeout: float = 25.0) -> dict[str, Any]:
-    """Detect technologies on one page using a single request and static analysis."""
+    """Fetch one page and detect technologies with a single request."""
     target = normalize_url(url)
     if not target:
         return {"ok": False, "error": f"Not a valid URL: {url!r}"}
@@ -571,8 +587,38 @@ def detect_tech(url: str, timeout: float = 25.0) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "url": target, "error": str(exc)}
 
-    headers = {k.lower(): v for k, v in resp.headers.items()}
-    cookies = dict(resp.cookies)
+    return analyze_tech(
+        html,
+        headers=dict(resp.headers),
+        cookies=dict(resp.cookies),
+        url=target,
+        final_url=str(resp.url),
+        status_code=resp.status_code,
+    )
+
+
+def analyze_tech(
+    html: str,
+    *,
+    headers: dict[str, str] | None = None,
+    cookies: dict[str, str] | None = None,
+    url: str = "",
+    final_url: str | None = None,
+    status_code: int | None = None,
+    rendered: bool = False,
+) -> dict[str, Any]:
+    """Fingerprint an already-fetched document; makes zero network requests.
+
+    Splitting this out of :func:`detect_tech` is what lets a crawl fingerprint
+    every page it already downloaded instead of fetching each one a second time
+    just for this check. ``rendered`` records whether ``html`` is the raw response
+    body or a post-script DOM snapshot — several tags are visible in one and not
+    the other, and :func:`tag_coverage` needs to know which it is looking at.
+    """
+    headers = {k.lower(): v for k, v in (headers or {}).items()}
+    cookies = dict(cookies or {})
+    html = html[:MAX_HTML_BYTES]
+    page_url = final_url or url
     html_low = html.lower()
     scripts = _script_sources(html)
     scripts_low = " ".join(scripts).lower()
@@ -626,7 +672,7 @@ def detect_tech(url: str, timeout: float = 25.0) -> dict[str, Any]:
     try:
         from seohead.recon import tech_db
 
-        ext = tech_db.detect_external(html, headers, cookies, scripts, str(resp.url))
+        ext = tech_db.detect_external(html, headers, cookies, scripts, page_url)
         if ext.get("db_loaded"):
             external_report = {
                 "loaded": True,
@@ -640,24 +686,42 @@ def detect_tech(url: str, timeout: float = 25.0) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Capture the id, not just the tag name: a name-only match cannot tell two
+    # deployments of the same tag apart, which is what a site-wide conflict check
+    # (see tag_coverage) needs.
+    for name, pattern in IDENTIFIER_PATTERNS.items():
+        if name not in found:
+            continue
+        ids = sorted(set(pattern.findall(html)))
+        if ids:
+            found[name]["identifiers"] = ids
+
     by_category: dict[str, list[dict[str, Any]]] = {}
     for entry in found.values():
         by_category.setdefault(entry["category"], []).append(entry)
     for items in by_category.values():
         items.sort(key=lambda e: e["name"].lower())
 
-    third_party = sorted({_host(src) for src in scripts if _host(src)} - {_host(str(resp.url))})
+    third_party = sorted({_host(src) for src in scripts if _host(src)} - {_host(page_url)})
     return {
         "ok": True,
-        "url": target,
-        "final_url": str(resp.url),
-        "status_code": resp.status_code,
+        "url": url or page_url,
+        "final_url": page_url,
+        "status_code": status_code,
         "generator": generator.group(1).strip() if generator else None,
         "technologies": sorted(found.values(), key=lambda e: (e["category"], e["name"].lower())),
         "by_category": by_category,
         "scripts_total": len(scripts),
         "third_party_hosts": third_party,
         "external_db": external_report,
+        # Every row a coverage report builds from this must carry how it was
+        # measured: a tag invisible in static markup may still fire for a real
+        # visitor, and reporting it as "missing" without this stamp is what
+        # costs an audit its credibility.
+        "measurement": {
+            "representation": "rendered_dom" if rendered else "static_markup",
+            "script_executed": rendered,
+        },
         "findings": _findings(by_category, third_party),
     }
 
@@ -702,3 +766,102 @@ def _findings(by_category: dict[str, list[dict[str, Any]]], third_party: list[st
             "verify rendering and crawlability."
         )
     return out
+
+
+# Tags an audit is most often asked to prove are, or are not, on every page.
+DEFAULT_COVERAGE_TAGS: tuple[str, ...] = (
+    "Google Analytics 4",
+    "Google Tag Manager",
+    "Яндекс.Метрика",
+)
+
+# A tag manager is expected to inject these tags client-side, so their absence
+# from static markup when the manager is present is not evidence of a gap.
+INJECTED_BY: dict[str, tuple[str, ...]] = {
+    "Google Analytics 4": ("Google Tag Manager",),
+}
+
+
+def _url_template(url: str) -> str:
+    """Collapse a URL path to a template by masking id-shaped segments.
+
+    A dependency-free stand-in for real template detection: a path segment that
+    is all digits, or 8+ characters long, is treated as a slug or id, so
+    ``/product/42`` and ``/product/leather-boots`` fold into ``/product/*``.
+    """
+    from urllib.parse import urlsplit
+
+    path = urlsplit(url).path.strip("/")
+    if not path:
+        return "/"
+    parts = ["*" if seg.isdigit() or len(seg) >= 8 else seg for seg in path.split("/")]
+    return "/" + "/".join(parts)
+
+
+def tag_coverage(
+    pages: list[dict[str, Any]], *, tags: tuple[str, ...] = DEFAULT_COVERAGE_TAGS
+) -> dict[str, Any]:
+    """Aggregate per-page :func:`analyze_tech`/:func:`detect_tech` results site-wide.
+
+    Each item in ``pages`` is one of those results, optionally carrying a
+    ``template`` key; when absent, one is derived from the URL path. A page whose
+    fetch failed (``ok`` false) is excluded from the denominator entirely, the
+    same absence rule custom search relies on: a page nobody saw must not be
+    counted as missing the tag.
+    """
+    fetched = [p for p in pages if p.get("ok")]
+    stamps = sorted(
+        {(p.get("measurement") or {}).get("representation", "static_markup") for p in fetched}
+    )
+
+    by_template: dict[str, list[dict[str, Any]]] = {}
+    for page in fetched:
+        key = page.get("template") or _url_template(page.get("url") or page.get("final_url") or "")
+        by_template.setdefault(key, []).append(page)
+
+    def has_tech(page: dict[str, Any], name: str) -> dict[str, Any] | None:
+        return next((t for t in page.get("technologies", []) if t.get("name") == name), None)
+
+    rows = []
+    for tag in tags:
+        identifiers: set[str] = set()
+        by_template_row: dict[str, dict[str, Any]] = {}
+        pages_with_tag = 0
+        for template, group in by_template.items():
+            present = 0
+            likely_injected = 0
+            for page in group:
+                entry = has_tech(page, tag)
+                if entry:
+                    present += 1
+                    identifiers.update(entry.get("identifiers", []))
+                elif any(has_tech(page, manager) for manager in INJECTED_BY.get(tag, ())):
+                    likely_injected += 1
+            by_template_row[template] = {
+                "pages": len(group),
+                "with_tag": present,
+                "fraction": round(present / len(group), 4) if group else 0.0,
+                "likely_injected_by_manager": likely_injected,
+            }
+            pages_with_tag += present
+        rows.append(
+            {
+                "tag": tag,
+                "pages_with_tag": pages_with_tag,
+                "fraction": round(pages_with_tag / len(fetched), 4) if fetched else 0.0,
+                "identifiers": sorted(identifiers),
+                "conflicting_identifiers": len(identifiers) > 1,
+                "by_template": by_template_row,
+            }
+        )
+
+    return {
+        "ok": True,
+        "pages_considered": len(fetched),
+        "pages_excluded_fetch_failed": len(pages) - len(fetched),
+        # A single value when every page was measured the same way; a list when a
+        # partial render was mixed into an otherwise static crawl, so the caller
+        # cannot mistake a mixed run for a uniformly reliable one.
+        "measurement_stamp": stamps[0] if len(stamps) == 1 else stamps,
+        "tags": rows,
+    }
