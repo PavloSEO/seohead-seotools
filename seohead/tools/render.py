@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from seohead.recon.net import http_client, normalize_url, validate_url
+from seohead.tools import dualcrawl
 
 # Common single-page application shells. An empty mount container means the raw
 # response exposes no application content to a crawler that does not render.
@@ -99,6 +100,25 @@ try {
   }).observe({type: 'largest-contentful-paint', buffered: true});
 } catch (e) {}
 """
+
+# getComputedStyle resolves background-image wherever the declaring CSS rule
+# lives -- inline style, a <style> block, or an external stylesheet -- so it
+# is the only way to see a background image an external stylesheet declares:
+# that CSS text never appears in either the raw or the rendered HTML string.
+_BACKGROUND_IMAGES_JS = """() => {
+  const found = new Set();
+  const urlRe = /url\\((['"]?)(.*?)\\1\\)/g;
+  document.querySelectorAll('*').forEach((el) => {
+    const bg = getComputedStyle(el).backgroundImage;
+    if (!bg || bg === 'none') return;
+    let m;
+    while ((m = urlRe.exec(bg))) {
+      const src = m[2];
+      if (src && !src.startsWith('data:')) found.add(new URL(src, document.baseURI).href);
+    }
+  });
+  return Array.from(found);
+}"""
 
 
 def _visible_text(html: str) -> str:
@@ -183,9 +203,14 @@ def _snapshot(html: str, url: str) -> dict[str, Any]:
     from seohead.tools.page_facts import extract
 
     facts = extract(html, url) if html else {}
+    # Images: <img>/<source> plus CSS url() backgrounds declared inline or in a
+    # <style> block. A background declared only in an external stylesheet is
+    # not visible here -- render_check() merges that in from computed styles.
+    images = sorted(dualcrawl.build_page_evidence(html, url)["images"])
     return {
         "words": _words(html),
         "links": len(_links(html, url)),
+        "images": images,
         "title": facts.get("title") or "",
         "h1": facts.get("h1") or "",
         "canonical": facts.get("canonical") or "",
@@ -257,6 +282,14 @@ def compare(
     if new_types:
         out.append("Schema.org types appear only after JavaScript: " + ", ".join(sorted(new_types)))
 
+    new_images = set(rendered.get("images", [])) - set(raw.get("images", []))
+    if new_images:
+        out.append(
+            f"{len(new_images)} image(s) are visible only after rendering, most often a CSS "
+            "background-image resolved from an external stylesheet; a non-rendering crawler, "
+            "and every alt-text or image-weight check built on <img> alone, sees none of them"
+        )
+
     if not out:
         out.append(ALL_CLEAR)
     return out
@@ -322,6 +355,7 @@ def render_check(
                 rendered_html = page.content()
                 rendered_url = page.url
                 metrics = page.evaluate(_METRICS_JS)
+                computed_backgrounds = page.evaluate(_BACKGROUND_IMAGES_JS)
             finally:
                 browser.close()
     except Exception as exc:
@@ -334,8 +368,25 @@ def render_check(
 
     raw = _snapshot(raw_html, final_url)
     rendered = _snapshot(rendered_html, rendered_url)
+    # Merge in what only getComputedStyle can see: a background-image an
+    # external stylesheet declares, absent from both HTML strings above.
+    rendered["images"] = sorted(set(rendered["images"]) | set(computed_backgrounds))
     shell = _empty_shell(raw_html)
     findings = compare(raw, rendered, raw_html, shell)
+    # Its own report section, not merged into "findings": #21's compare()
+    # assumes the site changed between two runs, this assumes the site is the
+    # same and the method differs, so it gets its own schema/keys (dualcrawl.v1).
+    dual_crawl = dualcrawl.compare_evidence(
+        {final_url: {"images": set(raw["images"]), "links": _links(raw_html, final_url)}},
+        {
+            final_url: {
+                "images": set(rendered["images"]),
+                "links": _links(rendered_html, rendered_url),
+            }
+        },
+        method_a="static",
+        method_b="rendered",
+    )
     return {
         "ok": True,
         "url": target,
@@ -352,6 +403,7 @@ def render_check(
         # Vitals come from CrUX and must not be inferred from this measurement.
         "metrics_lab": metrics,
         "findings": findings,
+        "dual_crawl": dual_crawl,
     }
 
 

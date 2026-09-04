@@ -466,6 +466,22 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
     return out
 
 
+# extract_url_sources() also carries non-image carriers (script src, form
+# action, cite, itemtype, ...). "img"/"source" are always an image; any other
+# tag only qualifies via its "style" or "css" attr, i.e. a CSS url() -- which
+# is how a background-image (no <img>, no alt attribute) is reported at all.
+_IMAGE_URL_SOURCE_ATTRS = ("style", "css")
+
+
+def image_url_sources(url_sources: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Filter ``extract_url_sources()`` output down to entries that are images."""
+    return [
+        s
+        for s in url_sources
+        if s["tag"] in ("img", "source") or s["attr"] in _IMAGE_URL_SOURCE_ATTRS
+    ]
+
+
 def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[str, Any]:
     """Extract SEO data from an HTML string (pure — no network).
 

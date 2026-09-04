@@ -74,6 +74,13 @@ def test_snapshot_is_computed_the_same_way_for_both_sides():
     assert snap["title"] == "T" and snap["h1"] == "H" and snap["words"] >= 3
 
 
+def test_snapshot_sees_a_background_image_with_no_img_tag_at_all():
+    """The flagship case: a page with images only as CSS backgrounds."""
+    html = "<html><head><style>.hero{background-image:url(/hero.png)}</style></head><body></body></html>"
+    snap = _snapshot(html, BASE)
+    assert snap["images"] == ["https://example.com/hero.png"]
+
+
 # ── Findings ─────────────────────────────────────────────────────────────────
 
 
@@ -120,6 +127,17 @@ def test_identical_pages_get_an_explicit_all_clear():
     assert len(out) == 1 and "materially equivalent" in out[0]
 
 
+def test_background_image_invisible_to_the_raw_pass_is_flagged():
+    out = compare(_snap(images=[]), _snap(images=["https://example.com/hero.png"]))
+    assert any("visible only after rendering" in f for f in out)
+
+
+def test_identical_images_on_both_sides_raise_no_finding():
+    same = ["https://example.com/hero.png"]
+    out = compare(_snap(images=same), _snap(images=same))
+    assert not any("visible only after rendering" in f for f in out)
+
+
 # ── Boundaries ───────────────────────────────────────────────────────────────
 
 
@@ -159,3 +177,12 @@ def test_lcp_is_collected_by_a_buffered_observer():
     assert "largest-contentful-paint" in _CLS_INIT_JS
     assert "buffered: true" in _CLS_INIT_JS
     assert "__seohead_lcp" in _METRICS_JS
+
+
+def test_background_images_js_reads_computed_style_not_html_text():
+    """Only getComputedStyle resolves a background declared in an external stylesheet."""
+    from seohead.tools.render import _BACKGROUND_IMAGES_JS
+
+    assert "getComputedStyle" in _BACKGROUND_IMAGES_JS
+    assert "backgroundImage" in _BACKGROUND_IMAGES_JS
+    assert "data:" in _BACKGROUND_IMAGES_JS  # data URIs are skipped, matching the parser
