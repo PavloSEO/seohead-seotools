@@ -13,8 +13,13 @@ import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
-FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.S)
 ECHO_PIPE_RE = re.compile(r"^echo\s+'(?P<payload>.*)'\s*\|\s*seohead\s+(?P<rest>.+)$")
+# A fence opener: leading indent, 3+ backticks (or tildes), an optional info string
+# (``bash``, ``json``, ``text``, ... or none). A single non-greedy regex across the
+# whole file cannot tell an opener from the next block's opener once an info string
+# it doesn't know about sits in between, so fences are scanned line by line instead —
+# every info string closes correctly, none needs to be named here (issue #129).
+_FENCE_OPEN_RE = re.compile(r"^([ \t]*)(`{3,}|~{3,})[ \t]*(\S*)[ \t]*$")
 
 
 def doc_files(root: Path) -> list[Path]:
@@ -66,6 +71,34 @@ def _join_continuations(block: str) -> list[str]:
     return logical
 
 
+def _iter_fenced_blocks(text: str) -> list[str]:
+    """Every fenced code block's content, matched by its own opener and closer.
+
+    A closing fence is the same character as its opener, at least as many of
+    them, and nothing else on the line (CommonMark's rule) — regardless of what
+    info string, if any, followed the opener. That means a ``json`` or ``text``
+    block closes on its own closer rather than leaking into the next block, so
+    the bash example after it is never swallowed (issue #129).
+    """
+    lines = text.splitlines()
+    blocks: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        opener = _FENCE_OPEN_RE.match(lines[i])
+        if not opener:
+            i += 1
+            continue
+        fence_char, fence_len = opener.group(2)[0], len(opener.group(2))
+        closer_re = re.compile(rf"^[ \t]*{re.escape(fence_char)}{{{fence_len},}}[ \t]*$")
+        i += 1
+        start = i
+        while i < n and not closer_re.match(lines[i]):
+            i += 1
+        blocks.append("\n".join(lines[start:i]))
+        i += 1  # past the closer (or past EOF for an unterminated fence)
+    return blocks
+
+
 def _strip_comment(line: str) -> str:
     """Drop a trailing ``# ...`` annotation, respecting quotes via shlex."""
     try:
@@ -80,7 +113,7 @@ def extract_commands(root: Path) -> list[DocCommand]:
     commands: list[DocCommand] = []
     for path in doc_files(root):
         text = path.read_text(encoding="utf-8")
-        for block in FENCE_RE.findall(text):
+        for block in _iter_fenced_blocks(text):
             for line in _join_continuations(block):
                 candidate = line.strip()
                 if candidate.startswith("$ "):
