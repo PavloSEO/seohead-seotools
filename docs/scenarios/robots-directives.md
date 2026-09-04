@@ -1,4 +1,4 @@
-# Scenario 15 — Robots directives: what the site is currently asking search engines to do
+# Scenario 13 — Robots directives: what the site is currently asking search engines to do
 
 ## The question
 

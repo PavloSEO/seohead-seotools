@@ -1,8 +1,12 @@
-# Scenario 5 — Structured data: from "we have markup" to a rich result
+# Scenario 33 — Structured data: from "we have markup" to a rich result
 
 ## The question
 
 > We added Schema.org months ago and still get no rich results. What is wrong with it?
+
+## Covers
+
+- **Structured Data** — Validation Errors · Missing · Parse Errors
 
 ## The chain
 

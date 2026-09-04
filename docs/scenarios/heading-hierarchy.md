@@ -1,4 +1,4 @@
-# Scenario 15 — Heading hierarchy: the outline nobody can see from a crawl column
+# Scenario 20 — Heading hierarchy: the outline nobody can see from a crawl column
 
 ## The question
 

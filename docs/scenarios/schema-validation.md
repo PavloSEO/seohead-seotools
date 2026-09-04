@@ -1,4 +1,4 @@
-# Scenario 22 — Structured data at site scale: valid, eligible, and neither
+# Scenario 34 — Structured data at site scale: valid, eligible, and neither
 
 ## The question
 

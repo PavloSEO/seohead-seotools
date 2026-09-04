@@ -1,4 +1,4 @@
-# Scenario 16 — The old AJAX crawling scheme: a site still answering a retired contract
+# Scenario 41 — The old AJAX crawling scheme: a site still answering a retired contract
 
 ## The question
 

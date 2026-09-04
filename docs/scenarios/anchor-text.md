@@ -1,4 +1,4 @@
-# Scenario 21 — Anchor text and inlink composition: who links here, and what they call it
+# Scenario 28 — Anchor text and inlink composition: who links here, and what they call it
 
 ## The question
 

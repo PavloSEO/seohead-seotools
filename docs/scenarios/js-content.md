@@ -1,4 +1,4 @@
-# Scenario 11 — Content only JavaScript produces: what a non-rendering crawler receives
+# Scenario 36 — Content only JavaScript produces: what a non-rendering crawler receives
 
 ## The question
 

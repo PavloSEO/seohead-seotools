@@ -1,4 +1,4 @@
-# Scenario 18 — Hreflang return links: whether the other side of the pair agrees
+# Scenario 31 — Hreflang return links: whether the other side of the pair agrees
 
 ## The question
 

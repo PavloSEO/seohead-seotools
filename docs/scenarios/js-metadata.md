@@ -1,4 +1,4 @@
-# Scenario 13 — Title, description and H1 that JavaScript writes: two versions of one page
+# Scenario 38 — Title, description and H1 that JavaScript writes: two versions of one page
 
 ## The question
 

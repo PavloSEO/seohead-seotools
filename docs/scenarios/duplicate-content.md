@@ -1,4 +1,4 @@
-# Scenario 16 — Duplicate and near-duplicate content: which pages are the same page
+# Scenario 22 — Duplicate and near-duplicate content: which pages are the same page
 
 ## The question
 

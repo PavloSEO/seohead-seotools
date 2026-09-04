@@ -1,4 +1,4 @@
-# Scenario 11 — Canonical basics: the defects that are a typo, not a strategy
+# Scenario 9 — Canonical basics: the defects that are a typo, not a strategy
 
 ## The question
 

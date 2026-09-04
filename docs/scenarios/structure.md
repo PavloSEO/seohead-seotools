@@ -1,8 +1,14 @@
-# Scenario 3 — Structure: what is unreachable, buried, or missing from the sitemap
+# Scenario 1 — Structure: what is unreachable, buried, or missing from the sitemap
 
 ## The question
 
 > We publish constantly and nothing seems to get indexed. Is anything actually reachable?
+
+## Covers
+
+- **Sitemaps** — URLs Not In Sitemap · Orphan URLs
+- **Links** — Pages With High Crawl Depth · Pages Without Internal Outlinks
+- **Response Codes** — Internal Redirection (3XX)
 
 ## The chain
 

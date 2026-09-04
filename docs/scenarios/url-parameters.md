@@ -1,4 +1,4 @@
-# Scenario 18 — Parameters, facets and the crawl budget they eat
+# Scenario 48 — Parameters, facets and the crawl budget they eat
 
 ## The question
 

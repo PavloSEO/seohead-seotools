@@ -1,4 +1,4 @@
-# Scenario 11 — Broken pages: what 404s, what 500s, and what never answered at all
+# Scenario 4 — Broken pages: what 404s, what 500s, and what never answered at all
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 19 — Soft 404s: pages that say "not found" with a 200
+# Scenario 8 — Soft 404s: pages that say "not found" with a 200
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 21 — Delivery and weight: caching, images, document size and DOM complexity
+# Scenario 46 — Delivery and weight: caching, images, document size and DOM complexity
 
 ## The question
 

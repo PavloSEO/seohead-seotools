@@ -1,4 +1,4 @@
-# Scenario 13 — Blocked by robots.txt: the pages, and the resources, a crawler never gets
+# Scenario 6 — Blocked by robots.txt: the pages, and the resources, a crawler never gets
 
 ## The question
 

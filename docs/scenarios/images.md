@@ -1,4 +1,4 @@
-# Scenario 1 — Images: from "the site feels slow" to an archive a developer can deploy
+# Scenario 24 — Images: from "the site feels slow" to an archive a developer can deploy
 
 ## The question
 
@@ -8,6 +8,11 @@
 This is the scenario that separates an analysis from a result. Anyone can report that images
 are heavy. The chain below downloads them, re-encodes them, measures the saving per file, and
 ends with an archive plus a task that has the real numbers in it.
+
+## Covers
+
+- **Images** — Over 100 kb
+- **PageSpeed** — Improve Image Delivery
 
 ## The chain
 

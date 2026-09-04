@@ -1,4 +1,4 @@
-# Scenario 15 — Blocked resources: the stylesheet and the bundle the crawler was refused
+# Scenario 40 — Blocked resources: the stylesheet and the bundle the crawler was refused
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 13 — Canonicalised pages: how much of the site is deliberately not itself
+# Scenario 11 — Canonicalised pages: how much of the site is deliberately not itself
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 17 — Pagination: whether page 2 onward is reachable and allowed to exist
+# Scenario 15 — Pagination: whether page 2 onward is reachable and allowed to exist
 
 ## The question
 

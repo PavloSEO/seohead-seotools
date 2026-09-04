@@ -1,4 +1,4 @@
-# Scenario 12 — Conflicting canonicals: two answers to a question that takes one
+# Scenario 10 — Conflicting canonicals: two answers to a question that takes one
 
 ## The question
 

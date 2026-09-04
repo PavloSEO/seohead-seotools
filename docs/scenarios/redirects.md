@@ -1,4 +1,4 @@
-# Scenario 12 — Redirects: the loop, the chain, and the hop nobody needed
+# Scenario 5 — Redirects: the loop, the chain, and the hop nobody needed
 
 ## The question
 

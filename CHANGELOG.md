@@ -4,6 +4,14 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
+  arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
+  taste: each declares the catalogued issues it resolves, and
+  `tests/test_scenario_coverage.py` asserts that every issue this toolkit claims to find
+  appears in at least one, that no scenario names an issue the map does not list, and that
+  none omits its limits. All 143 findable issues are covered. Every command in every file
+  is still executed against the fixture site in CI — the suite runs 2008 tests, of which
+  the doc-command gate is now the largest single group.
 - Add `docs/COVERAGE_SF_ISSUES.md`, generated from `seohead/sf/core/sf_issue_map.py`:
   every one of the 320 issues in the field's published catalogue, each with exactly one
   status — found by a named check, found by a named command, found in part with the

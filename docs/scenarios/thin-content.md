@@ -1,4 +1,4 @@
-# Scenario 17 — Thin content: what "thin" means once the template stops counting
+# Scenario 21 — Thin content: what "thin" means once the template stops counting
 
 ## The question
 

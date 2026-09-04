@@ -1,4 +1,4 @@
-# Scenario 20 — Sitemap health: the entries that should not be in it
+# Scenario 30 — Sitemap health: the entries that should not be in it
 
 ## The question
 

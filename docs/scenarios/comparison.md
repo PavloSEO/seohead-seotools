@@ -1,8 +1,13 @@
-# Scenario 9 — Comparing two crawls: what changed since the release
+# Scenario 55 — Comparing two crawls: what changed since the release
 
 ## The question
 
 > We shipped a new template on Tuesday. Did it break anything?
+
+## Covers
+
+Nothing in the published catalogue. This is an operating scenario — how to run the
+toolkit — rather than a class of site defect.
 
 ## The chain
 

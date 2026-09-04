@@ -1,4 +1,4 @@
-# Scenario 19 — Hreflang codes and x-default: the annotation that is only nearly right
+# Scenario 32 — Hreflang codes and x-default: the annotation that is only nearly right
 
 ## The question
 

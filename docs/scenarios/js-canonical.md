@@ -1,4 +1,4 @@
-# Scenario 14 — The canonical only rendering reveals: an indexing signal a script decides
+# Scenario 39 — The canonical only rendering reveals: an indexing signal a script decides
 
 ## The question
 

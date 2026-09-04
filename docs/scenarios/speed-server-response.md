@@ -1,4 +1,4 @@
-# Scenario 18 — Server response time: the wait before anything can start
+# Scenario 43 — Server response time: the wait before anything can start
 
 ## The question
 

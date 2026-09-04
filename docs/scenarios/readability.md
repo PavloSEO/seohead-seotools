@@ -1,4 +1,4 @@
-# Scenario 18 — Readability, spelling and grammar: four columns we read, none we compute
+# Scenario 23 — Readability, spelling and grammar: four columns we read, none we compute
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 12 — Title length: characters we count, pixels we only carry
+# Scenario 17 — Title length: characters we count, pixels we only carry
 
 ## The question
 

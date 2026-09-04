@@ -1,4 +1,4 @@
-# Scenario 14 — External links: where we point, and what answers
+# Scenario 7 — External links: where we point, and what answers
 
 ## The question
 

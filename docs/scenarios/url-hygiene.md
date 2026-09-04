@@ -1,4 +1,4 @@
-# Scenario 17 — URL hygiene at scale: the shapes that quietly split a site
+# Scenario 47 — URL hygiene at scale: the shapes that quietly split a site
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 17 — JavaScript errors: the exception that stops a page halfway through building
+# Scenario 42 — JavaScript errors: the exception that stops a page halfway through building
 
 ## The question
 

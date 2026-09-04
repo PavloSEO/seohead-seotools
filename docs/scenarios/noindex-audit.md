@@ -1,4 +1,4 @@
-# Scenario 16 — The noindex audit: proving a migration did not take the site offline
+# Scenario 14 — The noindex audit: proving a migration did not take the site offline
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 20 — Image alt text: missing, empty, and the images no crawler sees
+# Scenario 25 — Image alt text: missing, empty, and the images no crawler sees
 
 ## The question
 

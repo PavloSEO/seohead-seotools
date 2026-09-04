@@ -1,4 +1,4 @@
-# Scenario 20 — Crawl depth and dead ends: how far in the site buries its own pages
+# Scenario 27 — Crawl depth and dead ends: how far in the site buries its own pages
 
 ## The question
 

@@ -1,4 +1,4 @@
-# Scenario 20 — The bundle audit: legacy transpilation, duplicates and unminified files
+# Scenario 45 — The bundle audit: legacy transpilation, duplicates and unminified files
 
 ## The question
 

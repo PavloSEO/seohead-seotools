@@ -1,4 +1,4 @@
-# Scenario 14 — The canonical nobody links to: a preferred URL with no way in
+# Scenario 12 — The canonical nobody links to: a preferred URL with no way in
 
 ## The question
 

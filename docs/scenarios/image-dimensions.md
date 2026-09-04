@@ -1,4 +1,4 @@
-# Scenario 21 — Image geometry and weight: what the browser has to guess
+# Scenario 26 — Image geometry and weight: what the browser has to guess
 
 ## The question
 

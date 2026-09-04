@@ -1,4 +1,4 @@
-# Scenario 11 — Titles that are missing, doubled or shared: one list, ordered by blast radius
+# Scenario 16 — Titles that are missing, doubled or shared: one list, ordered by blast radius
 
 ## The question
 

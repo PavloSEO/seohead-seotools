@@ -1,4 +1,4 @@
-# Scenario 12 — Directives under rendering: a noindex only one copy of the page carries
+# Scenario 37 — Directives under rendering: a noindex only one copy of the page carries
 
 ## The question
 
