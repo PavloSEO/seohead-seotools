@@ -81,6 +81,29 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
     return sitemap.crawl(url, concurrency)
 
 
+def _seed_urls_from_sitemap(url: str, sitemap: str | None, auto_discover: bool) -> dict[str, Any]:
+    """Resolve and expand the sitemap that should seed a crawl, if any.
+
+    Returns ``{"sitemap_url": <the sitemap fetched, or None>, "declared": [...]}``.
+    An explicit ``sitemap`` wins; otherwise, with ``auto_discover``, the
+    ``Sitemap:`` directive in robots.txt is used. Neither given means no
+    seeding — the crawl behaves exactly as it did before this feature existed.
+    """
+    from seohead.tools import sitemap as sitemap_tool
+
+    target = sitemap
+    if not target and auto_discover:
+        from seohead.tools.robots import check_robots
+
+        discovered = check_robots(url).get("sitemaps") or []
+        target = discovered[0] if discovered else None
+    if not target:
+        return {"sitemap_url": None, "declared": []}
+    expanded = sitemap_tool.crawl(target)
+    declared = [entry["loc"] for entry in expanded.get("urls") or []]
+    return {"sitemap_url": target, "declared": declared}
+
+
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
@@ -90,6 +113,7 @@ def crawl_site(
     min_delay: float | None = None,
     robots: str | None = None,
     out_dir: str | None = None,
+    sitemap: str | None = None,
 ) -> dict[str, Any]:
     """Crawl a site from a start URL, or fetch an explicit list, then audit it.
 
@@ -100,6 +124,11 @@ def crawl_site(
 
     ``min_delay`` defaults to half a second because the target is somebody's
     production site: polite by accident beats fast by accident.
+
+    ``sitemap`` (or ``sitemaps.auto_discover`` in ``config``) seeds the crawl
+    from a sitemap's declared URLs, in addition to following links from
+    ``url``, and reconciles the two sources — see
+    ``seohead.crawl.reconcile.reconcile_sitemap``.
     """
     import json
     import os
@@ -108,6 +137,7 @@ def crawl_site(
     from seohead.crawl import settings as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
+    from seohead.crawl.reconcile import reconcile_sitemap
     from seohead.crawl.spider import crawl_site as _spider
     from seohead.sf.config import load_config
     from seohead.sf.core.aggregate import aggregate
@@ -139,6 +169,10 @@ def crawl_site(
     )
     max_seconds = settings["limits"]["max_crawl_seconds"]
 
+    sitemap_seed = {"sitemap_url": None, "declared": []}
+    if url and (sitemap or settings["sitemaps"]["auto_discover"]):
+        sitemap_seed = _seed_urls_from_sitemap(url, sitemap, settings["sitemaps"]["auto_discover"])
+
     if url:
         result = _spider(
             url,
@@ -149,6 +183,7 @@ def crawl_site(
             timeout=settings["http"]["timeout_seconds"],
             robots_policy=settings["robots"]["policy"],
             scope=settings["scope"],
+            seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
@@ -166,6 +201,8 @@ def crawl_site(
             "crawl_delay_applied": result.crawl_delay_applied,
             "effective_delay_seconds": round(result.effective_delay, 3),
             "resume_note": result.resume_note,
+            "sitemap_url": sitemap_seed["sitemap_url"],
+            "sitemap_seeded": len(result.seed_urls),
         }
     else:
         result = collect_urls(
@@ -188,6 +225,22 @@ def crawl_site(
     ctx = AuditContext(exports, load_config(None))
     ctx.skip_unsupported(set(exports.frames))
     run_rules(ctx)
+
+    sitemap_summary: dict[str, Any] = {}
+    if sitemap_seed["declared"]:
+        # "Reached by following links" — not merely fetched, since a seeded
+        # URL is fetched regardless of whether anything links to it. Three
+        # disjoint facts, reported under the check ids the Screaming Frog
+        # pipeline already uses for the same distinction (SITEMAP_ORPHAN,
+        # URL_NOT_IN_SITEMAP), so audit.json has one schema either way.
+        observed = [edge.destination for edge in result.links]
+        sitemap_summary = reconcile_sitemap(sitemap_seed["declared"], observed)
+        sitemap_summary["sitemap_url"] = sitemap_seed["sitemap_url"]
+        for orphan_url in sitemap_summary["in_sitemap_not_linked"]:
+            ctx.add("SITEMAP_ORPHAN", target_url=orphan_url, details={"in_sitemap": True})
+        for extra_url in sitemap_summary["linked_not_in_sitemap"]:
+            ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
+
     audit = aggregate(
         ctx,
         {
@@ -207,7 +260,7 @@ def crawl_site(
             "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
         },
         {},
-        {},
+        sitemap_summary,
     ).to_json()
 
     if out_dir:

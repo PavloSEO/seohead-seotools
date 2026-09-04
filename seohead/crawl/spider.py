@@ -58,6 +58,11 @@ class SpiderResult(CrawlResult):
     effective_delay: float = 0.0
     # Why the checkpoint was or wasn't used, for the run output — see state.py.
     resume_note: str = ""
+    # Seed URLs accepted into the frontier beyond the start URL itself (e.g. a
+    # sitemap's declared URL set). Recorded so a sitemap-seeded run is
+    # auditable: which URLs were fetched only because they were seeded, versus
+    # discovered by following a link.
+    seed_urls: list[str] = field(default_factory=list)
 
 
 def _canonical_key(url: str) -> str:
@@ -179,6 +184,7 @@ def crawl_site(
     timeout: float = 15.0,
     robots_policy: str = "respect",
     scope: dict[str, Any] | Scope | None = None,
+    seed_urls: list[str] | None = None,
     out_path: str | None = None,
     state_path: str | None = None,
     config_fingerprint: str = "",
@@ -195,6 +201,15 @@ def crawl_site(
     ``config_fingerprint`` is compared too, so a scope or limit change since the
     checkpoint starts fresh rather than mixing frontiers built under different
     rules.
+    ``seed_urls``, when given, are additional entry points added to the
+    frontier at depth 0 alongside ``start_url`` — a sitemap-seeded crawl mode:
+    every declared URL is fetched and its own links are followed, rather than
+    treating the sitemap as the final answer. Each seed still goes through
+    ``scope`` like any discovered link, and a rejected seed is counted in
+    ``excluded`` under the rule that rejected it. Being seeded is not being
+    "found by following links": a seed with no inbound edge in ``links`` is
+    still reachable only because it was declared, which is what makes orphan
+    detection against ``result.links`` honest even in this mode.
     """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
@@ -269,6 +284,21 @@ def crawl_site(
         else:
             queue = deque([(start, 0)])
             seen = {_canonical_key(start)}
+
+        for seed in seed_urls or []:
+            seed = (seed or "").strip()
+            if not seed:
+                continue
+            reason = rules.rejection(seed, host)
+            if reason:
+                exclude(reason)
+                continue
+            key = _canonical_key(seed)
+            if key in seen:
+                continue
+            seen.add(key)
+            queue.append((seed, 0))
+            result.seed_urls.append(seed)
 
         while queue:
             if len(result.pages) >= limit:
@@ -397,6 +427,10 @@ def crawl_site(
     result.limitations = [
         f"scope {rules.internal}: links outside it are recorded, never fetched",
         "static HTML only: no JavaScript rendering",
-        "no sitemap expansion",
     ]
+    if not seed_urls:
+        # The spider itself never fetches a sitemap; a caller expands one and
+        # passes the URL set in via seed_urls. When it did, this crawl was
+        # sitemap-seeded, so the blanket limitation would be false.
+        result.limitations.append("no sitemap expansion")
     return result

@@ -190,7 +190,15 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "crawl-site":
         if args.url:
             kw["url"] = args.url
-        for flag in ("config", "max_urls", "max_depth", "min_delay", "out_dir", "robots"):
+        for flag in (
+            "config",
+            "max_urls",
+            "max_depth",
+            "min_delay",
+            "out_dir",
+            "robots",
+            "sitemap",
+        ):
             value = getattr(args, flag, None)
             if value is not None:
                 kw[flag] = value
@@ -424,6 +432,12 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "--robots",
             choices=["respect", "report_only", "ignore"],
             help="respect robots.txt; report what it blocks but crawl anyway; or do not fetch it",
+        )
+        sub.add_argument(
+            "--sitemap",
+            help="seed the crawl from this sitemap's declared URLs and reconcile it against "
+            "the link graph found by crawling (or set sitemaps.auto_discover in --config to use "
+            "the sitemap robots.txt declares)",
         )
         sub.add_argument(
             "--config-help",
