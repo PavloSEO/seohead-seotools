@@ -105,7 +105,11 @@ def _offer(facts: dict[str, Any]) -> dict[str, Any] | None:
     price = facts.get("price")
     if not price or not price.get("value"):
         return None
-    offer: dict[str, Any] = {"@type": "Offer", "price": price["value"]}
+    # A whole amount belongs in the markup as 19900, not 19900.0.
+    value = price["value"]
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    offer: dict[str, Any] = {"@type": "Offer", "price": value}
     if price.get("currency"):
         offer["priceCurrency"] = price["currency"]
     return offer

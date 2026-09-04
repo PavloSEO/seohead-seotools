@@ -66,7 +66,7 @@ def test_existing_types_extracted_from_jsonld():
 def test_price_from_microdata_is_fact_not_heuristic():
     f = page_facts.extract(HTML, "https://shop.example.com/products/acme-x")
     assert f["price"] is not None
-    assert f["price"]["value"] == "5990"
+    assert f["price"]["value"] == 5990.0
     assert f["price"]["currency"] == "RUB"
     assert f["price"]["heuristic"] is False
     assert f["price"]["source"] == "microdata"

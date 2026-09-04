@@ -57,7 +57,7 @@ def test_product_graph_has_offers_rating_and_brand():
     assert r["inferred_type"] == "Product"
     ent = _entity(r["suggested_graph"])
     assert ent["@type"] == "Product"
-    assert ent["offers"]["price"] == "100"
+    assert ent["offers"]["price"] == 100
     assert ent["aggregateRating"]["ratingValue"] == "4.5"
     assert ent["brand"]["name"] == "Shop"
 
@@ -150,7 +150,7 @@ def test_service_graph_has_provider_and_service_type():
     assert ent["@type"] == "Service"
     assert ent["provider"]["@id"] == "#organization"
     assert ent["serviceType"] == "Услуги по SEO"
-    assert ent["offers"]["price"] == "500"
+    assert ent["offers"]["price"] == 500
 
 
 def test_suggested_graph_validates_with_no_dangling_ids():
