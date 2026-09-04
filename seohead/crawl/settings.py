@@ -39,6 +39,13 @@ DEFAULTS: dict[str, Any] = {
         # Never fetched regardless of what links to them.
         "exclude_hosts": [],
     },
+    "sitemaps": {
+        # Seed the crawl from the sitemap declared in robots.txt (the
+        # ``Sitemap:`` directive) when no explicit sitemap URL is given.
+        # Every declared URL is fetched and its own links are followed,
+        # rather than the sitemap being treated as the final answer.
+        "auto_discover": False,
+    },
     "discovery": {
         # Each link type is a pair: store it in the report, and/or request it.
         "hyperlinks": {"store": True, "crawl": True},
@@ -97,6 +104,8 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "scope.include_patterns",
         "scope.exclude_patterns",
         "scope.exclude_hosts",
+        # Seeding from the sitemap changes which URLs are fetched at all.
+        "sitemaps.auto_discover",
         "discovery.hyperlinks.store",
         "discovery.hyperlinks.crawl",
         "discovery.canonicals.store",
@@ -147,6 +156,10 @@ DESCRIPTIONS: dict[str, str] = {
     "scope.include_patterns": "Regexes; a discovered link must match at least one to be followed.",
     "scope.exclude_patterns": "Regexes; a discovered link matching any of these is not followed.",
     "scope.exclude_hosts": "Hosts never fetched regardless of what links to them.",
+    "sitemaps.auto_discover": (
+        "Seed the crawl from the sitemap declared in robots.txt when no explicit "
+        "sitemap URL is given."
+    ),
     "discovery.hyperlinks.store": "Keep discovered hyperlinks in the report.",
     "discovery.hyperlinks.crawl": "Request discovered hyperlinks (fetch them).",
     "discovery.canonicals.store": "Keep discovered canonical links in the report.",

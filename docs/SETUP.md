@@ -177,12 +177,21 @@ Resolution order is defaults, then the file, then environment variables, then ex
 arguments — the most local statement of intent wins.
 
 `crawl-site --help` only shows the handful of settings used directly on the command line
-(`--url`, `--max-urls`, `--out-dir`, `--config`, `--robots`); everything else — the settings above
-and every one the crawler build-out has added since — lives in the config file. Run
+(`--url`, `--max-urls`, `--out-dir`, `--config`, `--robots`, `--sitemap`); everything else — the
+settings above and every one the crawler build-out has added since — lives in the config file. Run
 `seohead crawl-site --config-help` for the full list: every key's path, type, default, and
 description, generated from this module rather than hand-maintained. (`--max-depth` and
 `--min-delay` still work as direct flags for scripts written before `--config` existed; they are
 just no longer shown in `--help`.)
+
+`--sitemap <url>` seeds the crawl from that sitemap's declared URLs — each one is fetched and its
+own links are followed, rather than the sitemap being treated as the final answer — and reconciles
+the declared set against the URLs the crawl actually reaches by following a link. The result lands
+in `audit.json` as `summary.sitemap`, with three disjoint sets: URLs declared and linked (healthy),
+URLs declared but never linked from any crawled page (orphaned — reported via `SITEMAP_ORPHAN`),
+and URLs linked but never declared (reported via `URL_NOT_IN_SITEMAP`). With no explicit
+`--sitemap`, setting `sitemaps.auto_discover` in `--config` seeds from whatever sitemap robots.txt
+declares.
 
 Three properties are deliberate:
 

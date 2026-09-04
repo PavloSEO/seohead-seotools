@@ -13,6 +13,10 @@ All notable public changes are documented here.
   render-blocking resources, oversized files, duplicate libraries (by content
   hash), missing minification, missing `font-display`, legacy polyfilled JS,
   and missing compression/long-lived caching.
+- Add `crawl-site --sitemap <url>` (and `sitemaps.auto_discover` in `--config`): seed the native
+  crawler from a sitemap's declared URLs, follow links from each, and reconcile the declared and
+  observed sets into `audit.json`'s `summary.sitemap`, under the same `SITEMAP_ORPHAN` /
+  `URL_NOT_IN_SITEMAP` check ids the Screaming Frog pipeline already reports.
 - Add `crawl-site --config-help`, generated from `seohead/crawl/config.py`, and hide `--max-depth`
   and `--min-delay` from `--help` (still accepted) so the flag surface stops growing with every
   crawler setting.

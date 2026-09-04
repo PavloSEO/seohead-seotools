@@ -326,6 +326,16 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
             "non_indexable_in_sitemap": len(_urls_from_export(ctx, "sitemap_non_indexable")),
         }
     )
+    if sitemap_set:
+        # Same three key names the native crawler's own reconciliation uses
+        # (seohead.crawl.reconcile.reconcile_sitemap), so a consumer of
+        # audit.json's summary.sitemap does not need two schemas depending on
+        # which crawl mode produced the report. Full lists, not the capped
+        # 20-item examples above — this is the first-class output, not a
+        # threshold-gated issue detail.
+        summary["in_sitemap_and_linked"] = sorted(sitemap_set & {p.url for p in ctx.pages})
+        summary["in_sitemap_not_linked"] = in_sitemap_not_crawl
+        summary["linked_not_in_sitemap"] = in_crawl_not_sitemap
     return summary
 
 
