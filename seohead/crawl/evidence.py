@@ -135,6 +135,31 @@ def _row(record: Any) -> dict[str, Any]:
     }
 
 
+def _inlinks_frame(links: list[Any]) -> Any:
+    """Project the spider's own hyperlink graph onto the *All Inlinks* shape.
+
+    The spider records only ``<a href>`` hyperlinks — never images, scripts, or
+    stylesheets (see ``crawl/spider.py:handle_links``) — so ``Type`` is left
+    unset rather than stamped "Hyperlink" for every row. ``seohead.sf.core.
+    inlinks`` reads a blank Type as "assume hyperlink" for the checks that only
+    need the hyperlink graph (link score, discovery path, inlink composition,
+    anchor text), and ``check_insecure_subresources`` reads that same blank as
+    "no resource inventory available" and skips honestly instead of reporting
+    a false clean.
+    """
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "Source": [edge.source for edge in links],
+            "Destination": [edge.destination for edge in links],
+            "Anchor Text": [edge.anchor for edge in links],
+            "Follow": [not edge.nofollow for edge in links],
+            "Link Position": [edge.position or None for edge in links],
+        }
+    )
+
+
 def build_evidence(result: CrawlResult) -> dict[str, Any]:
     """Project a crawl into analyzer-shaped frames with its gaps declared.
 
@@ -146,9 +171,22 @@ def build_evidence(result: CrawlResult) -> dict[str, Any]:
     import pandas as pd
 
     frame = pd.DataFrame([_row(record) for record in result.pages])
+    frames: dict[str, Any] = {"internal_all": frame}
+    found = ["internal_all"]
+    missing = list(UNAVAILABLE_FRAMES)
+
+    # Only a followed-links crawl (``SpiderResult``) ever populates a link
+    # graph; a fetched URL list (``CrawlResult``) never discovers links, so it
+    # keeps declaring "all_inlinks" absent exactly as before.
+    links = getattr(result, "links", None)
+    if links:
+        frames["all_inlinks"] = _inlinks_frame(links)
+        found.append("all_inlinks")
+        missing.remove("all_inlinks")
+
     return {
-        "frames": {"internal_all": frame},
-        "found": ["internal_all"],
-        "missing": list(UNAVAILABLE_FRAMES),
+        "frames": frames,
+        "found": found,
+        "missing": missing,
         "unmeasured_columns": list(UNMEASURED_COLUMNS),
     }

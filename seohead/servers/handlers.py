@@ -278,6 +278,7 @@ def crawl_site(
     from seohead.sf.config import load_config
     from seohead.sf.core.aggregate import aggregate
     from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.inlinks import run_inlinks
     from seohead.sf.core.loader import LoadedExports
     from seohead.sf.core.rules import run_rules
 
@@ -441,6 +442,14 @@ def crawl_site(
     ctx = AuditContext(exports, load_config(None))
     ctx.skip_unsupported(set(exports.frames))
     run_rules(ctx)
+    # Same pipeline the Screaming Frog export path runs (seohead/sf/core/audit.py)
+    # -- omitting it here left every inlinks-derived check (anchor text, hreflang,
+    # link score, discovery path, inlink composition, insecure subresources)
+    # neither fired nor skipped: silently uninvoked rather than honestly absent
+    # (issue #128). ``all_inlinks`` is populated above from the crawl's own
+    # hyperlink graph when one exists (see crawl/evidence.py), so the checks it
+    # feeds now answer for real instead of only reaching their skip branch.
+    run_inlinks(ctx)
 
     sitemap_summary: dict[str, Any] = {}
     if sitemap_seed["declared"]:
