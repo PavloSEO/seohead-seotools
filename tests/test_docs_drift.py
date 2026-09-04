@@ -20,9 +20,7 @@ TECHNICAL_SKILLS = sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md"))
 # controller does). They are not skills in their own right — nothing loads them by name — but
 # they are public Markdown, so the English-only gate applies to them like anything else.
 SKILL_SUPPORTING_MARKDOWN = sorted(
-    p
-    for p in (ROOT / ".claude" / "skills").glob("*/**/*.md")
-    if p.name != "SKILL.md"
+    p for p in (ROOT / ".claude" / "skills").glob("*/**/*.md") if p.name != "SKILL.md"
 )
 PACKAGED_SKILLS = sorted((ROOT / "seohead" / "skills").glob("*/SKILL.md"))
 # Every level: docs/scenarios/ is part of the public contract too, so the English-only
