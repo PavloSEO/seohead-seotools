@@ -66,7 +66,7 @@ def reconcile_sitemap(declared: Iterable[str], observed: Iterable[str]) -> dict[
         "in_sitemap_not_linked": orphaned,
         "linked_not_in_sitemap": missing_from_sitemap,
         # Count aliases matching the Screaming Frog pipeline's own summary
-        # (seohead.sf.core.sitemap.run_sitemap), so a consumer reading counts
+        # (seohead.sf.core.sitemap_coverage.run_sitemap), so a consumer reading counts
         # out of audit.json's summary.sitemap need not branch on crawl mode.
         "in_sitemap_not_in_crawl": len(orphaned),
         "in_crawl_not_in_sitemap": len(missing_from_sitemap),

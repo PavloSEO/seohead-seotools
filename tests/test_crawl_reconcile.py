@@ -74,7 +74,7 @@ def test_empty_inputs_produce_empty_disjoint_sets():
 
 
 def test_count_aliases_match_the_screaming_frog_pipelines_summary_keys():
-    """The same counts under the names seohead.sf.core.sitemap.run_sitemap
+    """The same counts under the names seohead.sf.core.sitemap_coverage.run_sitemap
     already uses, so a consumer need not branch on which crawl mode produced
     the report."""
     declared = ["https://example.com/a", "https://example.com/b"]
