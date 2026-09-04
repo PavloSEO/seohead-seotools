@@ -4,7 +4,10 @@ Every user-controlled HTTP request should use :func:`http_client`. Request hooks
 validate the initial URL and every redirect before a socket is opened. Private,
 loopback, link-local, multicast, reserved, and otherwise non-global addresses are
 blocked by default. Authorized staging and intranet work requires an explicit
-``SEOHEAD_ALLOW_PRIVATE_NETWORKS=1`` opt-in.
+``SEOHEAD_ALLOW_PRIVATE_NETWORKS=1`` opt-in — that opens every private range, for
+a run that genuinely needs it. ``SEOHEAD_ALLOW_PRIVATE_HOSTS`` is the scoped
+alternative: a comma-separated list of exact hostnames (e.g. one staging box)
+allowed to resolve privately without opening the rest of RFC 1918 space.
 
 DNS and registration checks use HTTP APIs because ``dig`` and ``whois`` are not
 available in every container. A system ``whois`` binary remains an optional ccTLD
@@ -25,6 +28,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
 PRIVATE_NETWORK_ENV = "SEOHEAD_ALLOW_PRIVATE_NETWORKS"
+PRIVATE_HOST_ALLOWLIST_ENV = "SEOHEAD_ALLOW_PRIVATE_HOSTS"
 
 DOH_ENDPOINTS = (
     "https://cloudflare-dns.com/dns-query",
@@ -50,6 +54,24 @@ def private_networks_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def allowed_private_hosts() -> frozenset[str]:
+    """Hostnames explicitly permitted to resolve to a non-public address.
+
+    A scoped alternative to :data:`PRIVATE_NETWORK_ENV`: it authorizes one
+    named staging host without opening every private range. Matching is exact
+    on the lowercased, dot-stripped hostname — an entry does not extend to a
+    subdomain, to a different host a redirect points at, or to any other
+    address the same staging host might expose under a different name.
+    """
+    raw = os.getenv(PRIVATE_HOST_ALLOWLIST_ENV, "")
+    return frozenset(host.strip().rstrip(".").lower() for host in raw.split(",") if host.strip())
+
+
+def _private_target_allowed(host: str) -> bool:
+    """Whether ``host`` may resolve to a private or otherwise non-public address."""
+    return private_networks_enabled() or (host or "").rstrip(".").lower() in allowed_private_hosts()
 
 
 # Ranges that carry a non-public address inside a globally-scoped one. Python's
@@ -131,12 +153,13 @@ def resolve_socket_addresses(host: str, port: int) -> list[tuple[int, int, int, 
         raise ValueError(f"hostname could not be resolved safely: {host}") from exc
     if not records:
         raise ValueError(f"hostname could not be resolved safely: {host}")
-    if not private_networks_enabled() and any(
+    if not _private_target_allowed(host) and any(
         not _is_public_address(record[4][0]) for record in records
     ):
         raise ValueError(
             f"private or non-public network target blocked; set {PRIVATE_NETWORK_ENV}=1 "
-            "only for an authorized target"
+            f"to authorize every private target, or add {host!r} to "
+            f"{PRIVATE_HOST_ALLOWLIST_ENV} to authorize only this one"
         )
 
     unique: list[tuple[int, int, int, Any]] = []
@@ -173,10 +196,11 @@ def validate_url(url: str) -> str:
         return value
 
     host = parsed.hostname.rstrip(".").lower()
-    if host == "localhost" or host.endswith(".localhost"):
+    if (host == "localhost" or host.endswith(".localhost")) and host not in allowed_private_hosts():
         raise ValueError(
-            f"private-network target blocked; set {PRIVATE_NETWORK_ENV}=1 "
-            "only for an authorized target"
+            f"private-network target blocked; set {PRIVATE_NETWORK_ENV}=1 to authorize "
+            f"every private target, or add {host!r} to {PRIVATE_HOST_ALLOWLIST_ENV} to "
+            "authorize only this one"
         )
 
     resolve_socket_addresses(
