@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-52 callable tools · 104 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
+52 callable tools · 113 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -21,7 +21,7 @@
 </div>
 
 **SEOHEAD is not a crawler replacement.** Screaming Frog produces the CSV/XLSX exports consumed
-by SEOHEAD's 104-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
+by SEOHEAD's 113-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
 unavailable measurements visible, and gives a specialist or tool-calling agent one tested CLI/MCP
 surface for assembling an audit, prioritized backlog, and reports.
 
@@ -40,7 +40,7 @@ commercial-proposal draft while a specialist keeps control of interpretation.
 | Stage | Primary owner | Role |
 |---|---|---|
 | Crawl collection | Screaming Frog | Discover site-scale URLs and produce compatible CSV/XLSX exports |
-| Evidence processing | SEOHEAD Tools | Analyze those exports against a 104-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
+| Evidence processing | SEOHEAD Tools | Analyze those exports against a 113-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
 | Interpretation and approval | SEO specialist, optionally supported by an AI agent | Connect findings to business context, implementation risk, and final priorities |
 
 See [how SEOHEAD fits with crawlers and data providers](docs/COMPARISON.md) for the exact scope
@@ -59,7 +59,7 @@ No client data is included.
 
 | Starting point | Start with | What it does |
 |---|---|---|
-| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 104-check registry and builds an audit plus backlog |
+| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 113-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
 | A tool-calling AI agent | `seohead mcp` | Exposes 47 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
@@ -95,7 +95,7 @@ same handler used by its `seo_*` MCP counterpart; a test gate fails if the inter
 Five additional `sf_*` MCP tools turn a Screaming Frog crawl into machine-readable evidence,
 compact summaries, filtered findings, an export inventory, and a prioritized task backlog.
 
-The analyzer has a registry of **104 checks** across metadata, indexability, canonicals, redirects,
+The analyzer has a registry of **113 checks** across metadata, indexability, canonicals, redirects,
 internal links, sitemaps, hreflang, structured data, page depth, HTML weight, performance signals,
 and other crawl-derived evidence. It applies the checks supported by the available exports;
 missing input is reported as skipped with a reason, never silently converted into “zero issues.”
@@ -109,7 +109,7 @@ Two modes are intentionally supported:
 
 ### 28 agent workflow skills
 
-The repository ships 21 technical-audit playbooks in `.claude/skills/` and seven broader SEO
+The repository ships 22 technical-audit playbooks in `.claude/skills/` and seven broader SEO
 content/research playbooks in `seohead/skills/`. They teach an agent when to call tools, how to
 separate evidence from inference, and how to assemble outputs without pretending that an
 unmeasured signal is clean.

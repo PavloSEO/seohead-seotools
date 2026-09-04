@@ -15,6 +15,7 @@ from collections import Counter
 from typing import Any
 
 from .context import AuditContext
+from .normalize import find_column
 
 SEPARATORS = (" | ", " — ", " - ", " · ", " :: ", " // ")
 
@@ -228,6 +229,104 @@ def _match_html_file(index: dict[str, str], url: str) -> str | None:
 
 
 # --------------------------------------------------------------------------
+# Near-duplicate content — only when SF stored the HTML and did not already
+# compute this itself (issue #15, item 3)
+# --------------------------------------------------------------------------
+def check_content_duplication(ctx: AuditContext) -> None:
+    """NEAR_DUPLICATE / DUPLICATE_BY_HASH computed from stored page text.
+
+    Near-duplicate clustering is an all-pairs comparison — any pair may
+    include a page not yet fetched — so it can only run once the crawl is
+    complete, over a stored corpus (issue #15, item 3). Screaming Frog's own
+    Near Duplicates/Hash columns already answer this when the crawl exported
+    them (``check_content``/``check_duplicates`` in rules.py); this only fills
+    whichever half is missing, reusing the same ``input.html_store_dir`` HTML
+    store ``check_dom`` reads, scoped to the configured content area so a
+    shared nav/footer does not make every page look alike, and delegating the
+    actual clustering to :func:`seohead.tools.duplicate.find_duplicates`
+    (SimHash + LSH), which excludes exact-duplicate pairs from the near-dup
+    clusters on its own.
+    """
+    has_native_near = ctx.internal_df is not None and find_column(
+        ctx.internal_df, ["No. Near Duplicates"]
+    )
+    has_native_hash = ctx.internal_df is not None and find_column(
+        ctx.internal_df, ["Hash", "Page Hash"]
+    )
+    if has_native_near:
+        ctx.skip("NEAR_DUPLICATE", "SF native Near Duplicates column already covers this")
+    if has_native_hash:
+        ctx.skip("DUPLICATE_BY_HASH", "SF native Hash column already covers this")
+    if has_native_near and has_native_hash:
+        return  # nothing left for the stored-text pass to add
+
+    html_dir = ctx.config.get("input", {}).get("html_store_dir")
+    if not html_dir or not os.path.isdir(html_dir):
+        if not has_native_near:
+            ctx.skip("NEAR_DUPLICATE", "no stored HTML (input.html_store_dir not set)")
+        if not has_native_hash:
+            ctx.skip("DUPLICATE_BY_HASH", "no stored HTML (input.html_store_dir not set)")
+        return
+
+    from bs4 import BeautifulSoup
+
+    from seohead.tools.content_area import extract_area_text, resolve_content_area
+    from seohead.tools.duplicate import find_duplicates
+
+    index = _build_html_index(html_dir)
+    content_cfg = ctx.config.get("content_area", {})
+    items: list[dict[str, Any]] = []
+    for page in ctx.indexable_html_pages():
+        path = _match_html_file(index, page.url)
+        if not path:
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                html = fh.read()
+        except OSError:
+            continue
+        root, _strategy = resolve_content_area(BeautifulSoup(html, "html.parser"), content_cfg)
+        items.append({"id": page.url, "text": extract_area_text(root)})
+
+    if not items:
+        reason = "stored HTML present but no files mapped to crawled URLs"
+        if not has_native_near:
+            ctx.skip("NEAR_DUPLICATE", reason)
+        if not has_native_hash:
+            ctx.skip("DUPLICATE_BY_HASH", reason)
+        return
+
+    threshold = ctx.thresholds.get("near_duplicate_similarity", 0.92)
+    result = find_duplicates(items, threshold=threshold)
+
+    if not has_native_near:
+        for cluster in result["clusters"]:
+            members = sorted(cluster["members"])
+            group = ctx.add_group("NEAR_DUPLICATE", None, members)
+            for url in members:
+                ctx.add(
+                    "NEAR_DUPLICATE",
+                    target_url=url,
+                    group_id=group.group_id,
+                    details={
+                        "cluster_min_similarity": cluster["min_similarity"],
+                        "cluster_size": len(members),
+                    },
+                )
+    if not has_native_hash:
+        for exact in result["exact_duplicates"]:
+            members = sorted(exact["members"])
+            group = ctx.add_group("DUPLICATE_BY_HASH", None, members)
+            for url in members:
+                ctx.add(
+                    "DUPLICATE_BY_HASH",
+                    target_url=url,
+                    group_id=group.group_id,
+                    details={"duplicate_count": len(members)},
+                )
+
+
+# --------------------------------------------------------------------------
 # Templated titles: the same prefix or suffix across most pages
 # --------------------------------------------------------------------------
 def check_templated_titles(ctx: AuditContext) -> None:
@@ -262,5 +361,6 @@ def check_templated_titles(ctx: AuditContext) -> None:
 def run_heuristics(ctx: AuditContext) -> dict[str, Any]:
     stats = check_html_weight(ctx)
     check_dom(ctx)
+    check_content_duplication(ctx)
     check_templated_titles(ctx)
     return stats
