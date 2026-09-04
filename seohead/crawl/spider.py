@@ -36,7 +36,6 @@ from seohead.crawl.collect import (
     MAX_RESPONSE_BYTES,
     CrawlResult,
     PageRecord,
-    _is_timeout,
     _write,
     fetch_one,
 )
@@ -165,15 +164,19 @@ def _fold_failure_streaks(
     threads as each fetch actually completes, which is completion order, not
     queue order; reading them straight from ``after_fetch`` would make the
     circuit breaker's trip point depend on real thread scheduling instead of
-    on the deterministic order the rest of the fold-back already uses. A
-    non-timeout exception (``status_code`` never set, error not timeout-shaped)
-    leaves both streaks untouched, matching ``fetch_one``: it calls none of
-    Throttle's mutators in that case either.
+    on the deterministic order the rest of the fold-back already uses. An
+    exception that carries no origin-health signal at all (``status_code``
+    never set, ``error_kind`` empty — a bug in caller code, say) leaves both
+    streaks untouched, matching ``fetch_one``: it calls none of Throttle's
+    mutators in that case either. ``error_kind`` — not a fresh string check on
+    ``record.error`` — is what fetch_one itself used to decide whether to call
+    ``record_timeout()``, so reading it back here is reading the same decision,
+    not re-deriving a second, possibly divergent one (#132).
     """
     if record.status_code is None:
         return (
             (consecutive_timeouts + 1, consecutive_server_errors)
-            if _is_timeout(record.error)
+            if record.error_kind  # "timeout" or "connection" — see PageRecord.error_kind
             else (consecutive_timeouts, consecutive_server_errors)
         )
     if record.status_code == 429 or 500 <= record.status_code < 600:
@@ -206,6 +209,44 @@ def _read_pages_jsonl(path: str) -> list[PageRecord]:
         if isinstance(raw, dict):
             pages.append(PageRecord(**{k: v for k, v in raw.items() if k in _PAGE_RECORD_FIELDS}))
     return pages
+
+
+_LINK_EDGE_FIELDS = {f.name for f in dataclasses.fields(LinkEdge)}
+
+
+def _write_link(handle, edge: LinkEdge) -> None:
+    if handle is None:
+        return
+    handle.write(json.dumps(dataclasses.asdict(edge), ensure_ascii=False) + "\n")
+    handle.flush()
+
+
+def _read_links_jsonl(path: str) -> list[LinkEdge]:
+    """Reconstruct the link graph recorded before a checkpoint.
+
+    Edges are appended to this sidecar as they are found (see ``_write_link``)
+    rather than embedded in ``crawl_state.json``, the same reasoning that keeps
+    pages out of it: ``links`` is the largest structure a long crawl builds up,
+    so a resume must not pay to reserialise the whole thing on every checkpoint
+    save — only ever appending what is new. Unknown keys are dropped rather
+    than rejected, so a file written by an older build still resumes.
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except FileNotFoundError:
+        return []
+    edges = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except ValueError:
+            continue  # a truncated final line must not discard the rest
+        if isinstance(raw, dict):
+            edges.append(LinkEdge(**{k: v for k, v in raw.items() if k in _LINK_EDGE_FIELDS}))
+    return edges
 
 
 @dataclass(frozen=True)
@@ -369,6 +410,7 @@ def crawl_site(
     scope: dict[str, Any] | Scope | None = None,
     seed_urls: list[str] | None = None,
     out_path: str | None = None,
+    links_path: str | None = None,
     state_path: str | None = None,
     config_fingerprint: str = "",
     fetcher: Callable[[str], Any] | None = None,
@@ -402,11 +444,16 @@ def crawl_site(
     ``cache``, when given, is consulted for every fetch before any delay or dispatch-gate wait
     is applied, so a cache hit costs neither a request nor a throttle slot — see ``fetch_one``.
     ``max_seconds`` is a wall-clock budget for the whole call; 0 means none.
-    ``state_path``, when given, checkpoints the frontier there so a later call
-    with the same path and start URL resumes instead of restarting —
-    ``config_fingerprint`` is compared too, so a scope or limit change since the
-    checkpoint starts fresh rather than mixing frontiers built under different
-    rules.
+    ``state_path``, when given, checkpoints the frontier, the exclusion tally and
+    the query-variant budget there so a later call with the same path and start
+    URL resumes instead of restarting — ``config_fingerprint`` is compared too,
+    so a scope or limit change since the checkpoint starts fresh rather than
+    mixing frontiers built under different rules. ``links_path``, when given
+    alongside ``state_path``, is a sidecar that every discovered edge is
+    appended to as it is found, and is read back into ``result.links`` on
+    resume the same way ``out_path`` rebuilds ``result.pages`` — kept as a
+    side file rather than folded into the checkpoint because the link graph is
+    the largest thing a long crawl accumulates.
     ``seed_urls``, when given, are additional entry points added to the
     frontier at depth 0 alongside ``start_url`` — a sitemap-seeded crawl mode:
     every declared URL is fetched and its own links are followed, rather than
@@ -548,10 +595,23 @@ def crawl_site(
             mode = "a" if loaded_state else "w"
             handle = stack.enter_context(open(out_path, mode, encoding="utf-8"))
 
+        links_handle = None
+        if links_path:
+            if loaded_state:
+                # Same move as pages above: prior edges live in the sidecar,
+                # not the checkpoint, so bring them back here rather than
+                # starting result.links at [].
+                result.links.extend(_read_links_jsonl(links_path))
+            mode = "a" if loaded_state else "w"
+            links_handle = stack.enter_context(open(links_path, mode, encoding="utf-8"))
+
         if loaded_state:
             queue: deque[tuple[str, int]] = deque(loaded_state.queue)
             seen: set[str] = set(loaded_state.seen)
             result.max_depth_reached = loaded_state.max_depth_reached
+            excluded.update(loaded_state.excluded)
+            for path_key, variants in loaded_state.query_budget.items():
+                query_budget[path_key] = set(variants)
         else:
             queue = deque([(start, 0)])
             seen = {_canonical_key(start)}
@@ -638,15 +698,15 @@ def crawl_site(
                 # on by default; turning a store off makes the report smaller, not different.
                 store_this = store_external_links if is_external else store_hyperlinks
                 if store_this:
-                    result.links.append(
-                        LinkEdge(
-                            source=url,
-                            destination=href,
-                            anchor=(link.get("text") or "")[:200],
-                            nofollow=nofollow,
-                            position=link.get("position") or "",
-                        )
+                    edge = LinkEdge(
+                        source=url,
+                        destination=href,
+                        anchor=(link.get("text") or "")[:200],
+                        nofollow=nofollow,
+                        position=link.get("position") or "",
                     )
+                    result.links.append(edge)
+                    _write_link(links_handle, edge)
                 if not crawl_hyperlinks:
                     exclude("hyperlink_discovery_off")
                     continue
@@ -872,6 +932,11 @@ def crawl_site(
                         seen=sorted(seen),
                         max_depth_reached=result.max_depth_reached,
                         config_fingerprint=config_fingerprint,
+                        excluded=dict(excluded),
+                        query_budget={
+                            path_key: sorted(variants)
+                            for path_key, variants in query_budget.items()
+                        },
                     ),
                 )
 

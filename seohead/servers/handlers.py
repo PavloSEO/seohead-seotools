@@ -212,6 +212,14 @@ def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
     * HTML by its own Content-Type — not an image, a PDF or a feed;
     * on the start URL's host — a sitemap may not declare someone else's domain;
     * indexable — a noindex page (meta robots or X-Robots-Tag) is deliberately excluded.
+
+    The 2xx+HTML re-check below looks like the gap ``AuditContext.html_pages`` had before
+    issue #133 (it isn't calling that method), but ``result.pages`` here are
+    ``seohead.crawl.collect.PageRecord`` from a native crawl, not ``sf.core.models.Page`` — a
+    different type with no ``AuditContext`` in scope at this point, and this population also
+    needs the host and indexable filters ``html_pages`` never applied. Fixing #133 narrowed
+    ``html_pages`` to match this function's already-correct logic; it did not make this
+    re-check redundant, since there is no shared call to route through.
     """
     from urllib.parse import urlsplit
 
@@ -305,6 +313,10 @@ def crawl_site(
         if out_dir and settings["output"]["write_pages_jsonl"]
         else None
     )
+    # Tied to out_dir alone, not the write_pages_jsonl toggle: this sidecar is what makes a
+    # resumed run's result.links whole again (see spider.crawl_site), a correctness need
+    # distinct from whether the operator also wants pages.jsonl as a human-readable export.
+    links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
     max_seconds = settings["limits"]["max_crawl_seconds"]
     # One cache per run, shared by every worker thread a concurrent crawl starts — see
     # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
@@ -332,6 +344,7 @@ def crawl_site(
             scope=settings["scope"],
             seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
+            links_path=links_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
             # crawl with no out_dir has nothing to resume into anyway.

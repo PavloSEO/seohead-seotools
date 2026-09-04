@@ -24,6 +24,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+import httpx
+
 from seohead.crawl.cache import ResponseCache
 from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import MAX_DELAY_S, Throttle
@@ -76,6 +78,14 @@ class PageRecord:
     jsonld_blocks_found: int = 0
     jsonld_blocks_parsed: int = 0
     error: str = ""
+    # "timeout", "connection" (a transport failure that produced no response at all —
+    # refused/reset connection, DNS failure, an aborted TLS handshake), or "" for anything
+    # else (a non-2xx response, a parser error, no error at all). Recorded as data rather than
+    # left for a caller to re-derive from ``error``'s free text, because that text is whatever
+    # the underlying exception happened to say — see ``_classify_fetch_error`` and #132. Both
+    # ``collect_urls``'s live Throttle and ``spider._fold_failure_streaks``'s replay of the same
+    # decision from a written-out record key off this field so the two never drift apart.
+    error_kind: str = ""
     # "" when no cache was configured for this run at all. Otherwise one of "hit" (served from
     # disk, no request sent), "revalidated" (a conditional request came back 304, body reused)
     # or "miss" (a real, full fetch — the first time, or because nothing on disk was usable).
@@ -267,10 +277,11 @@ def fetch_one(
     never survives a redirect to a different host: the next hop is a fresh
     call with headers resolved for the new host, not these carried forward.
 
-    ``retry_on_timeout`` retries only a timeout — a connection, TLS, or read
-    timeout, per ``_is_timeout`` — never any other failure: retrying a 4xx/5xx
-    or a DNS error would not change the answer, only the load on an origin that
-    already answered.
+    ``retry_on_timeout`` retries only a timeout — a connect, TLS, or read
+    timeout, per ``_classify_fetch_error`` — never a connection failure (refused,
+    reset, DNS) and never a 4xx/5xx: none of those would come back different on
+    a second try, only heavier on an origin that is already struggling or one
+    that already answered.
     ``parse_options`` is forwarded to ``parse_html`` untouched (e.g.
     ``{"classify_links": True, "link_position_rules": [...]}``); ``None``
     keeps every parser default, including link classification being off.
@@ -340,11 +351,20 @@ def fetch_one(
                 )
             break
         except Exception as exc:
-            if _is_timeout(str(exc)) and attempt < retry_on_timeout:
+            kind = _classify_fetch_error(exc)
+            if kind == "timeout" and attempt < retry_on_timeout:
                 attempt += 1
                 continue
             record.error = str(exc)
-            if throttle is not None and _is_timeout(str(exc)):
+            record.error_kind = kind
+            if throttle is not None and kind:
+                # A connection failure (refused, reset, DNS, an aborted TLS handshake) never
+                # produced a response either, and is exactly the failure throttle.py's own module
+                # docstring names as the reason this breaker exists — an origin that "refused TLS
+                # handshakes without ever returning an error status". It gets no lighter a
+                # response than a timeout: both mean "this origin cannot currently be reached",
+                # so both feed the same back-off and the same consecutive-failure counter (#132)
+                # rather than leaving Throttle unable to see an entire class of dead host.
                 throttle.record_timeout()
             return record, None
 
@@ -422,9 +442,30 @@ def _retry_after(value: str | None) -> float | None:
         return None  # HTTP-date form: respected as "back off", not as a duration
 
 
-def _is_timeout(message: str) -> bool:
-    lowered = message.lower()
-    return "timed out" in lowered or "timeout" in lowered
+def _classify_fetch_error(exc: BaseException) -> str:
+    """Sort a fetch-time exception into "timeout", "connection", or "" (anything else).
+
+    Structural, not a substring match on ``str(exc)`` — that was the bug (#132): a
+    ``ConnectionResetError``'s message never contains the word "timeout", so a
+    circuit breaker keyed on that word never saw it. httpx's real client path raises
+    a typed hierarchy: ``httpx.TimeoutException`` covers Connect/Read/Write/Pool
+    timeouts, while ``httpx.NetworkError`` and ``httpx.ProtocolError`` (both, like
+    ``TimeoutException``, subclasses of ``httpx.TransportError``) cover a refused or
+    reset connection, a DNS failure, and a TLS handshake aborted mid-negotiation —
+    exactly the incident throttle.py's module docstring names as the reason this
+    breaker exists. An injected ``fetcher`` (every test in this file, and every
+    caller that is not the real network client) never raises an httpx type at all,
+    only whatever the standard library would: ``TimeoutError`` (``socket.timeout``
+    is the same class since Python 3.10) for a timeout, or ``OSError`` — its
+    ``ConnectionResetError``/``ConnectionRefusedError``/``socket.gaierror``/
+    ``ssl.SSLError`` subclasses — for a connection failure. Both layers are checked
+    so classification does not depend on which transport raised.
+    """
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return "timeout"
+    if isinstance(exc, (httpx.TransportError, OSError)):
+        return "connection"
+    return ""
 
 
 def collect_urls(
@@ -531,7 +572,12 @@ def collect_urls(
 
             if throttle.should_stop(limit=stop_after_consecutive_timeouts):
                 result.partial = True
-                result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                # throttle.timeouts now counts both real timeouts and response-less connection
+                # failures (refused/reset/DNS/TLS) — see _classify_fetch_error — so the message
+                # must not claim more precisely than that which one actually happened.
+                result.stopped_reason = (
+                    "origin stopped responding (repeated timeouts or connection failures)"
+                )
                 result.finish_reason = "errors"
                 break
             if throttle.host_is_failing():
