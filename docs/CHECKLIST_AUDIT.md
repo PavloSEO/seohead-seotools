@@ -1,5 +1,11 @@
 # Checklist coverage audit (issue #30)
 
+> **Superseded by [COVERAGE_SF_ISSUES.md](COVERAGE_SF_ISSUES.md).** This document was written
+> without the catalogue itself — it re-verified somebody else's category counts and said so.
+> The catalogue is now mapped item by item, generated from
+> `seohead/sf/core/sf_issue_map.py` and held to the registry by a test. Read that instead;
+> this is kept for the reasoning it records about individual checks.
+
 **Purpose.** Issue #30 asked for a coverage audit of the SF-crawl audit
 registry (`seohead/sf/core/registry.py`) against an external ~320-item
 technical-SEO issue catalogue, organized into 24 categories (Response Codes,
