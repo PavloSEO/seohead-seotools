@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -144,7 +145,8 @@ def test_the_whole_run_contradicts_itself_nowhere(crawled):
 
 def test_an_off_host_link_is_recorded_and_never_fetched(site, crawled):
     result, _out, pages = crawled
-    assert not any(p["url"].startswith("https://other.example") for p in pages)
+    fetched_hosts = {urlsplit(p["url"]).hostname for p in pages}
+    assert "other.example" not in fetched_hosts
     assert result["discovery"]["excluded"].get("outside_host", 0) >= 1
 
 
@@ -223,7 +225,7 @@ def test_the_sitemap_comparison_stays_inside_the_pages_it_describes(crawled_with
     summary = _result["summary"]["sitemap"]
     for reported in summary["linked_not_in_sitemap"]:
         assert not reported.endswith(".webp"), reported
-        assert "other.example" not in reported, reported
+        assert urlsplit(reported).hostname != "other.example", reported
         assert "/private/" not in reported, reported
 
 
