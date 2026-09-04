@@ -36,7 +36,6 @@ from seohead.crawl.collect import (
     MAX_RESPONSE_BYTES,
     CrawlResult,
     PageRecord,
-    _is_timeout,
     _write,
     fetch_one,
 )
@@ -162,15 +161,19 @@ def _fold_failure_streaks(
     threads as each fetch actually completes, which is completion order, not
     queue order; reading them straight from ``after_fetch`` would make the
     circuit breaker's trip point depend on real thread scheduling instead of
-    on the deterministic order the rest of the fold-back already uses. A
-    non-timeout exception (``status_code`` never set, error not timeout-shaped)
-    leaves both streaks untouched, matching ``fetch_one``: it calls none of
-    Throttle's mutators in that case either.
+    on the deterministic order the rest of the fold-back already uses. An
+    exception that carries no origin-health signal at all (``status_code``
+    never set, ``error_kind`` empty — a bug in caller code, say) leaves both
+    streaks untouched, matching ``fetch_one``: it calls none of Throttle's
+    mutators in that case either. ``error_kind`` — not a fresh string check on
+    ``record.error`` — is what fetch_one itself used to decide whether to call
+    ``record_timeout()``, so reading it back here is reading the same decision,
+    not re-deriving a second, possibly divergent one (#132).
     """
     if record.status_code is None:
         return (
             (consecutive_timeouts + 1, consecutive_server_errors)
-            if _is_timeout(record.error)
+            if record.error_kind  # "timeout" or "connection" — see PageRecord.error_kind
             else (consecutive_timeouts, consecutive_server_errors)
         )
     if record.status_code == 429 or 500 <= record.status_code < 600:
