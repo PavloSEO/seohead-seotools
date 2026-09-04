@@ -184,9 +184,9 @@ def test_compression_fires_above_the_ignore_threshold_only(tmp_path):
 
 
 class _FakeResponse:
-    def __init__(self, text, headers):
+    def __init__(self, text, headers, status_code=200):
         self.text = text
-        self.status_code = 200
+        self.status_code = status_code
         self.headers = headers
 
 
@@ -245,3 +245,72 @@ def test_checks_fire_from_a_real_crawl_not_just_a_hand_typed_export():
     for check_id in ("MISSING_CHARSET", "MISSING_DOCTYPE", "VIEWPORT_MISSING", "NO_COMPRESSION"):
         assert "https://example.com/bad" in fired[check_id]
         assert "https://example.com/good" not in fired.get(check_id, set())
+
+
+# -- regression: a redirect/error stub must not be judged as the site's own document (#133) --
+# is_html was Content-Type only, so a 301's redirect stub and a 404's error stub — both
+# routinely served as text/html — were judged by these checks exactly like the live document
+# they redirect from or fail to be. Bodies below have no doctype, no viewport meta and no
+# compression, same as a real generic Apache/Nginx/IIS stub; the "reference" page supplies the
+# opposite evidence so each check has something present to skip against, per its honesty
+# contract, and stays exercised rather than skipped outright.
+
+_STUB_HTML = (
+    "<html><head><title>Stub</title></head><body>"
+    + ("A generic, tiny, server-generated body — not the site's page. " * 30)
+    + "</body></html>"
+)
+
+
+def test_lighthouse_checks_never_fire_on_a_redirect_or_error_stub():
+    mapping = {
+        "https://example.com/reference": _FakeResponse(
+            _GOOD_HTML,
+            {"content-type": "text/html; charset=utf-8", "content-encoding": "gzip"},
+        ),
+        "https://example.com/live": _FakeResponse(
+            _BAD_HTML,
+            {"content-type": "text/html"},
+        ),
+        "https://example.com/old-page": _FakeResponse(
+            _STUB_HTML,
+            {"content-type": "text/html", "location": "https://example.com/live"},
+            status_code=301,
+        ),
+        "https://example.com/gone": _FakeResponse(
+            _STUB_HTML,
+            {"content-type": "text/html"},
+            status_code=404,
+        ),
+    }
+    crawl_result = collect_urls(
+        list(mapping),
+        fetcher=_fetcher(mapping),
+        sleeper=lambda _seconds: None,
+    )
+    evidence = build_evidence(crawl_result)
+    exports = LoadedExports()
+    exports.frames.update(evidence["frames"])
+    exports.found = list(evidence["found"])
+    exports.missing = list(evidence["missing"])
+
+    ctx = AuditContext(exports, load_config(None))
+    ctx.skip_unsupported(set(exports.frames))
+
+    # Acceptance criterion 1: the shared population itself excludes both stubs.
+    assert [p.url for p in ctx.html_pages()] == [
+        "https://example.com/reference",
+        "https://example.com/live",
+    ]
+
+    run_rules(ctx)
+    fired: dict[str, set[str]] = {}
+    for issue in ctx.issues:
+        fired.setdefault(issue.check, set()).add(issue.target_url)
+
+    for check_id in ("MISSING_CHARSET", "MISSING_DOCTYPE", "VIEWPORT_MISSING", "NO_COMPRESSION"):
+        # Fires on the real defective document...
+        assert "https://example.com/live" in fired[check_id]
+        # ...never on the stubs standing in for a redirect or an error.
+        assert "https://example.com/old-page" not in fired.get(check_id, set())
+        assert "https://example.com/gone" not in fired.get(check_id, set())

@@ -70,6 +70,15 @@ class Page:
         return "html" in (self.content_type or "").lower()
 
     @property
+    def is_2xx(self) -> bool:
+        """Named separately from ``is_html`` (issue #133): a 301 or 404 answers with an
+        HTML ``Content-Type`` just as often as a real page does, and ``AuditContext.html_pages``
+        is the one place that distinction has to be made — ``is_html`` alone stays a pure
+        Content-Type read, matching its counterpart in seohead.crawl.collect.PageRecord.
+        """
+        return self.status_code is not None and 200 <= int(self.status_code) < 300
+
+    @property
     def is_indexable(self) -> bool:
         return (self.indexability or "").strip().lower() == "indexable"
 

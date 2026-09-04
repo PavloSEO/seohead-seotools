@@ -203,8 +203,18 @@ class AuditContext:
 
     # -- convenience views (cached; pages are built once and not mutated) ----
     def html_pages(self) -> list[Page]:
+        """ "HTML pages" per populations.md: fetched, 2xx, HTML by its own Content-Type.
+
+        A 301's redirect stub and a 404's error stub are routinely served with an HTML
+        Content-Type too, so ``is_html`` alone let both into every per-page check that reads
+        this population (issue #133) — reporting, e.g., a missing viewport tag against a
+        document that is not the site's own. The status-code gate belongs here rather than on
+        ``is_html`` itself, since ``is_html`` is a plain Content-Type read used independently
+        elsewhere (mirrored in seohead.crawl.collect.PageRecord, which decides whether to parse
+        a response body at all — a 404 page's body is still worth parsing there).
+        """
         if self._html_pages is None:
-            self._html_pages = [p for p in self.pages if p.is_html]
+            self._html_pages = [p for p in self.pages if p.is_html and p.is_2xx]
         return self._html_pages
 
     def indexable_html_pages(self) -> list[Page]:
