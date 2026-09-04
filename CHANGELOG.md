@@ -4,6 +4,14 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Assert the sitemap protocol's own limits (#124): `SITEMAP_TOO_MANY_URLS` above 50,000
+  entries in one file, `SITEMAP_TOO_LARGE` above 50 MB uncompressed, and
+  `SITEMAP_URL_DUPLICATED` for a URL declared in more than one sitemap, naming both
+  documents. A file over either limit is invalid rather than merely large — a search
+  engine may read part of it and discard the rest with nothing the site owner can see —
+  and the thresholds come from the protocol, not from config. Both parsers now record the
+  per-document byte size and declared count, and the findings name the child sitemap
+  rather than the index. Registry grows from 118 to 121 checks.
 - Add `docs/GUIDELINE.md`, the document a person reads first (#121): what this is and is
   not, a first run end to end, how to choose a crawl rate and how to tell whether the
   errors are yours, how to read `audit.json` without being misled by it, what the config

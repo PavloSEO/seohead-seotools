@@ -1,6 +1,6 @@
 # Usage scenarios
 
-The rest of the documentation lists what this toolkit *has*: 49 commands, 54 MCP tools, 118
+The rest of the documentation lists what this toolkit *has*: 49 commands, 54 MCP tools, 121
 checks, 22 skills, each described on its own. This directory describes what it **does** — the
 chains that run several of them in order and end in something a person can act on.
 

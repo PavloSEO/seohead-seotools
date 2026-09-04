@@ -56,7 +56,7 @@ do. The rows that matter for a writer are `THIN_CONTENT`, `TITLE_MISSING`, `TITL
 
 ```
 | severity | check           | url                        | what to do                    |
-| warning  | THIN_CONTENT    | /services/foundation       | 118 words of real content     |
+| warning  | THIN_CONTENT    | /services/foundation       | 121 words of real content     |
 | warning  | DESC_DUPLICATE  | /services/{9 pages}        | one description, nine pages   |
 ```
 

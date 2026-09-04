@@ -15,17 +15,17 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| check | 93 | a registry check finds it |
+| check | 96 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
 | partial | 17 | we find part of it; the missing part is stated |
-| gap | 41 | we should find it and do not |
+| gap | 38 | we should find it and do not |
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-remaining 212 issues, **126 are found today**, 17 are
-found in part, 41 are gaps worth closing, and
+remaining 212 issues, **129 are found today**, 17 are
+found in part, 38 are gaps worth closing, and
 28 need something we have decided not to build.
 
 A gap is not a defect. It is a named, deliberate absence — which is the only kind worth
@@ -272,12 +272,12 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| XML Sitemap With Over 50k URLs | gap | — | the 50,000-URL protocol limit is not asserted |
-| XML Sitemap Over 50mb | gap | — | the 50 MB protocol limit is not asserted |
+| XML Sitemap With Over 50k URLs | check | `SITEMAP_TOO_MANY_URLS` |  |
+| XML Sitemap Over 50mb | check | `SITEMAP_TOO_LARGE` |  |
 | URLs Not In Sitemap | check | `URL_NOT_IN_SITEMAP` |  |
 | Orphan URLs | check | `SITEMAP_ORPHAN` `ORPHAN_PAGE` |  |
 | Non-Indexable URLs In Sitemap | check | `SITEMAP_URL_NON_INDEXABLE` |  |
-| URLs In Multiple Sitemaps | gap | — | duplicates across child sitemaps are counted, not named |
+| URLs In Multiple Sitemaps | check | `SITEMAP_URL_DUPLICATED` |  |
 
 ## PageSpeed
 
