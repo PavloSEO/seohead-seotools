@@ -1,0 +1,228 @@
+"""Every check id must declare itself on a native crawl (issue #128).
+
+``run_inlinks`` was wired only into the Screaming Frog export pipeline
+(``seohead/sf/core/audit.py``), never into the native crawl path
+(``seohead/servers/handlers.py:crawl_site``). Its eighteen checks therefore
+neither fired nor appeared in ``run.checks_skipped`` on a crawl: they were
+silently absorbed into ``checks_silent``, which the coverage arithmetic reads
+as "ran clean" -- so a run that never even looked at hreflang, anchor text, or
+the link graph reported itself as having done so.
+
+This test pins the general shape of the bug, not the specific check ids: for
+every id whose owning pipeline function is wired into ``crawl_site``, a crawl
+must place it in exactly one of fired / skipped / silent, and "silent" must
+mean the owning function actually ran -- never that nobody called it. Whoever
+adds the next check to ``run_rules`` or ``run_inlinks`` is covered by
+construction; whoever wires a *new* module into the analyzer without also
+wiring it into ``crawl_site`` reproduces issue #128 and this test catches it.
+
+``run_heuristics`` and most of ``sitemap_coverage.run_sitemap`` are not wired
+into ``crawl_site`` at all yet -- the same gap, in different modules, tracked
+separately in issue #165 rather than fixed here (see the excluded set below)
+so this test asserts only what issue #128's fix actually covers.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+import pytest
+
+from seohead.servers import handlers
+from seohead.sf.core import inlinks as inlinks_module
+from seohead.sf.core import rules as rules_module
+from seohead.sf.core.registry import CHECKS
+from tests.chains.chain_site import run_chain_site
+
+# Owned by ``run_heuristics`` (DOM/near-duplicate/templated-title/HTML-weight
+# heuristics) or by the parts of ``sitemap_coverage.run_sitemap`` beyond the
+# two ids (``SITEMAP_ORPHAN``, ``URL_NOT_IN_SITEMAP``) ``crawl_site`` already
+# adds inline. Neither pipeline function is called from ``crawl_site`` -- a
+# pre-existing gap of the same shape as issue #128, in a different pair of
+# modules, tracked in issue #165 rather than fixed here.
+_NOT_WIRED_INTO_CRAWL = frozenset(
+    cid
+    for cid, meta in CHECKS.items()
+    if meta["source"].split(":")[0] == "heuristic"
+    or (meta["source"] == "sitemap" and cid not in ("SITEMAP_ORPHAN", "URL_NOT_IN_SITEMAP"))
+) | {"LARGE_HTML"}  # source "SF-derived+heuristic": also only implemented in heuristics.py
+
+# INLINK_BOILERPLATE_ONLY *is* wired in -- crawl_site adds it directly -- but
+# only when link_position.classify is turned on, which this test's crawls
+# leave at its default (off). Excluded for the same reason as any other
+# not-exercised-here check: this test proves nothing about a code path it
+# never runs.
+_NOT_WIRED_INTO_CRAWL |= {"INLINK_BOILERPLATE_ONLY"}
+
+
+@pytest.fixture(scope="module")
+def site(monkeypatch_module):
+    # The crawler refuses private-network targets unless explicitly authorized; a loopback
+    # fixture is exactly the case that authorization exists for.
+    monkeypatch_module.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
+    with run_chain_site() as base_url:
+        yield base_url
+
+
+@pytest.fixture(scope="module")
+def monkeypatch_module():
+    from _pytest.monkeypatch import MonkeyPatch
+
+    patch_ = MonkeyPatch()
+    yield patch_
+    patch_.undo()
+
+
+def test_every_wired_check_is_fired_skipped_or_provably_evaluated(site, tmp_path):
+    with (
+        patch.object(rules_module, "run_rules", wraps=rules_module.run_rules) as spy_rules,
+        patch.object(
+            inlinks_module, "run_inlinks", wraps=inlinks_module.run_inlinks
+        ) as spy_inlinks,
+    ):
+        result = handlers.crawl_site(
+            url=f"{site}/",
+            out_dir=str(tmp_path),
+            max_urls=30,
+            sitemap=f"{site}/sitemap.xml",
+        )
+
+    assert spy_rules.called, "run_rules must run on every native crawl"
+    assert spy_inlinks.called, "run_inlinks must run on every native crawl (issue #128)"
+    # Proof the inline sitemap-reconciliation block ran, since SITEMAP_ORPHAN and
+    # URL_NOT_IN_SITEMAP are added there directly rather than through a run_* function.
+    assert result["summary"].get("sitemap"), "the sitemap block must run when sitemap= is given"
+
+    audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8"))
+    fired = {issue["check"] for issue in audit["issues"]}
+    skipped = {s["id"] for s in audit["run"]["checks_skipped"]}
+
+    in_scope = set(CHECKS) - _NOT_WIRED_INTO_CRAWL
+    for check_id in sorted(in_scope):
+        if check_id in fired or check_id in skipped:
+            continue  # declared one way or the other -- provably evaluated
+        # Silent: neither fired nor skipped. That is only honest if the function
+        # that would have done either actually ran this check's evaluation.
+        source = CHECKS[check_id]["source"]
+        if source.startswith("inlinks:"):
+            assert spy_inlinks.called, f"{check_id} is silent but run_inlinks never ran"
+        elif check_id in ("SITEMAP_ORPHAN", "URL_NOT_IN_SITEMAP"):
+            assert result["summary"].get("sitemap"), f"{check_id} is silent but never evaluated"
+        else:
+            assert spy_rules.called, f"{check_id} is silent but run_rules never ran"
+
+
+def test_the_excluded_set_names_only_checks_actually_absent_from_the_registry():
+    """A ratchet: this set may shrink as a future fix wires those modules in,
+    but every id in it must still be a real, currently-unwired check."""
+    assert set(CHECKS) >= _NOT_WIRED_INTO_CRAWL
+    assert len(_NOT_WIRED_INTO_CRAWL) == 17
+
+
+def test_the_twelve_checks_issue_128_reported_are_no_longer_silently_uninvoked(site, tmp_path):
+    """The reproduction from the issue, pinned directly.
+
+    Five of the twelve have real evidence on this fixture's own hyperlink
+    graph (anchor text, discovery path, link score, inlink composition) and
+    are provably invoked even though the fixture trips none of them; the
+    other seven have no evidence a native crawl can ever produce (hreflang was
+    never parsed; no resource inventory exists) and must skip by name instead.
+    Neither group may land in ``checks_silent`` without having actually run.
+    """
+    with patch.object(inlinks_module, "run_inlinks", wraps=inlinks_module.run_inlinks) as spy:
+        handlers.crawl_site(
+            url=f"{site}/", out_dir=str(tmp_path), max_urls=30, sitemap=f"{site}/sitemap.xml"
+        )
+    assert spy.called
+
+    audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8"))
+    fired = {issue["check"] for issue in audit["issues"]}
+    reasons = {s["id"]: s["reason"] for s in audit["run"]["checks_skipped"]}
+
+    evaluated_but_clean_on_this_fixture = {
+        "GENERIC_ANCHOR_TEXT",
+        "ONLY_NOFOLLOW_INLINKS",
+        "ONLY_NONINDEXABLE_SOURCE_INLINKS",
+        "DEEP_DISCOVERY_PATH",
+        "LOW_LINK_SCORE",
+    }
+    for check_id in evaluated_but_clean_on_this_fixture:
+        assert check_id not in fired, check_id
+        assert check_id not in reasons, check_id  # silent -- but only valid because spy.called
+
+    must_skip_by_name = {
+        "INSECURE_SUBRESOURCE",
+        "HREFLANG_INVALID_CODE",
+        "HREFLANG_MULTIPLE_ENTRIES",
+        "HREFLANG_MISSING_SELF_REFERENCE",
+        "HREFLANG_MISSING_XDEFAULT",
+        "HREFLANG_NOT_CANONICAL",
+        "HREFLANG_MISSING_RETURN_LINK",
+    }
+    for check_id in must_skip_by_name:
+        assert check_id in reasons, f"{check_id} must skip honestly, got: {reasons.get(check_id)}"
+        assert reasons[check_id], check_id  # the reason itself must be non-empty
+
+
+def test_a_check_the_crawl_graph_can_answer_actually_fires_on_real_evidence(tmp_path):
+    """Not just "reaches a skip branch": LOW_LINK_SCORE must fire on a link graph
+    the crawl's own hyperlink evidence can prove, or the fix only ever produces
+    honest skips and never the answers the issue asked for.
+
+    A dense core of twelve pages, all linking to each other and back to the
+    hub, plus one page the hub links to and nothing else reaches: the core
+    pages each hold ~12 inbound edges, ``/lonely`` holds exactly one, and
+    ``compute_link_scores`` (PageRank power iteration) puts its score at
+    ~0.22x the site median -- comfortably under the 0.25 default threshold.
+    """
+    import http.server
+    import threading
+
+    core = [f"/c{n}" for n in range(1, 13)]
+    core_links = "".join(f'<a href="{c}">{c}</a>' for c in core)
+    pages = {
+        "/": f"<html><head><title>Hub</title></head><body>{core_links}"
+        f'<a href="/lonely">lonely</a></body></html>',
+        "/lonely": "<html><head><title>Lonely</title></head><body>nothing links back here except "
+        "the hub itself, and it links to no one</body></html>",
+    }
+    for c in core:
+        others = "".join(f'<a href="{c2}">{c2}</a>' for c2 in core if c2 != c)
+        pages[c] = (
+            f'<html><head><title>{c}</title></head><body><a href="/">hub</a>{others}</body></html>'
+        )
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = pages.get(self.path.split("?", 1)[0])
+            if body is None:
+                self.send_response(404)
+                self.end_headers()
+                return
+            data = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        result = handlers.crawl_site(url=f"{base}/", out_dir=str(tmp_path), max_urls=30)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert result["urls_collected"] == len(pages)
+    audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8"))
+    fired = {issue["check"]: issue for issue in audit["issues"]}
+    assert "LOW_LINK_SCORE" in fired, "a real, provable outlier must fire, not just skip honestly"
+    assert fired["LOW_LINK_SCORE"]["target_url"] == f"{base}/lonely"
