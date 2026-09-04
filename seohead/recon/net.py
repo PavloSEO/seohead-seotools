@@ -1,13 +1,18 @@
 """Shared network layer: URL guardrails, DNS-over-HTTPS, and RDAP.
 
-Every user-controlled HTTP request should use :func:`http_client`. Request hooks
-validate the initial URL and every redirect before a socket is opened. Private,
-loopback, link-local, multicast, reserved, and otherwise non-global addresses are
-blocked by default. Authorized staging and intranet work requires an explicit
-``SEOHEAD_ALLOW_PRIVATE_NETWORKS=1`` opt-in — that opens every private range, for
-a run that genuinely needs it. ``SEOHEAD_ALLOW_PRIVATE_HOSTS`` is the scoped
-alternative: a comma-separated list of exact hostnames (e.g. one staging box)
-allowed to resolve privately without opening the rest of RFC 1918 space.
+Every user-controlled HTTP request should use :func:`http_client`. Its transport
+(see ``_PinningTransport`` below) resolves and validates every hop — the first
+request and every redirect — and then connects to the literal address it just
+validated, never to a second, independent resolution of the hostname. Before
+this, only ``request``/``response`` event hooks ran the *check*; the *socket*
+was opened by httpx's own DNS lookup, a separate call a hostile resolver could
+answer differently (issue #142). Private, loopback, link-local, multicast,
+reserved, and otherwise non-global addresses are blocked by default. Authorized
+staging and intranet work requires an explicit ``SEOHEAD_ALLOW_PRIVATE_NETWORKS=1``
+opt-in — that opens every private range, for a run that genuinely needs it.
+``SEOHEAD_ALLOW_PRIVATE_HOSTS`` is the scoped alternative: a comma-separated list
+of exact hostnames (e.g. one staging box) allowed to resolve privately without
+opening the rest of RFC 1918 space.
 
 DNS and registration checks use HTTP APIs because ``dig`` and ``whois`` are not
 available in every container. A system ``whois`` binary remains an optional ccTLD
@@ -129,6 +134,14 @@ def pinned_target(url: str) -> tuple[str, dict[str, str], dict[str, str]]:
     Returns the URL to request, headers carrying the original ``Host``, and the
     request extensions carrying the hostname for SNI — so certificate
     verification still happens against the name, not the address.
+
+    This is the primitive ``_PinningTransport`` below builds on for every other
+    ``http_client()`` caller. It stays a free function too because
+    ``collect.py``'s list-mode fetch already called it directly before the
+    transport existed, on every retry attempt; the transport recognizes a
+    request pinned this way (by its ``sni_hostname`` extension) and passes it
+    through rather than pinning it a second time, which would re-resolve the
+    literal address as if it were a hostname and lose the real one.
     """
     parts = urlsplit(url)
     host = parts.hostname
@@ -223,8 +236,93 @@ def _guard_redirect(response: Any) -> None:
 
 
 def network_event_hooks() -> dict[str, list[Any]]:
-    """Return httpx hooks that validate every request and redirect."""
+    """Return httpx hooks that validate every request and redirect.
+
+    This is a second, independent check ahead of the transport's own pinning
+    below — it runs first and rejects a bad scheme or embedded credentials
+    before a connection is even attempted. It does not do the pinning itself:
+    its resolution is discarded, exactly like ``validate_url``'s always was.
+    The property that closes issue #142 is enforced downstream, in
+    ``_PinningTransport.handle_request``, which connects to the address it
+    just resolved rather than to a second, later resolution of the hostname.
+    """
     return {"request": [_guard_request], "response": [_guard_redirect]}
+
+
+# Transport-construction kwargs a caller may forward through http_client() —
+# distinct from httpx.Client's own kwargs (headers, follow_redirects, ...),
+# which pass through untouched. Client() would silently ignore verify/cert/
+# trust_env/http1/limits/proxy once a custom transport is supplied instead of
+# building its own default one, so these have to be lifted out and given to
+# the pinning transport directly; uds/local_address/retries/socket_options
+# aren't Client() parameters at all and must be lifted out either way.
+_TRANSPORT_KWARGS = (
+    "verify",
+    "cert",
+    "trust_env",
+    "http1",
+    "limits",
+    "proxy",
+    "uds",
+    "local_address",
+    "retries",
+    "socket_options",
+)
+_TRANSPORT_ONLY_KWARGS = ("uds", "local_address", "retries", "socket_options")
+
+_pinning_transport_cls: type | None = None
+
+
+def _get_pinning_transport_cls() -> type:
+    """Build (once) the ``httpx.HTTPTransport`` subclass that pins every hop.
+
+    Defined lazily, like the ``import httpx`` in ``http_client()`` below, so
+    this module stays importable in the rare environment without httpx.
+    """
+    global _pinning_transport_cls
+    if _pinning_transport_cls is not None:
+        return _pinning_transport_cls
+
+    import httpx
+
+    class _PinningTransport(httpx.HTTPTransport):
+        """Resolve, validate, and connect to the same address — every hop.
+
+        ``http_client()`` used to validate a URL via request hooks and let
+        httpx resolve DNS again to open the socket: two independent
+        ``getaddrinfo()`` calls, free to disagree (issue #142). This is
+        httpx's own connection path — ``handle_request`` runs once per hop,
+        including every redirect the client follows internally — so pinning
+        it here, rather than at each of fifteen call sites, is structural:
+        a caller of ``http_client()`` gets the guard without asking for it.
+
+        A request that already carries an ``sni_hostname`` extension was
+        pinned by its caller before reaching the transport (``collect.py``'s
+        list-mode fetch does this via ``pinned_target`` directly — see its
+        docstring). Re-pinning it here would resolve the already-literal
+        address as if it were a hostname, and the ``sni_hostname`` this
+        transport would then set from *that* would replace the real one,
+        breaking SNI and certificate verification. So an already-pinned
+        request passes straight through to the real connection instead.
+        """
+
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            if "sni_hostname" not in request.extensions:
+                pinned_url, _headers, pin_extensions = pinned_target(str(request.url))
+                # Headers (including Host) are left untouched: httpx already
+                # set them from the real hostname when it built this request,
+                # and that is exactly what a pinned connection must keep.
+                request = httpx.Request(
+                    method=request.method,
+                    url=pinned_url,
+                    headers=request.headers,
+                    stream=request.stream,
+                    extensions={**request.extensions, **pin_extensions},
+                )
+            return super().handle_request(request)
+
+    _pinning_transport_cls = _PinningTransport
+    return _pinning_transport_cls
 
 
 def http_client(timeout: float, **kwargs: Any):
@@ -232,6 +330,10 @@ def http_client(timeout: float, **kwargs: Any):
 
     The boolean must reach reports: without the optional HTTP/2 codec, reporting
     HTTP/1.1 as a server limitation would describe the client rather than the site.
+
+    The client cannot be built without the pinning transport below — there is
+    no kwarg that switches it off — because the fix for issue #142 is "this is
+    the only client this function can hand back", not "remember to opt in".
     """
     try:
         import httpx
@@ -243,17 +345,23 @@ def http_client(timeout: float, **kwargs: Any):
     for phase, values in supplied_hooks.items():
         hooks.setdefault(phase, []).extend(values)
 
+    transport_kwargs = {k: kwargs[k] for k in _TRANSPORT_KWARGS if k in kwargs}
+    client_kwargs = {k: v for k, v in kwargs.items() if k not in _TRANSPORT_ONLY_KWARGS}
+    PinningTransport = _get_pinning_transport_cls()
+
     options = {
         "timeout": timeout,
         "headers": {"User-Agent": UA},
         "follow_redirects": True,
         "event_hooks": hooks,
-        **kwargs,
+        **client_kwargs,
     }
     try:
-        return httpx.Client(http2=True, **options), True
+        transport = PinningTransport(http2=True, **transport_kwargs)
+        return httpx.Client(http2=True, transport=transport, **options), True
     except ImportError:
-        return httpx.Client(**options), False
+        transport = PinningTransport(http2=False, **transport_kwargs)
+        return httpx.Client(transport=transport, **options), False
 
 
 def _client(timeout: float):
