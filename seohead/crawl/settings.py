@@ -89,6 +89,10 @@ DEFAULTS: dict[str, Any] = {
         "max_delay_seconds": 60.0,
         "adaptive": True,
         "stop_after_consecutive_timeouts": 5,
+        # A per-origin ceiling on requests in flight at once, not a promise:
+        # the crawler starts well below it and the adaptive throttle only
+        # widens toward it on sustained success. 1 is the sequential crawler.
+        "concurrency": 1,
     },
     "output": {
         "dir": "",
@@ -194,6 +198,10 @@ DESCRIPTIONS: dict[str, str] = {
     "speed.max_delay_seconds": "Maximum delay adaptive back-off may reach.",
     "speed.adaptive": "Increase the delay automatically when the target slows down or times out.",
     "speed.stop_after_consecutive_timeouts": "Stop the crawl after this many timeouts in a row.",
+    "speed.concurrency": (
+        "Per-origin ceiling on requests in flight at once. The adaptive throttle starts "
+        "well below it and only grows toward it on sustained success; 1 is sequential."
+    ),
     "output.dir": "Directory to write pages.jsonl and audit.json into; empty writes nothing to disk.",
     "output.write_pages_jsonl": "Write one JSON line per fetched page to pages.jsonl.",
 }
@@ -302,6 +310,8 @@ def validate(config: dict[str, Any]) -> None:
         raise ConfigError("limits.max_depth cannot be negative")
     if config["speed"]["min_delay_seconds"] < 0:
         raise ConfigError("speed.min_delay_seconds cannot be negative")
+    if config["speed"]["concurrency"] < 1:
+        raise ConfigError("speed.concurrency must be at least 1")
 
     # A crawl with no budget at all runs forever on an infinite URL space.
     if not limits["max_urls"] and not limits["max_depth"] and not limits["max_crawl_seconds"]:

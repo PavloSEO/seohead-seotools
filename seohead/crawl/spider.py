@@ -6,7 +6,12 @@ its own, which is the whole reason this module exists.
 
 Traversal is deterministic given identical responses: the frontier is a queue,
 children are enqueued in document order rather than sorted, and every exclusion
-is recorded as data rather than dropped silently.
+is recorded as data rather than dropped silently. That guarantee survives
+concurrency too — a slice of the frontier is fetched as a batch of concurrent
+requests, but results are always folded back in the order they were queued —
+into ``result.pages``, the circuit breaker, redirect and link enqueueing, and
+the checkpoint — before anything downstream sees them, so the recorded output
+does not depend on which request happened to answer first.
 """
 
 from __future__ import annotations
@@ -16,15 +21,17 @@ import dataclasses
 import json
 import os
 import re
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
-from seohead.crawl.collect import CrawlResult, PageRecord, _write, fetch_one
+from seohead.crawl.collect import CrawlResult, PageRecord, _is_timeout, _write, fetch_one
 from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
@@ -32,8 +39,46 @@ from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robo
 
 MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
+# A ceiling on the *configured* value, not on what the adaptive throttle will
+# actually use — Throttle.concurrency starts low and earns its way up to
+# whichever of this or the caller's request is smaller.
+MAX_CONCURRENCY_CEILING = 16
 ROBOTS_TOKEN = "SEOHEAD-Tools"
 EMPTY_ROBOTS = {"allow": [], "disallow": [], "groups": [], "crawl_delay": None}
+# Matches Throttle.should_stop / host_is_failing's own default limit — kept as
+# a separate constant here because the circuit breaker's *decision* is no
+# longer read off Throttle's live counters (see _fold_failure_streaks below).
+STOP_AFTER_CONSECUTIVE_FAILURES = 5
+
+
+class _DispatchGate:
+    """Spaces out request *dispatch* across every concurrent worker sharing one
+    origin, so ``min_delay`` still means "at least this long between requests
+    to the origin" once more than one worker is fetching for it.
+
+    Each worker independently sleeping ``throttle.delay`` before its own
+    request would honour the floor against its own clock only: with N workers
+    doing that in parallel, N requests would go out every ``delay`` seconds
+    instead of one, multiplying the configured rate by N. This gate hands out
+    dispatch turns from a single shared clock instead, so the gap between any
+    two dispatches to the origin is still at least ``delay`` — concurrency then
+    buys overlap on the response *wait*, never on how densely requests are sent.
+    """
+
+    def __init__(self, throttle: Throttle, sleeper: Callable[[float], None]) -> None:
+        self._throttle = throttle
+        self._sleeper = sleeper
+        self._lock = threading.Lock()
+        self._next_at = time.monotonic()
+
+    def wait_turn(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            start_at = max(now, self._next_at)
+            self._next_at = start_at + self._throttle.delay
+            wait = start_at - now
+        if wait > 0:
+            self._sleeper(wait)
 
 
 @dataclass
@@ -56,6 +101,11 @@ class SpiderResult(CrawlResult):
     robots_blocked: list[str] = field(default_factory=list)
     crawl_delay_applied: float | None = None
     effective_delay: float = 0.0
+    # The adaptive concurrency level reached by the end of the crawl. 1 means
+    # the crawl never ran more than one request in flight at a time, whether
+    # because it was configured that way or because the origin never earned
+    # more.
+    effective_concurrency: int = 1
     # Why the checkpoint was or wasn't used, for the run output — see state.py.
     resume_note: str = ""
     # Seed URLs accepted into the frontier beyond the start URL itself (e.g. a
@@ -73,6 +123,33 @@ def _canonical_key(url: str) -> str:
 
 def _same_host(url: str, host: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == host
+
+
+def _fold_failure_streaks(
+    record: PageRecord, consecutive_timeouts: int, consecutive_server_errors: int
+) -> tuple[int, int]:
+    """Advance the two failure streaks by exactly one record, in queue order.
+
+    Mirrors Throttle.record_timeout / record_server_error / record_success —
+    the same rules, applied to the *sequence of folded-back records* instead
+    of Throttle's live counters. Those counters are mutated inside worker
+    threads as each fetch actually completes, which is completion order, not
+    queue order; reading them straight from ``after_fetch`` would make the
+    circuit breaker's trip point depend on real thread scheduling instead of
+    on the deterministic order the rest of the fold-back already uses. A
+    non-timeout exception (``status_code`` never set, error not timeout-shaped)
+    leaves both streaks untouched, matching ``fetch_one``: it calls none of
+    Throttle's mutators in that case either.
+    """
+    if record.status_code is None:
+        return (
+            (consecutive_timeouts + 1, consecutive_server_errors)
+            if _is_timeout(record.error)
+            else (consecutive_timeouts, consecutive_server_errors)
+        )
+    if record.status_code == 429 or 500 <= record.status_code < 600:
+        return consecutive_timeouts, consecutive_server_errors + 1
+    return 0, 0
 
 
 _PAGE_RECORD_FIELDS = {f.name for f in dataclasses.fields(PageRecord)}
@@ -192,6 +269,7 @@ def crawl_site(
     sleeper: Callable[[float], None] = time.sleep,
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    concurrency: int = 1,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
@@ -210,6 +288,20 @@ def crawl_site(
     "found by following links": a seed with no inbound edge in ``links`` is
     still reachable only because it was declared, which is what makes orphan
     detection against ``result.links`` honest even in this mode.
+
+    ``concurrency`` is a per-origin ceiling, not a promise: the crawl starts at
+    a conservative fan-out and the adaptive throttle widens it toward this
+    ceiling only on sustained success, collapsing back to one request in flight
+    on the first timeout or server refusal. A dispatch gate paces requests from
+    a single shared clock regardless of how many workers are running, so
+    ``min_delay`` still means "at least this long between requests to the
+    origin" — concurrency only overlaps the *wait* for a response, never the
+    rate at which requests go out. Each slice of the frontier is fetched as one
+    batch, sized to what the origin has earned, and results are folded back in
+    queue order — into ``result.pages``, the circuit breaker, redirect and link
+    enqueueing, and the checkpoint — before anything downstream sees them, so
+    the output (and the saved frontier, on an early stop) is identical to
+    ``concurrency=1`` aside from ``response_time``.
     """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
@@ -220,11 +312,12 @@ def crawl_site(
     rules = scope if isinstance(scope, Scope) else Scope.from_config(scope)
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     depth_limit = max(0, min(int(max_depth), MAX_DEPTH_CEILING))
+    max_concurrency = max(1, min(int(concurrency), MAX_CONCURRENCY_CEILING))
     if state_path:
         crawl_state.ensure_safe_dir(os.path.dirname(os.path.abspath(state_path)) or ".")
 
     result = SpiderResult()
-    throttle = Throttle(min_delay=min_delay)
+    throttle = Throttle(min_delay=min_delay, max_concurrency=max_concurrency)
     excluded: dict[str, int] = {}
     crawl_started = clock()
 
@@ -300,69 +393,30 @@ def crawl_site(
             queue.append((seed, 0))
             result.seed_urls.append(seed)
 
-        while queue:
-            if len(result.pages) >= limit:
-                result.partial = True
-                result.stopped_reason = f"url limit reached ({limit})"
-                result.finish_reason = "url_limit"
-                break
-            if max_seconds and (clock() - crawl_started) >= max_seconds:
-                result.partial = True
-                result.stopped_reason = f"duration limit reached ({max_seconds:.0f}s)"
-                result.finish_reason = "duration_limit"
-                break
-            url, depth = queue.popleft()
-            result.max_depth_reached = max(result.max_depth_reached, depth)
+        # The circuit breaker's own streaks, advanced only here as records are
+        # folded back in queue order — see _fold_failure_streaks.
+        consecutive_timeouts = 0
+        consecutive_server_errors = 0
 
+        def _extra_headers_for(url: str) -> dict[str, str] | None:
+            # Resolved for this hop's own host, never carried over from the
+            # last one — that is what keeps a credential off a cross-host
+            # redirect target. Called with each URL's own host regardless of
+            # concurrency, so nothing is ever carried between hops or workers.
+            if not credential_headers:
+                return None
+            return resolve_credential_headers(credential_headers, urlsplit(url).hostname or "")
+
+        def robots_blocks(url: str) -> bool:
+            """True when this URL must not be fetched under the current policy."""
             if robots and not is_allowed(robots, match_path(url), ROBOTS_TOKEN):
                 result.robots_blocked.append(url)
                 if enforce:
                     exclude("blocked_by_robots")
-                    continue
+                    return True
+            return False
 
-            # Resolved for this hop's own host, never carried over from the
-            # last one — that is what keeps a credential off a cross-host
-            # redirect target.
-            extra_headers = (
-                resolve_credential_headers(credential_headers, urlsplit(url).hostname or "")
-                if credential_headers
-                else None
-            )
-            try:
-                if throttle.delay:
-                    sleeper(throttle.delay)
-                record, parsed = fetch_one(
-                    url,
-                    client=client,
-                    fetcher=fetcher,
-                    throttle=throttle,
-                    extra_headers=extra_headers,
-                )
-            except KeyboardInterrupt:
-                # Not processed: put it back so a resume retries it rather than
-                # silently dropping it from the frontier.
-                queue.appendleft((url, depth))
-                result.partial = True
-                result.stopped_reason = "interrupted"
-                result.finish_reason = "interrupted"
-                break
-            record.crawl_depth = depth
-            result.pages.append(record)
-            _write(handle, record)
-
-            if throttle.should_stop():
-                result.partial = True
-                result.stopped_reason = "origin stopped responding (repeated timeouts)"
-                result.finish_reason = "errors"
-                break
-            if throttle.host_is_failing():
-                # The host has refused repeatedly. Continuing would measure the
-                # crawler rather than the site.
-                result.partial = True
-                result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
-                result.finish_reason = "errors"
-                break
-
+        def handle_redirect(record: PageRecord, depth: int) -> None:
             # A redirect is a discovery too, and it stays inside the budget.
             if record.redirect_url and depth < depth_limit:
                 target = record.redirect_url
@@ -375,12 +429,12 @@ def crawl_site(
                         seen.add(key)
                         queue.append((target, depth + 1))
 
+        def handle_links(parsed: dict[str, Any] | None, url: str, depth: int) -> None:
             if parsed is None:
-                continue
+                return
             if depth >= depth_limit:
                 exclude("depth_limit")
-                continue
-
+                return
             # Document order, not sorted: a truncated crawl must sample the page
             # as the page is written, not alphabetically.
             for link in parsed.get("links") or []:
@@ -405,12 +459,179 @@ def crawl_site(
                 seen.add(key)
                 queue.append((href, depth + 1))
 
+        def after_fetch(
+            url: str, depth: int, record: PageRecord, parsed: dict[str, Any] | None
+        ) -> bool:
+            """Bookkeeping shared by every fetched page. Returns True to stop the crawl."""
+            nonlocal consecutive_timeouts, consecutive_server_errors
+            record.crawl_depth = depth
+            result.pages.append(record)
+            _write(handle, record)
+
+            consecutive_timeouts, consecutive_server_errors = _fold_failure_streaks(
+                record, consecutive_timeouts, consecutive_server_errors
+            )
+            if consecutive_timeouts >= STOP_AFTER_CONSECUTIVE_FAILURES:
+                result.partial = True
+                result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                result.finish_reason = "errors"
+                return True
+            if consecutive_server_errors >= STOP_AFTER_CONSECUTIVE_FAILURES:
+                # The host has refused repeatedly. Continuing would measure the
+                # crawler rather than the site.
+                result.partial = True
+                result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
+                result.finish_reason = "errors"
+                return True
+
+            handle_redirect(record, depth)
+            handle_links(parsed, url, depth)
+            return False
+
+        stopped = False
+        if max_concurrency <= 1:
+            # The plain sequential path: one request, wait for the response,
+            # then the next. Kept byte-for-byte separate from the batched path
+            # below so the common case (the default) carries zero concurrency
+            # overhead and zero risk of it changing behaviour.
+            while queue and not stopped:
+                if len(result.pages) >= limit:
+                    result.partial = True
+                    result.stopped_reason = f"url limit reached ({limit})"
+                    result.finish_reason = "url_limit"
+                    break
+                if max_seconds and (clock() - crawl_started) >= max_seconds:
+                    result.partial = True
+                    result.stopped_reason = f"duration limit reached ({max_seconds:.0f}s)"
+                    result.finish_reason = "duration_limit"
+                    break
+                url, depth = queue.popleft()
+                result.max_depth_reached = max(result.max_depth_reached, depth)
+
+                if robots_blocks(url):
+                    continue
+
+                try:
+                    if throttle.delay:
+                        sleeper(throttle.delay)
+                    record, parsed = fetch_one(
+                        url,
+                        client=client,
+                        fetcher=fetcher,
+                        throttle=throttle,
+                        extra_headers=_extra_headers_for(url),
+                    )
+                except KeyboardInterrupt:
+                    # Not processed: put it back so a resume retries it rather
+                    # than silently dropping it from the frontier.
+                    queue.appendleft((url, depth))
+                    result.partial = True
+                    result.stopped_reason = "interrupted"
+                    result.finish_reason = "interrupted"
+                    break
+                stopped = after_fetch(url, depth, record, parsed)
+        else:
+            gate = _DispatchGate(throttle, sleeper)
+
+            def dispatch(item: tuple[str, int]) -> tuple[str, int, PageRecord, dict | None]:
+                url, depth = item
+                gate.wait_turn()
+                record, parsed = fetch_one(
+                    url,
+                    client=client,
+                    fetcher=fetcher,
+                    throttle=throttle,
+                    extra_headers=_extra_headers_for(url),
+                )
+                return url, depth, record, parsed
+
+            with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+                while queue and not stopped:
+                    if len(result.pages) >= limit:
+                        result.partial = True
+                        result.stopped_reason = f"url limit reached ({limit})"
+                        result.finish_reason = "url_limit"
+                        break
+                    if max_seconds and (clock() - crawl_started) >= max_seconds:
+                        result.partial = True
+                        result.stopped_reason = f"duration limit reached ({max_seconds:.0f}s)"
+                        result.finish_reason = "duration_limit"
+                        break
+
+                    # One batch is one slice of the frontier, sized to what the
+                    # origin has earned so far — never more than the pool has
+                    # workers for, since that is the largest unit that stays
+                    # sound to re-sort by discovery order in one pass.
+                    batch = [queue.popleft() for _ in range(min(throttle.concurrency, len(queue)))]
+
+                    blocked_depths = []
+                    to_fetch = []
+                    for u, d in batch:
+                        if robots_blocks(u):
+                            blocked_depths.append(d)
+                        else:
+                            to_fetch.append((u, d))
+
+                    # A URL budget ends the crawl at an exact page count,
+                    # concurrency or not: anything past the remaining budget
+                    # goes back to the front of the queue rather than being
+                    # dispatched.
+                    budget = limit - len(result.pages)
+                    if len(to_fetch) > budget:
+                        overflow, to_fetch = to_fetch[budget:], to_fetch[:budget]
+                        for item in reversed(overflow):
+                            queue.appendleft(item)
+
+                    # Depth bookkeeping matches the sequential walk: it covers
+                    # every item popped for good (fetched or robots-blocked),
+                    # never an item pushed back to the queue as overflow.
+                    for d in blocked_depths:
+                        result.max_depth_reached = max(result.max_depth_reached, d)
+                    for _, d in to_fetch:
+                        result.max_depth_reached = max(result.max_depth_reached, d)
+
+                    if not to_fetch:
+                        continue
+
+                    # ``pool.map`` yields results in the order of ``to_fetch``
+                    # regardless of which request actually finished first, so
+                    # every downstream step — recording, the circuit breaker,
+                    # link and redirect enqueueing — sees the same order the
+                    # sequential crawler would have used.
+                    processed = 0
+                    interrupted = False
+                    try:
+                        for url, depth, record, parsed in pool.map(dispatch, to_fetch):
+                            processed += 1
+                            if after_fetch(url, depth, record, parsed):
+                                stopped = True
+                                break
+                    except KeyboardInterrupt:
+                        # Some workers in this batch may still be running; the
+                        # ones whose result was never consumed here are not
+                        # known to be processed, so they (and anything not yet
+                        # dispatched) go back to the front of the queue rather
+                        # than being dropped from the frontier.
+                        interrupted = True
+
+                    if interrupted or stopped:
+                        for item in reversed(to_fetch[processed:]):
+                            queue.appendleft(item)
+                    if interrupted:
+                        result.partial = True
+                        result.stopped_reason = "interrupted"
+                        result.finish_reason = "interrupted"
+                        stopped = True
+
         if state_path:
             if result.finish_reason == "finished":
                 # Nothing left to resume: a later call with the same path
                 # should crawl fresh, not "resume" into an empty frontier.
                 crawl_state.clear(state_path)
             else:
+                # Saved only once the loop above has finished folding the last
+                # batch back in, so the frontier on disk is always a complete
+                # BFS state, never a snapshot taken mid-batch.
                 crawl_state.save(
                     state_path,
                     crawl_state.CrawlState(
@@ -424,6 +645,7 @@ def crawl_site(
 
     result.excluded = excluded
     result.effective_delay = throttle.delay
+    result.effective_concurrency = throttle.concurrency
     result.limitations = [
         f"scope {rules.internal}: links outside it are recorded, never fetched",
         "static HTML only: no JavaScript rendering",
