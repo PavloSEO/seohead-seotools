@@ -10,6 +10,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 |---|---|
 | Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
+| New to the toolkit | [GUIDELINE.md](GUIDELINE.md) — what it is, the first run, reading an audit honestly, the usual mistakes |
 | Wondering what this can do end to end | [scenarios/](scenarios/README.md) — ten chains, each with its commands, its output, its cost and its limits |
 | Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 54 |
 | Looking for a tool's exact arguments, types, defaults, or cost | [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — generated from the MCP tool definitions |
