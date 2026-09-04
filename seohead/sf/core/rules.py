@@ -260,9 +260,12 @@ def check_canonical_directives(ctx: AuditContext) -> None:
                 ctx.add("CANONICAL_MISSING", target_url=page.url)
             elif canonical and norm_url(canonical) != norm_url(page.url):
                 ctx.add("CANONICALISED", target_url=page.url, details={"canonical": canonical})
-                # match the canonical target tolerant of trailing slash / case
-                target = ctx.page_by_norm.get(norm_url(canonical))
-                if target is not None and not target.is_indexable:
+                # Match the canonical target tolerant of trailing slash / case — and read
+                # every page under that key, since a site serving both slash forms has two
+                # (issue #95). "The canonical points at something non-indexable" is only true
+                # when no page under the key is indexable.
+                targets = ctx.pages_by_norm.get(norm_url(canonical)) or []
+                if targets and not any(t.is_indexable for t in targets):
                     ctx.add(
                         "CANONICAL_NON_INDEXABLE",
                         target_url=page.url,
@@ -635,9 +638,16 @@ def check_canonical_to_redirect(ctx: AuditContext) -> None:
         canonical = _rec(page).get("canonical")
         if not canonical or norm_url(canonical) == norm_url(page.url):
             continue
-        target = ctx.page_by_norm.get(norm_url(canonical))
-        if target is None:
+        # Every crawled page under that normalised key, not one: a site that serves both
+        # /x (301) and /x/ (200) has two, and the canonical points at whichever one answers.
+        # Reading a single record made this fire on 78 live pages whose canonical is a 200
+        # (issue #95). The claim is only true when nothing under the key answered 2xx.
+        targets = ctx.pages_by_norm.get(norm_url(canonical)) or []
+        if not targets:
             continue  # external / not crawled — cannot classify
+        if any(t.status_code is not None and 200 <= int(t.status_code) < 300 for t in targets):
+            continue
+        target = targets[0]
         code = target.status_code
         redirect_url = ctx.redirect_map.get(target.url)
         is_redirect = (code is not None and 300 <= code <= 399) or bool(redirect_url)

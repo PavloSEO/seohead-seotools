@@ -173,10 +173,22 @@ def _apply_body(
     body: str,
     parse_options: dict[str, Any] | None = None,
     max_response_bytes: int = MAX_RESPONSE_BYTES,
+    size_bytes: int | None = None,
 ) -> dict[str, Any] | None:
     """Fill in every field derived from the body. Shared by a live fetch, a cache hit, and a
-    revalidated (304) response, so the three produce identical records for identical bytes."""
-    record.size_bytes = len(body.encode("utf-8", "ignore"))
+    revalidated (304) response, so the three produce identical records for identical bytes.
+
+    ``size_bytes`` is the length of the response body as it arrived, after transfer decoding.
+    It is passed in rather than derived here because ``body`` is already a decoded string, and
+    for anything that is not valid UTF-8 — an image, a PDF, a font, a page in windows-1251 —
+    decoding replaces each undecodable byte with U+FFFD, which re-encodes to three bytes. The
+    measurement would then be a function of how much of the file happens to look like invalid
+    UTF-8, not of its size (issue #99). ``None`` means the caller genuinely has no byte count
+    (a test fetcher returning only ``.text``), and only then is the encoded length used.
+    """
+    record.size_bytes = (
+        size_bytes if size_bytes is not None else len(body.encode("utf-8", "ignore"))
+    )
     if record.size_bytes > max_response_bytes:
         # Too large to parse, but a 200 is still a 200: not "unreachable".
         record.error = "response too large to parse"
@@ -221,7 +233,15 @@ def _from_cache_entry(
     record.redirect_url = urljoin(record.url, location) if location else ""
     record.response_time = 0.0
     record.cache_status = status
-    return _apply_body(record, record.url, entry.body, parse_options, max_response_bytes)
+    return _apply_body(
+        record,
+        record.url,
+        entry.body,
+        parse_options,
+        max_response_bytes,
+        # Stored with the entry: see _apply_body on why this cannot be recomputed from the body.
+        size_bytes=entry.size_bytes or None,
+    )
 
 
 def fetch_one(
@@ -366,6 +386,10 @@ def fetch_one(
     record.redirect_url = urljoin(url, location) if location else ""
 
     body = getattr(response, "text", "") or ""
+    # The bytes as they arrived (httpx has already undone gzip/br/deflate), measured before the
+    # body is decoded — the only place the true size still exists. See _apply_body and #99.
+    raw = getattr(response, "content", None)
+    wire_size = len(raw) if isinstance(raw, (bytes, bytearray)) else None
     # "bypass" means the cache itself is unusable (e.g. an unsafe directory) rather than merely
     # empty for this URL; the page is still fetched normally, but it never touched the cache, so
     # it must not be stamped "miss" as if a lookup had actually happened.
@@ -375,9 +399,16 @@ def fetch_one(
         and outcome.status != "bypass"
         and record.status_code is not None
     ):
-        cache.store(url, request_headers, record.status_code, headers, body)
+        cache.store(
+            url,
+            request_headers,
+            record.status_code,
+            headers,
+            body,
+            size_bytes=wire_size if wire_size is not None else len(body.encode("utf-8", "ignore")),
+        )
         record.cache_status = "miss"
-    parsed = _apply_body(record, url, body, parse_options, max_response_bytes)
+    parsed = _apply_body(record, url, body, parse_options, max_response_bytes, wire_size)
     return record, parsed
 
 
