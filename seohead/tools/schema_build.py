@@ -265,7 +265,7 @@ _RECOMMENDED = {
 def _existing_keys(facts: dict[str, Any], target_type: str) -> set[str]:
     """Return properties already declared for the target type in existing JSON-LD."""
 
-    from seohead.tools.schema import _flatten, _types_of  # type: ignore[attr-defined]
+    from seohead.tools.schema_org import _flatten, _types_of  # type: ignore[attr-defined]
 
     keys: set[str] = set()
     nodes: list[dict[str, Any]] = []
@@ -287,7 +287,7 @@ def _flatten_typed_entities(blocks: list[Any]) -> list[dict[str, Any]]:
     Reuses ``schema._flatten`` but removes supporting objects without ``@type``;
     treating those objects as entities would create noisy diffs.
     """
-    from seohead.tools.schema import _flatten, _types_of  # type: ignore[attr-defined]
+    from seohead.tools.schema_org import _flatten, _types_of  # type: ignore[attr-defined]
 
     nodes: list[dict[str, Any]] = []
     for block in blocks:
@@ -407,7 +407,7 @@ def diff_values(suggested: dict[str, Any], existing_jsonld: list[Any]) -> dict[s
 
 def _node_types(node: dict[str, Any]) -> list[str]:
     """Return node types through ``schema._types_of`` without internal caches."""
-    from seohead.tools.schema import _types_of  # type: ignore[attr-defined]
+    from seohead.tools.schema_org import _types_of  # type: ignore[attr-defined]
 
     return _types_of(node)
 

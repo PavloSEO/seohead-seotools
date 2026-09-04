@@ -8,7 +8,7 @@ site ships markup on every page and every search engine discards it — is lost.
 from __future__ import annotations
 
 from seohead.tools.parser import parse_html
-from seohead.tools.schema import _extract_blocks, _findings
+from seohead.tools.schema_org import _extract_blocks, _findings
 
 # A stray comment, which JSON does not allow, voids the whole block. This is
 # the shape a hand-filled template arrives in.

@@ -155,7 +155,7 @@ def test_service_graph_has_provider_and_service_type():
 
 def test_suggested_graph_validates_with_no_dangling_ids():
     # Every @id in the generated graph must resolve to a linked entity.
-    from seohead.tools import schema as validator
+    from seohead.tools import schema_org as validator
 
     r = schema_build.build_schema(url="https://shop.example.com/p/widget", html=PRODUCT_HTML)
     rendered = (
