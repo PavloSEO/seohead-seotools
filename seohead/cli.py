@@ -224,6 +224,8 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["threshold"] = args.threshold
         if getattr(args, "fingerprints", False):
             kw["with_fingerprints"] = True
+        if getattr(args, "all_pages", False):
+            kw["only_indexable"] = False
         # items[] is intentionally accepted through --input JSON.
     elif cmd == "log-analyze":
         if args.path:
@@ -618,6 +620,13 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             action="store_true",
             help="include every page fingerprint in output; this can make stdout "
             "very large for substantial datasets",
+        )
+        sub.add_argument(
+            "--all-pages",
+            action="store_true",
+            help="also compare non-indexable items; by default only items with "
+            "indexable=true (or no indexable flag) are compared, since a "
+            "canonicalised twin is not a defect",
         )
     if cmd == "llms-txt-check":
         sub.add_argument("--brand", help="brand name that llms.txt should mention")

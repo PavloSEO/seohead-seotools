@@ -18,12 +18,29 @@ bands. Two documents become candidates when at least one band matches; the exact
 Hamming similarity must still meet the configured threshold before they are
 joined into a cluster.
 
+Exact duplicates (identical text) are found separately, by hashing each
+document's text with SHA-1. A cluster whose members are all exact duplicates
+of one another is reported only under ``exact_duplicates``, never under
+``clusters`` — otherwise a byte-identical pair would be reported twice, once
+as "exact" and once as its own trivial "near" cluster at similarity 1.0.
+Hashing the caller-supplied text (rather than raw response bytes) is what
+makes the comparison survive a page-unique CSRF token or timestamp: the text
+extractor is expected to have already stripped markup and, ideally, scoped
+itself to the page's content area (see ``content_area.py``).
+
+Both exact and near comparisons default to indexable pages only — a page
+canonicalised to another is an intended twin, not a defect — via the
+``indexable`` flag on each item and the ``only_indexable`` parameter.
+
 This module is pure and performs no network access. The caller supplies page text
 from a Screaming Frog crawl, live ``parse`` calls, or another audit data source.
+Because it is pure, re-running with a new threshold against a stored corpus
+costs no requests.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 from typing import Any
@@ -98,6 +115,16 @@ def similarity(a: int, b: int) -> float:
     return 1.0 - hamming(a, b) / 64.0
 
 
+def content_hash(text: str) -> str:
+    """Return a SHA-1 hex digest of ``text``, for exact-duplicate grouping.
+
+    Hashing the extracted text rather than raw response bytes means a
+    per-request CSRF token or timestamp embedded elsewhere in the markup does
+    not defeat the comparison.
+    """
+    return hashlib.sha1((text or "").encode("utf-8"), usedforsecurity=False).hexdigest()
+
+
 def _band_keys(fp: int, bands: int = _BANDS, band_bits: int = _BAND_BITS) -> list[int]:
     """Return the fingerprint value for each LSH band as its bucket key."""
     keys: list[int] = []
@@ -112,30 +139,65 @@ def find_duplicates(
     threshold: float = _DEFAULT_THRESHOLD,
     k: int = 3,
     with_fingerprints: bool = False,
+    only_indexable: bool = True,
 ) -> dict[str, Any]:
-    """Find near-duplicate clusters in a list of documents.
+    """Find exact and near-duplicate groups in a list of documents.
 
     Each item is ``{"id": str, "text": str}``, where ``id`` may be a URL or
-    any stable key. The result contains groups whose exact similarity is at least
-    ``threshold``. LSH retrieves candidates without an all-pairs scan, while the
-    reported pair values are calculated with exact Hamming similarity.
+    any stable key, plus an optional ``indexable`` flag (default True). Near
+    duplicates are groups whose exact similarity is at least ``threshold``;
+    LSH retrieves candidates without an all-pairs scan, while the reported
+    pair values are calculated with exact Hamming similarity.
+
+    ``only_indexable`` (default True) drops non-indexable items before either
+    comparison: a page canonicalised to another is an intended twin, not a
+    defect. Set it to False to audit the canonical tags themselves.
 
     ``with_fingerprints`` includes each document fingerprint. It is disabled by
     default because the mapping can dominate output for hundreds of pages and is
     mainly useful for debugging fingerprint behavior.
     """
+    excluded_non_indexable = 0
+    if only_indexable:
+        kept = [it for it in items if it.get("indexable", True)]
+        excluded_non_indexable = len(items) - len(kept)
+        items = kept
+
     if not items:
-        out: dict[str, Any] = {"ok": True, "count": 0, "clusters": []}
+        out: dict[str, Any] = {
+            "ok": True,
+            "count": 0,
+            "clusters": [],
+            "exact_duplicates": [],
+            "excluded_non_indexable": excluded_non_indexable,
+        }
         if with_fingerprints:
             out["fingerprints"] = {}
         return out
 
     fingerprints: dict[str, int] = {}
+    texts: dict[str, str] = {}
     for it in items:
         doc_id = it.get("id") or it.get("url") or ""
         text = it.get("text") or ""
         if doc_id:
             fingerprints[str(doc_id)] = simhash(text, k=k)
+            texts[str(doc_id)] = text
+
+    # Exact groups are found by content hash, independent of the near-duplicate
+    # pass below, so they are unaffected by threshold or LSH banding.
+    hash_groups: dict[str, list[str]] = defaultdict(list)
+    for doc_id, text in texts.items():
+        hash_groups[content_hash(text)].append(doc_id)
+    exact_duplicates = [
+        {"hash": h, "members": sorted(members)}
+        for h, members in hash_groups.items()
+        if len(members) > 1
+    ]
+    exact_duplicates.sort(key=lambda g: g["hash"])
+    hash_of: dict[str, str] = {
+        doc_id: h for h, members in hash_groups.items() for doc_id in members
+    }
 
     # LSH buckets candidates by each fingerprint band.
     buckets: dict[tuple[int, int], list[str]] = defaultdict(list)
@@ -177,6 +239,11 @@ def find_duplicates(
     for members in groups.values():
         if len(members) < 2:
             continue  # A singleton cannot be a duplicate cluster.
+        # A cluster where every member shares the same content hash is fully
+        # explained by exact duplication and already listed in
+        # exact_duplicates; reporting it again here would double-report it.
+        if len({hash_of[m] for m in members}) == 1:
+            continue
         # Calculate all pair similarities inside each cluster for reporting.
         pairs = []
         for i in range(len(members)):
@@ -203,7 +270,9 @@ def find_duplicates(
         "count": len(fingerprints),
         "threshold": threshold,
         "clusters": clusters,
+        "exact_duplicates": exact_duplicates,
         "candidate_pairs_checked": len(candidate_pairs),
+        "excluded_non_indexable": excluded_non_indexable,
     }
     if with_fingerprints:
         result["fingerprints"] = fingerprints

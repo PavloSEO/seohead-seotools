@@ -14,6 +14,16 @@ All notable public changes are documented here.
   redirect targets, so `REDIRECT_CHAIN`/`REDIRECT_LOOP` no longer require the native
   Screaming Frog Redirect Chains report — a light-profile export or a `crawl-site` run gets
   the same findings for free.
+- Add a configurable content area (`content_area.py`) that scopes word count to
+  the main region, excluding navigation and footer by default, without
+  affecting link discovery; the resolved strategy is reported per page.
+- Separate exact from near duplicates in `duplicate.py`: exact matches are
+  hashed from extracted text (not raw bytes) and excluded from near-duplicate
+  clusters, and comparisons default to indexable pages only.
+- Add a boilerplate-consistency report (`boilerplate_report.py`) that hashes
+  header/nav/footer per page and flags minority template groups.
+- Add dependency-free Markdown extraction (`markdown_extract.py`): a
+  content-area-only rendering and a full-document one.
 - Add community, citation, and no-key agent onboarding files.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
