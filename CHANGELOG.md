@@ -4,6 +4,16 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `docs/COVERAGE_SF_ISSUES.md`, generated from `seohead/sf/core/sf_issue_map.py`:
+  every one of the 320 issues in the field's published catalogue, each with exactly one
+  status — found by a named check, found by a named command, found in part with the
+  missing part stated, a named gap, or a decision with its reason (#119). Of the 212
+  in-scope issues, 126 are found today and 17 in part; 41 are gaps and 28 need something
+  deliberately not built. Accessibility (92) and AMP (16) are declined as single
+  decisions, with their full lists shown so the decision is auditable. A test asserts
+  every referenced check id and command still exists, so a rename breaks the build rather
+  than the document. Supersedes `docs/CHECKLIST_AUDIT.md`, which was written without the
+  catalogue in hand.
 - The sitemap seeder requests the address the sitemap published, not its normalised form
   (#115). `sitemap.crawl()` returned only the normalised `loc`, so a sitemap declaring
   `/a/` caused a fetch of `/a` — on most CMSes a 301 the crawler invented and then
