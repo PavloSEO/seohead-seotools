@@ -93,15 +93,11 @@ CATEGORIES: dict[str, list[Entry]] = {
     "Security": [
         _c("HTTP URLs", "HTTP_URL"),
         _c("Mixed Content", "MIXED_CONTENT", "INSECURE_SUBRESOURCE"),
-        _g("Form URL Insecure", "form action attributes are not extracted during the crawl"),
-        _g("Form On HTTP URL", "same: forms are not part of the parsed record"),
+        _c("Form URL Insecure", "FORM_URL_INSECURE"),
+        _c("Form On HTTP URL", "FORM_ON_HTTP_URL"),
         _c("Missing HSTS Header", "MISSING_HSTS"),
-        _g(
-            "Unsafe Cross Origin Links",
-            "target=_blank without rel=noopener is not checked; the link record has no rel "
-            "beyond nofollow",
-        ),
-        _g("Protocol-Relative Resource Links", "// resource URLs are resolved before recording"),
+        _c("Unsafe Cross Origin Links", "UNSAFE_CROSS_ORIGIN_LINK"),
+        _c("Protocol-Relative Resource Links", "PROTOCOL_RELATIVE_LINK"),
         _t("Missing Content-Security-Policy Header", "security-check"),
         _t("Missing X-Content-Type-Options Header", "security-check"),
         _t("Missing X-Frames-Options Header", "security-check"),
@@ -303,7 +299,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         ),
     ],
     "Links": [
-        _g("Outlinks To Localhost", "a localhost destination is treated as any other off-host URL"),
+        _c("Outlinks To Localhost", "OUTLINK_TO_LOCALHOST"),
         _p(
             "Pages With Uncrawlable Internal Outlinks",
             "excluded destinations are counted by reason in the run's excluded map, but not "
@@ -318,10 +314,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         ),
         _c("Pages With High External Outlinks", "HIGH_EXTERNAL_OUTLINKS"),
         _c("Pages With High Internal Outlinks", "HIGH_OUTLINKS"),
-        _g(
-            "Follow & Nofollow Internal Inlinks To Page",
-            "a page linked both ways from different sources is not called out",
-        ),
+        _c("Follow & Nofollow Internal Inlinks To Page", "FOLLOW_AND_NOFOLLOW_INLINKS"),
         _c("Internal Nofollow Inlinks Only", "ONLY_NOFOLLOW_INLINKS"),
         _c("Pages With High Crawl Depth", "DEEP_CRAWL_DEPTH", "DEEP_DISCOVERY_PATH"),
         _p(

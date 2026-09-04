@@ -276,6 +276,7 @@ def crawl_site(
     import json
     import os
     from datetime import datetime, timezone
+    from urllib.parse import urlsplit
 
     from seohead.crawl import cache as http_cache
     from seohead.crawl import settings as crawl_config
@@ -365,6 +366,7 @@ def crawl_site(
             crawl_hyperlinks=settings["discovery"]["hyperlinks"]["crawl"],
             store_external_links=settings["discovery"]["external"]["store"],
             crawl_redirects=settings["discovery"]["redirects"]["crawl"],
+            capture_link_attributes=settings["link_attributes"]["capture"],
         )
         discovery = {
             "mode": "spider",
@@ -493,6 +495,29 @@ def crawl_site(
                     occurrences_count=page["inlinks_total"],
                     details={"by_position": page["by_position"]},
                 )
+
+    # Same shape again (issue #125): pure functions over the crawl's own LinkEdge/FormEdge
+    # evidence, never through the SF-export analyzer. Localhost outlinks, the per-target
+    # follow/nofollow mix, and both form checks need only fields every crawl already
+    # records; the cross-origin and protocol-relative checks additionally need
+    # link_attributes.capture (off by default -- see its own docstring).
+    if url:
+        from seohead.crawl import link_findings
+
+        crawl_host = urlsplit(start_norm).hostname or ""
+        for item in link_findings.outlinks_to_localhost(result.links):
+            ctx.add("OUTLINK_TO_LOCALHOST", target_url=item["target_url"], details=item)
+        for dest in link_findings.follow_and_nofollow_inlinks(result.links, crawl_host):
+            ctx.add("FOLLOW_AND_NOFOLLOW_INLINKS", target_url=dest)
+        for item in link_findings.form_url_insecure(result.forms):
+            ctx.add("FORM_URL_INSECURE", target_url=item["target_url"], details=item)
+        for item in link_findings.forms_on_http_pages_with_password(result.forms):
+            ctx.add("FORM_ON_HTTP_URL", target_url=item["target_url"], details=item)
+        if settings["link_attributes"]["capture"]:
+            for item in link_findings.unsafe_cross_origin_links(result.links):
+                ctx.add("UNSAFE_CROSS_ORIGIN_LINK", target_url=item["target_url"], details=item)
+            for item in link_findings.protocol_relative_links(result.links):
+                ctx.add("PROTOCOL_RELATIVE_LINK", target_url=item["target_url"], details=item)
 
     audit = aggregate(
         ctx,
