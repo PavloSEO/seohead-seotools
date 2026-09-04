@@ -12,7 +12,7 @@
 
 [![CI](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
-![Tests](https://img.shields.io/badge/tests-672%20offline-BDDDF5)
+![Tests](https://img.shields.io/badge/tests-1181%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
@@ -264,7 +264,7 @@ Read [provider gotchas](docs/GOTCHAS.md) before enabling production credentials.
   backlink index.
 - International tools validate hreflang and regional structure; the package does not claim a
   machine-translation engine. Translation belongs to a reviewed model or localization workflow.
-- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 42 core
+- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 45 core
   tools and not a replacement for a production crawler.
 - SEOHEAD does not include its own general-purpose crawler. Whole-site crawling is delegated to
   Screaming Frog; export analysis remains available without live crawl mode.
@@ -283,7 +283,7 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 python -m build
 ```
 
-The suite contains **672 offline tests**. CI also checks interface registration, layer boundaries,
+The suite contains **1181 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
 
 README visuals are generated from committed synthetic examples with

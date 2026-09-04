@@ -9,6 +9,8 @@ import tokenize
 
 from seohead.cli import COMMANDS, URL_COMMANDS
 from seohead.servers.handlers import HANDLERS
+from seohead.servers.tool_reference import load_seo_tools, load_sf_tools
+from seohead.servers.tool_reference import render as render_tool_reference
 from seohead.sf.core.checks_reference import render as render_checks_reference
 from seohead.sf.core.registry import CHECKS
 
@@ -95,6 +97,42 @@ def test_skills_and_docs_reference_only_existing_commands():
     assert not bad, "references to non-existent commands: " + "; ".join(bad)
 
 
+def _commands_without_a_dedicated_skill() -> set[str]:
+    """Commands not named (as `` `cmd` `` or ``seohead cmd``) in any skill file's own body.
+
+    docs/SKILLS.md's per-skill tables are a hand-curated summary; whether a skill's
+    write-up actually names the command is the mechanical fact this recomputes, so the
+    "N of the 45 commands have no skill of their own" line in docs/SKILLS.md cannot drift
+    the way it did before (issue #22: it said "Twenty-one of the 42").
+    """
+    skill_files = [*TECHNICAL_SKILLS, *PACKAGED_SKILLS]
+    mentioned: set[str] = set()
+    for path in skill_files:
+        text = path.read_text(encoding="utf-8")
+        for command in COMMANDS:
+            if re.search(rf"`{re.escape(command)}`", text) or re.search(
+                rf"seohead\s+{re.escape(command)}\b", text
+            ):
+                mentioned.add(command)
+    return set(COMMANDS) - mentioned
+
+
+def test_skills_map_command_coverage_is_current():
+    without_own_skill = _commands_without_a_dedicated_skill()
+    text = (ROOT / "docs" / "SKILLS.md").read_text(encoding="utf-8")
+    assert f"{len(without_own_skill)} of the {len(COMMANDS)} commands" in text, (
+        "docs/SKILLS.md's command-coverage count is stale, expected: "
+        f"{len(without_own_skill)} of the {len(COMMANDS)}"
+    )
+    section = text.split("## Tools without a skill of their own", 1)[1]
+    section = section.split("## Skill rules", 1)[0]
+    listed = set(re.findall(r"`([a-z0-9][a-z0-9-]+)`", section)) & set(COMMANDS)
+    assert listed == without_own_skill, (
+        f"docs/SKILLS.md's command list drifted: missing {without_own_skill - listed}, "
+        f"stale {listed - without_own_skill}"
+    )
+
+
 def test_documented_product_counts_match_the_registries():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     provenance = (ROOT / "PROVENANCE.md").read_text(encoding="utf-8")
@@ -108,6 +146,24 @@ def test_documented_product_counts_match_the_registries():
     assert "50 callable tools" in readme
     assert "28 workflow skills" in readme
     assert (ROOT / "CITATION.cff").is_file()
+
+
+def test_stale_tool_counts_do_not_reappear():
+    """The toolkit has carried 45 core commands (not 42, not 44, not 49) for a while now;
+    each of these substrings was found stale in a different file while fixing issue #22
+    and is pinned here so the next rename cannot silently reintroduce one of them."""
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_MARKDOWN)
+    for stale in (
+        "42 core",
+        "42 handlers",
+        "42 seo_",
+        "(44 + 5)",
+        "44 + 5",
+        "reference for all 49",
+        "Twenty-one of the 42",
+        "all 42",
+    ):
+        assert stale not in combined, f"stale tool count reappeared: {stale!r}"
 
 
 def test_public_markdown_is_english():
@@ -167,6 +223,35 @@ def test_severity_breakdown_in_tools_reference_matches_the_registry():
         f"{counts['critical']} critical, {counts['warning']} warnings, {counts['notice']} notices"
     )
     assert expected in tools_doc, f"docs/TOOLS.md severity breakdown is stale, expected: {expected}"
+
+
+def test_mcp_tool_count_in_tools_reference_matches_the_registry():
+    """The prose count near the bottom of docs/TOOLS.md ('N + 5') is exactly the kind of
+    number that rotted silently before (it read '44 + 5' while there were 45 seo_* tools).
+    """
+    tools_doc = (ROOT / "docs" / "TOOLS.md").read_text(encoding="utf-8")
+    expected = f"{len(load_seo_tools())} + {len(load_sf_tools())}"
+    assert expected in tools_doc, f"docs/TOOLS.md MCP tool count is stale, expected: {expected}"
+
+
+def test_tool_reference_is_generated_and_current():
+    """docs/TOOL_REFERENCE.md is generated output (scripts/generate_tool_reference.py); a
+    hand edit or an MCP tool signature/docstring change without regenerating it must fail
+    here rather than ship as stale prose. This is the per-tool reference the issue calls
+    out as missing: arguments, types, defaults, cost, and failure modes, generated from
+    the same tool definitions the MCP server itself exposes."""
+    committed = (ROOT / "docs" / "TOOL_REFERENCE.md").read_text(encoding="utf-8")
+    assert committed == render_tool_reference(), (
+        "docs/TOOL_REFERENCE.md is stale: run scripts/generate_tool_reference.py "
+        "and commit the result"
+    )
+    documented = set(re.findall(r"^### `([a-z0-9_-]+)`", committed, re.M))
+    seo_tools = load_seo_tools()
+    sf_tools = load_sf_tools()
+    expected = {tool.command or tool.name for tool in (*seo_tools, *sf_tools)}
+    assert documented == expected, "every seo_*/sf_* tool must appear in the generated reference"
+    assert len(seo_tools) == len(COMMANDS) == 45
+    assert len(sf_tools) == 5
 
 
 def test_private_research_journal_is_not_part_of_the_snapshot():
