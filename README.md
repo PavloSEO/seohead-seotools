@@ -84,7 +84,7 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 | Live page and URL evidence | 14 | parsing, robots.txt, headers, CSS/JS weight and delivery, links, hreflang, redirects, sitemaps, image download and optimization, keyword clustering |
 | Domain and infrastructure reconnaissance | 8 | domain/DNS/TLS, CDN cache behavior, technology detection, security headers, mirrors, regional structure, donor backlink verification, AI crawler access |
 | Structured data, content, rendering, and logs | 11 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, content-area Markdown extraction, boilerplate consistency, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
-| Audit orchestration and reporting | 2 | bounded sitemap-based site evidence and XLSX/DOCX/CSV/Markdown/JSON output |
+| Audit orchestration and reporting | 3 | bounded sitemap-based site evidence, the crawler's own configuration surface, and XLSX/DOCX/CSV/Markdown/JSON output |
 | Demand, SERP, and traffic sources | 12 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
 
 Run `seohead --help` for the authoritative command list. Every core command goes through the
