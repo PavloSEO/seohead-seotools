@@ -31,6 +31,17 @@ from seohead.tools import (
     robots as robots_core,
 )
 
+
+def handler_failed(result: Any) -> bool:
+    """A handler reports its own failure to fetch, parse, or reach a provider via ``ok: False``
+    in the returned dict, rather than raising (see ``docs/ARCHITECTURE.md``'s "the network never
+    kills a tool" invariant). The CLI and the MCP server both call this instead of re-deriving
+    the check, so the two surfaces cannot drift on what counts as a failure — see the exit-code
+    contract in ``docs/USAGE.md``.
+    """
+    return isinstance(result, dict) and result.get("ok") is False
+
+
 # SEO core is extracted BY DEFAULT (the caller can turn any field off with False).
 DEFAULT_PARSE_OPTIONS: dict[str, bool] = {
     "meta": True,
@@ -314,6 +325,10 @@ def crawl_site(
         if out_dir and settings["output"]["write_pages_jsonl"]
         else None
     )
+    # Tied to out_dir alone, not the write_pages_jsonl toggle: this sidecar is what makes a
+    # resumed run's result.links whole again (see spider.crawl_site), a correctness need
+    # distinct from whether the operator also wants pages.jsonl as a human-readable export.
+    links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
     max_seconds = settings["limits"]["max_crawl_seconds"]
     # One cache per run, shared by every worker thread a concurrent crawl starts — see
     # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
@@ -341,6 +356,7 @@ def crawl_site(
             scope=settings["scope"],
             seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
+            links_path=links_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
             # crawl with no out_dir has nothing to resume into anyway.

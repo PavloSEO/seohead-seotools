@@ -200,3 +200,194 @@ def test_max_seconds_stops_the_crawl_with_a_duration_finish_reason():
     assert result.finish_reason == "duration_limit"
     assert result.partial is True
     assert len(result.pages) < 4, "must stop well before exhausting the site"
+
+
+# ── #141: links, excluded and the query-variant budget must survive a resume ─
+
+SITE_WITH_EXCLUSIONS = {
+    "https://example.com/robots.txt": FakeResponse(
+        ROBOTS_OK + "Disallow: /private/\n", headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": page("/a", "/b", "/private/", "https://other.example/x"),
+    "https://example.com/a": page("/c"),
+    "https://example.com/b": page(),
+    "https://example.com/c": page(),
+}
+
+
+def test_a_resumed_crawl_reports_the_same_links_and_excluded_as_an_uninterrupted_one(tmp_path):
+    """Issue #141: result.links and result.excluded used to start over at [] / {} on every
+    resumed call, so only what happened after the checkpoint survived into the final report."""
+    full = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_EXCLUSIONS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        config_fingerprint="fp",
+    )
+    assert full.partial is False
+
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    state_path = str(out_dir / "state.json")
+    links_path = str(out_dir / "links.jsonl")
+
+    part = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_EXCLUSIONS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=1,
+        state_path=state_path,
+        links_path=links_path,
+        config_fingerprint="fp",
+    )
+    assert part.partial is True
+    resumed = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_EXCLUSIONS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        state_path=state_path,
+        links_path=links_path,
+        config_fingerprint="fp",
+    )
+    assert resumed.resumed is True
+    assert resumed.partial is False
+
+    def edges(result):
+        return sorted((e.source, e.destination) for e in result.links)
+
+    assert edges(resumed) == edges(full)
+    assert resumed.excluded == full.excluded
+    assert full.excluded == {"outside_host": 1, "blocked_by_robots": 1}
+
+
+def test_a_resumed_query_variant_budget_is_not_per_call(tmp_path):
+    """Issue #141: max_query_variants_per_path is a safety cap against faceted-navigation
+    explosion. It must count variants across the whole resumed crawl, not reset to zero on
+    every call — otherwise a crawl checkpointed even once stops capping anything."""
+    site = {
+        "https://example.com/robots.txt": FakeResponse(
+            ROBOTS_OK, headers={"content-type": "text/plain"}
+        ),
+        # Two variants discovered from the start page...
+        "https://example.com/": page("/search?q=0", "/search?q=1", "/other"),
+        "https://example.com/search?q=0": page(),
+        "https://example.com/search?q=1": page(),
+        # ...and two more from a second page, reached only after the checkpoint below.
+        "https://example.com/other": page("/search?q=2", "/search?q=3"),
+        "https://example.com/search?q=2": page(),
+        "https://example.com/search?q=3": page(),
+    }
+
+    def search_urls(result):
+        return sorted(p.url for p in result.pages if p.url.startswith("https://example.com/search"))
+
+    full = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(site),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        max_query_variants_per_path=2,
+        config_fingerprint="fp",
+    )
+    assert len(search_urls(full)) == 2
+    assert full.excluded.get("query_variants_limit") == 2
+
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    state_path = str(out_dir / "state.json")
+
+    # Stopped right after the start page: /search?q=0 and /search?q=1 are already
+    # enqueued (and the budget for that path already spent), /other is not yet fetched.
+    part = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(site),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=1,
+        state_path=state_path,
+        max_query_variants_per_path=2,
+        config_fingerprint="fp",
+    )
+    assert part.partial is True
+
+    resumed = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(site),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        state_path=state_path,
+        max_query_variants_per_path=2,
+        config_fingerprint="fp",
+    )
+    assert resumed.resumed is True
+    # Not 4: the budget for /search was already spent by the checkpointed run, and that
+    # must still hold once /other's two more variants are discovered after the resume.
+    assert search_urls(resumed) == search_urls(full)
+    assert resumed.excluded.get("query_variants_limit") == 2
+
+
+SITE_WITH_RICH_LINKS = {
+    "https://example.com/robots.txt": FakeResponse(
+        ROBOTS_OK, headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": FakeResponse(
+        "<html><head><title>t</title></head><body><h1>t</h1>"
+        '<a href="/a" rel="nofollow noopener" target="_blank">a</a>'
+        '<a href="/b">b</a>'
+        "</body></html>"
+    ),
+    "https://example.com/a": page(),
+    "https://example.com/b": page(),
+}
+
+
+def test_a_resumed_crawl_keeps_link_rel_as_a_tuple(tmp_path):
+    """Captured link attributes survive the checkpoint sidecar with the type they had in
+    memory. ``rel`` is a tuple on a fresh crawl; JSON only has lists, so without coercion on
+    the way back a resumed crawl would hand callers ['nofollow'] where an uninterrupted one
+    hands ('nofollow',) -- and every ``rel == ("nofollow",)`` comparison downstream would
+    quietly stop matching on exactly the crawls that had to be resumed."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    state_path = str(out_dir / "state.json")
+    links_path = str(out_dir / "links.jsonl")
+
+    part = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_RICH_LINKS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=1,
+        state_path=state_path,
+        links_path=links_path,
+        capture_link_attributes=True,
+        config_fingerprint="fp",
+    )
+    assert part.partial is True
+
+    resumed = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_RICH_LINKS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        state_path=state_path,
+        links_path=links_path,
+        capture_link_attributes=True,
+        config_fingerprint="fp",
+    )
+    assert resumed.resumed is True
+
+    replayed = [e for e in resumed.links if e.destination.endswith("/a")]
+    assert replayed, "the edge recorded before the checkpoint must survive the resume"
+    for edge in replayed:
+        assert isinstance(edge.rel, tuple)
+        assert edge.rel == ("nofollow", "noopener")
+        assert edge.target == "_blank"

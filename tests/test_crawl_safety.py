@@ -402,6 +402,26 @@ def test_a_success_clears_the_refusal_streak():
     assert t.host_is_failing() is False
 
 
+def test_a_connection_failure_trips_the_breaker_like_a_timeout():
+    """#132: a ConnectionResetError's message never contains the word "timeout",
+    so a breaker keyed on that substring stayed at zero no matter how many times
+    a dead host refused the connection. Classification is by exception type now
+    (see _classify_fetch_error), so a connection failure must feed the same
+    counter a real timeout does."""
+    from seohead.crawl.throttle import Throttle
+
+    def fetcher(_url):
+        raise ConnectionResetError("Connection reset by peer")
+
+    throttle = Throttle()
+    for _ in range(5):
+        record, parsed = fetch_one("https://example.com/", fetcher=fetcher, throttle=throttle)
+        assert parsed is None
+        assert record.error_kind == "connection"
+    assert throttle.timeouts == 5
+    assert throttle.should_stop(limit=5) is True
+
+
 # ── concurrency ceiling (#14: "a config file alone cannot raise it") ────────
 
 
