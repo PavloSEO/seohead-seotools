@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+from seohead.crawl.cache import ResponseCache
 from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import MAX_DELAY_S, Throttle
 from seohead.recon.net import UA, http_client, pinned_target, validate_url
@@ -68,6 +69,20 @@ class PageRecord:
     jsonld_blocks_found: int = 0
     jsonld_blocks_parsed: int = 0
     error: str = ""
+    # "" when no cache was configured for this run at all. Otherwise one of "hit" (served from
+    # disk, no request sent), "revalidated" (a conditional request came back 304, body reused)
+    # or "miss" (a real, full fetch — the first time, or because nothing on disk was usable).
+    # This is the per-URL half of "a report built partly from cache must say so"; cache_stats on
+    # the run as a whole is the aggregate half.
+    cache_status: str = ""
+    # Which representation produced this page's evidence: "static" (raw HTML,
+    # the default), "rendered" (JavaScript executed), or "legacy_fragment"
+    # (the deprecated ``_escaped_fragment_`` scheme). Recorded per page, not
+    # assumed for the whole crawl, because selective escalation (#18) renders
+    # only the URL patterns that need it -- a report that mixed the two
+    # populations in one column would compare numbers that were never
+    # measured the same way.
+    representation: str = "static"
 
     @property
     def is_html(self) -> bool:
@@ -86,6 +101,12 @@ class CrawlResult:
     finish_reason: str = "finished"
     resumed: bool = False
     limitations: list[str] = field(default_factory=list)
+    # Empty when no cache was configured. See seohead.crawl.cache.ResponseCache.stats for the
+    # keys: hits, revalidations, stores, bypassed, invalidated.
+    cache_stats: dict[str, int] = field(default_factory=dict)
+    # True exactly when the run used mode="replay" — see seohead.crawl.cache. A replay run may
+    # still contain live fetches for URLs never cached before; per-page cache_status says which.
+    cache_replay: bool = False
 
 
 def _text_of(value: Any) -> str:
@@ -136,6 +157,59 @@ def _jsonld_counts(html: str, parsed: dict) -> tuple[int, int]:
     return len(_JSONLD_TAG_RE.findall(html)), len(parsed.get("jsonld") or [])
 
 
+def _apply_body(
+    record: PageRecord,
+    url: str,
+    body: str,
+    parse_options: dict[str, Any] | None = None,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+) -> dict[str, Any] | None:
+    """Fill in every field derived from the body. Shared by a live fetch, a cache hit, and a
+    revalidated (304) response, so the three produce identical records for identical bytes."""
+    record.size_bytes = len(body.encode("utf-8", "ignore"))
+    if record.size_bytes > max_response_bytes:
+        # Too large to parse, but a 200 is still a 200: not "unreachable".
+        record.error = "response too large to parse"
+        return None
+    if not (record.is_html and body):
+        return None
+    parsed = parse_html(body, url, parse_options)
+    # Transient, never persisted to pages.jsonl or PageRecord: the rendering pre-flight gate
+    # (#18) needs the start page's raw HTML to check for an empty SPA shell, and this is the
+    # one place that HTML is already in memory.
+    parsed["_raw_html"] = body
+    for key, value in _record_from_parsed(parsed).items():
+        setattr(record, key, value)
+    found, parsed_count = _jsonld_counts(body, parsed)
+    record.jsonld_blocks_found = found
+    record.jsonld_blocks_parsed = parsed_count
+    text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
+    # Percent, not a fraction: the analyzer's threshold is a percentage and
+    # the export format this projects onto uses percent too (20.0, 15.0).
+    # Emitting 0.6 here made LOW_TEXT_RATIO fire on every crawled page,
+    # since 0.6 < 10 always.
+    record.text_ratio = round(text_len / record.size_bytes * 100, 2) if record.size_bytes else None
+    return parsed
+
+
+def _from_cache_entry(
+    record: PageRecord,
+    entry: Any,
+    status: str,
+    parse_options: dict[str, Any] | None = None,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+) -> dict[str, Any] | None:
+    """Build a record from a stored (or reconfirmed) cache entry. No network involved."""
+    record.status_code = entry.status_code
+    record.content_type = entry.headers.get("content-type", "")
+    record.x_robots = entry.headers.get("x-robots-tag", "")
+    location = entry.headers.get("location", "")
+    record.redirect_url = urljoin(record.url, location) if location else ""
+    record.response_time = 0.0
+    record.cache_status = status
+    return _apply_body(record, record.url, entry.body, parse_options, max_response_bytes)
+
+
 def fetch_one(
     url: str,
     *,
@@ -146,6 +220,9 @@ def fetch_one(
     user_agent: str = "",
     max_response_bytes: int = MAX_RESPONSE_BYTES,
     retry_on_timeout: int = 0,
+    parse_options: dict[str, Any] | None = None,
+    cache: ResponseCache | None = None,
+    wait: Callable[[], None] | None = None,
 ) -> tuple[PageRecord, dict[str, Any] | None]:
     """Fetch and parse one URL. Returns the record and the parsed document.
 
@@ -160,6 +237,18 @@ def fetch_one(
     timeout, per ``_is_timeout`` — never any other failure: retrying a 4xx/5xx
     or a DNS error would not change the answer, only the load on an origin that
     already answered.
+    ``parse_options`` is forwarded to ``parse_html`` untouched (e.g.
+    ``{"classify_links": True, "link_position_rules": [...]}``); ``None``
+    keeps every parser default, including link classification being off.
+    ``cache``, when given, is consulted before anything else touches the network — see
+    ``seohead.crawl.cache`` for the freshness policy. A credentialed request (``extra_headers``
+    non-empty) always bypasses it in both directions. A conditional revalidation only ever
+    happens on the real client path: an injected ``fetcher`` has no way to carry request
+    headers, so a stale entry behind a ``fetcher`` is simply re-fetched in full rather than
+    revalidated — still correct, just less efficient. ``wait``, when given, is called exactly
+    once, immediately before the one real network round trip this call makes — and is never
+    called at all on a cache hit, which is what keeps a hit from consuming a throttle delay slot
+    or a concurrent dispatch turn it never needed.
     """
     record = PageRecord(url=url)
     if fetcher is None:
@@ -172,6 +261,28 @@ def fetch_one(
             record.error = str(exc)
             return record, None
 
+    cache_eligible = cache is not None and not extra_headers
+    request_headers = {"User-Agent": user_agent or UA}
+    outcome = None
+    if cache_eligible:
+        outcome = cache.decide(url, request_headers)
+        if outcome.status == "hit":
+            parsed = _from_cache_entry(
+                record, outcome.entry, "hit", parse_options, max_response_bytes
+            )
+            return record, parsed
+
+    if wait is not None:
+        wait()
+
+    # A conditional GET needs request headers, which an injected single-argument ``fetcher``
+    # has no way to receive — so a fetcher-backed run never revalidates, it just re-fetches in
+    # full, which is correct (if less efficient) rather than silently skipping the cache.
+    conditional_headers = (
+        outcome.conditional_headers
+        if fetcher is None and outcome is not None and outcome.status == "revalidate"
+        else {}
+    )
     started = time.monotonic()
     attempt = 0
     while True:
@@ -185,7 +296,12 @@ def fetch_one(
                 target, headers, extensions = pinned_target(url)
                 response = client.get(
                     target,
-                    headers={"User-Agent": user_agent or UA, **headers, **(extra_headers or {})},
+                    headers={
+                        **request_headers,
+                        **headers,
+                        **(extra_headers or {}),
+                        **conditional_headers,
+                    },
                     extensions=extensions,
                 )
             break
@@ -202,15 +318,6 @@ def fetch_one(
     record.response_time = round(elapsed, 3)
     record.status_code = getattr(response, "status_code", None)
     headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
-    record.content_type = headers.get("content-type", "")
-    record.x_robots = headers.get("x-robots-tag", "")
-    # Location may be relative ("/new"); resolve it so the destination is a
-    # real URL rather than a fragment the scope check then rejects as off-host.
-    location = headers.get("location", "")
-    record.redirect_url = urljoin(url, location) if location else ""
-
-    body = getattr(response, "text", "") or ""
-    record.size_bytes = len(body.encode("utf-8", "ignore"))
     ok = record.status_code is not None and 200 <= record.status_code < 300
     if throttle is not None:
         throttle.record_response(elapsed, ok)
@@ -220,25 +327,40 @@ def fetch_one(
         else:
             throttle.record_success()
 
-    parsed = None
-    if record.size_bytes > max_response_bytes:
-        # Too large to parse, but a 200 is still a 200: not "unreachable".
-        record.error = "response too large to parse"
-    elif record.is_html and body:
-        parsed = parse_html(body, url)
-        for key, value in _record_from_parsed(parsed).items():
-            setattr(record, key, value)
-        found, parsed_count = _jsonld_counts(body, parsed)
-        record.jsonld_blocks_found = found
-        record.jsonld_blocks_parsed = parsed_count
-        text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
-        # Percent, not a fraction: the analyzer's threshold is a percentage and
-        # the export format this projects onto uses percent too (20.0, 15.0).
-        # Emitting 0.6 here made LOW_TEXT_RATIO fire on every crawled page,
-        # since 0.6 < 10 always.
-        record.text_ratio = (
-            round(text_len / record.size_bytes * 100, 2) if record.size_bytes else None
+    if (
+        fetcher is None
+        and outcome is not None
+        and outcome.status == "revalidate"
+        and record.status_code == 304
+    ):
+        # response_time above already reflects the real 304 round trip, not zero.
+        cache.refresh(outcome.entry, headers)
+        parsed = _from_cache_entry(
+            record, outcome.entry, "revalidated", parse_options, max_response_bytes
         )
+        record.response_time = round(elapsed, 3)
+        return record, parsed
+
+    record.content_type = headers.get("content-type", "")
+    record.x_robots = headers.get("x-robots-tag", "")
+    # Location may be relative ("/new"); resolve it so the destination is a
+    # real URL rather than a fragment the scope check then rejects as off-host.
+    location = headers.get("location", "")
+    record.redirect_url = urljoin(url, location) if location else ""
+
+    body = getattr(response, "text", "") or ""
+    # "bypass" means the cache itself is unusable (e.g. an unsafe directory) rather than merely
+    # empty for this URL; the page is still fetched normally, but it never touched the cache, so
+    # it must not be stamped "miss" as if a lookup had actually happened.
+    if (
+        cache_eligible
+        and outcome is not None
+        and outcome.status != "bypass"
+        and record.status_code is not None
+    ):
+        cache.store(url, request_headers, record.status_code, headers, body)
+        record.cache_status = "miss"
+    parsed = _apply_body(record, url, body, parse_options, max_response_bytes)
     return record, parsed
 
 
@@ -275,6 +397,8 @@ def collect_urls(
     user_agent: str = "",
     stop_after_consecutive_timeouts: int = 5,
     max_delay_seconds: float = MAX_DELAY_S,
+    parse_options: dict[str, Any] | None = None,
+    cache: ResponseCache | None = None,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
@@ -283,6 +407,12 @@ def collect_urls(
     wall-clock budget for the whole call; 0 means none. ``max_url_length`` is
     checked before a URL is fetched, not merely before it is parsed: a URL over
     the limit is skipped rather than requested.
+    wall-clock budget for the whole call; 0 means none.
+
+    ``parse_options`` is forwarded to every ``parse_html`` call unchanged; see
+    wall-clock budget for the whole call; 0 means none. ``cache``, when given, is checked before
+    the delay is applied, so a hit never waits for a delay slot it did not need — see
+    ``fetch_one``.
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
@@ -327,9 +457,6 @@ def collect_urls(
                 continue
             seen.add(url)
 
-            if throttle.delay:
-                sleeper(throttle.delay)
-
             host = (urlsplit(url).hostname or "").lower()
             extra_headers = (
                 resolve_credential_headers(credential_headers, host) if credential_headers else None
@@ -343,6 +470,9 @@ def collect_urls(
                 user_agent=user_agent,
                 max_response_bytes=max_response_bytes,
                 retry_on_timeout=retry_on_timeout,
+                parse_options=parse_options,
+                cache=cache,
+                wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
             )
             result.pages.append(record)
             _write(handle, record)
@@ -362,6 +492,9 @@ def collect_urls(
         "list mode: no link discovery, no sitemap expansion",
         "static HTML only: no JavaScript rendering",
     ]
+    if cache is not None:
+        result.cache_stats = dict(cache.stats)
+        result.cache_replay = cache.mode == "replay"
     return result
 
 

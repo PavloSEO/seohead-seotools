@@ -100,13 +100,13 @@ def test_documented_product_counts_match_the_registries():
     provenance = (ROOT / "PROVENANCE.md").read_text(encoding="utf-8")
     assert len(COMMANDS) == len(HANDLERS) == 48
     assert len(_sf_tool_names()) == 5
-    assert len(CHECKS) == 104
-    assert len(TECHNICAL_SKILLS) == 21
+    assert len(CHECKS) == 114
+    assert len(TECHNICAL_SKILLS) == 22
     assert len(PACKAGED_SKILLS) == 7
     for text in (readme, provenance):
-        assert "48" in text and "104" in text and "five" in text.lower()
+        assert "48" in text and "114" in text and "five" in text.lower()
     assert "53 callable tools" in readme
-    assert "28 workflow skills" in readme
+    assert "29 workflow skills" in readme
     assert (ROOT / "CITATION.cff").is_file()
 
 

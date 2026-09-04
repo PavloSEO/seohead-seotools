@@ -37,6 +37,15 @@ MAX_DELAY_S = 60.0
 # more concurrent request. Slow to grow, fast to collapse.
 WIDEN_AFTER_CONSECUTIVE_OK = 3
 
+# A ceiling on the *configured* value, not on what the adaptive throttle will
+# actually use — ``concurrency`` starts low and earns its way up to whichever
+# of this or the caller's request is smaller (#14: "a hard ceiling on
+# concurrency that a config file alone cannot raise"). Enforced here, inside
+# the constructor, rather than only at the one call site that currently reads
+# a config value — so any caller building a ``Throttle`` directly, not only
+# ``crawl_site()``, is bound by it too.
+MAX_CONCURRENCY_CEILING = 16
+
 
 class Throttle:
     """Adaptive delay and concurrency for one origin."""
@@ -55,7 +64,7 @@ class Throttle:
         self.server_errors = 0
         # The ceiling is a configured, bounded fact; ``concurrency`` is what the
         # origin has earned so far, never more than the ceiling allows.
-        self.max_concurrency = max(1, int(max_concurrency))
+        self.max_concurrency = max(1, min(int(max_concurrency), MAX_CONCURRENCY_CEILING))
         self.concurrency = min(2, self.max_concurrency)
         self._consecutive_ok = 0
         self._lock = threading.Lock()

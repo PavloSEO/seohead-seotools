@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**104 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**114 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -181,18 +181,22 @@ python scripts/generate_checks_reference.py
 |---|---|---|---|---|
 | `CANONICAL_CHAIN` | warning | SF-derived | Canonical chain: the target canonicalizes to another URL (two or more steps) | Point the canonical directly to the final canonical URL in one step and break any canonical loops. |
 | `CANONICAL_TO_REDIRECT` | warning | SF-derived | Canonical points to a redirecting URL (3xx) | Point the canonical to the final 200-status URL; otherwise search engines must resolve conflicting canonical signals. |
+| `UNLINKED_CANONICAL` | warning | SF-derived | Canonical target has no hyperlink pointing to it anywhere in the crawl | Add an ordinary internal link to the canonical target, or confirm relying on the canonical alone for discovery is intentional. |
 | `HREFLANG_BROKEN_TARGET` | warning | inlinks:All Hreflang | Hreflang points to a redirecting or broken URL (3xx, 4xx, or 5xx) | Update hreflang to reference the final 200-status URL; redirecting or broken targets undermine localization signals and crawling. |
 | `HREFLANG_INVALID_CODE` | warning | inlinks:All Hreflang | Hreflang value is not a valid ISO 639-1 language / ISO 3166-1 region code | Use a valid language code, optionally followed by a valid region (e.g. en-GB, not en-UK). |
 | `HREFLANG_MULTIPLE_ENTRIES` | warning | inlinks:All Hreflang | The same hreflang value is declared more than once on the page | Declare each language/region combination exactly once; conflicting duplicates make the annotation ambiguous. |
 | `HREFLANG_MISSING_SELF_REFERENCE` | warning | inlinks:All Hreflang | Page declares hreflang alternates but does not reference itself | Every page in an hreflang set must include a self-referencing annotation for its own URL and language. |
 | `HREFLANG_MISSING_XDEFAULT` | notice | inlinks:All Hreflang | Hreflang set has no x-default fallback | Add an x-default annotation to catch users whose language/region does not match any declared alternate. |
 | `HREFLANG_NOT_CANONICAL` | warning | inlinks:All Hreflang | Hreflang points to a URL that is not itself the canonical version | Point hreflang annotations at each target's canonical URL, not at a duplicate that canonicalizes elsewhere. |
+| `HREFLANG_MISSING_RETURN_LINK` | warning | inlinks:All Hreflang | Another page's hreflang points here, but this page does not point back | Add a reciprocal hreflang annotation back to every page that names this one. |
 
 ## --- extension: pagination ---
 
 | Check id | Severity | Evidence | Fires on | Fix |
 |---|---|---|---|---|
 | `PAGINATION_NONINDEXABLE` | warning | SF-derived | Pagination page is non-indexable | Pagination pages should generally remain crawlable and indexable unless a deliberate alternative architecture is in place. |
+| `PAGINATION_LOOP` | warning | SF-derived | A rel="next" pagination series loops back on itself | Fix the rel="next"/rel="prev" values so the series terminates instead of cycling. |
+| `UNLINKED_PAGINATION_SERIES` | warning | SF-derived | A pagination series is reachable only by following rel="next", never by a hyperlink | Add an ordinary internal link to the first page of the series so it does not depend on rel="next" alone for discovery. |
 
 ## --- extension: links ---
 
@@ -202,6 +206,11 @@ python scripts/generate_checks_reference.py
 | `HIGH_EXTERNAL_OUTLINKS` | notice | SF:Links:Pages With High External Outlinks | Page has a high number of external outlinks | Review the links for editorial relevance, spam, and unnecessary dilution of page focus. |
 | `HIGH_OUTLINKS` | notice | SF:Links:Pages With High Outlinks | Page has an excessive number of outlinks | Reduce unnecessary links to preserve clear navigation and crawl focus. |
 | `GENERIC_ANCHOR_TEXT` | notice | inlinks:Anchor Text | Non-descriptive anchor text such as 'here', 'read more', or 'click here' | Replace it with meaningful anchor text that describes the destination for both search engines and screen-reader users. |
+| `LOW_LINK_SCORE` | notice | inlinks:All Inlinks | Internal link score is far below the site median | Add internal, followed links to the page from well-linked pages elsewhere on the site. |
+| `ONLY_NOFOLLOW_INLINKS` | warning | inlinks:All Inlinks | Every internal link to this page is nofollow | Add at least one ordinary, followed internal link so link equity and crawl priority reach the page. |
+| `ONLY_NONINDEXABLE_SOURCE_INLINKS` | warning | inlinks:All Inlinks | Every internal link to this page comes from a non-indexable source | Link to the page from at least one indexable page so it is reachable from the part of the site search engines actually rank. |
+| `DEEP_DISCOVERY_PATH` | notice | inlinks:All Inlinks | The shortest hyperlink route from the start page exceeds the configured depth | Add a shorter internal-linking route (e.g. from a hub or category page) so the page is reachable in fewer clicks. |
+| `INSECURE_SUBRESOURCE` | warning | inlinks:All Inlinks | An HTTPS page loads a resource (image, script, stylesheet, ...) over plain HTTP | Serve every page resource over HTTPS and update its URL accordingly. |
 
 ## --- extension: technical checks ---
 
@@ -220,3 +229,9 @@ python scripts/generate_checks_reference.py
 | `OG_MISSING` | notice | SF:Social:Open Graph | og:title is missing, so social previews may not render correctly | Add og:title, og:image, and og:url; at minimum, provide og:title and og:image for a useful preview. |
 | `IMG_OVER_KB` | warning | SF:Images:Over X KB | Image exceeds the configured file-size threshold | Compress the image and consider converting it to WebP or AVIF while preserving acceptable visual quality. |
 | `IMG_MISSING_DIMENSIONS` | notice | SF:Images:Missing Size Attributes | Image is missing width and height attributes | Declare intrinsic width and height values to reserve layout space and reduce CLS. |
+
+## handler layer rather than through a registered export requirement.
+
+| Check id | Severity | Evidence | Fires on | Fix |
+|---|---|---|---|---|
+| `INLINK_BOILERPLATE_ONLY` | warning | crawl:link_position | Page is linked only from navigation, header, sidebar, or footer, never from body content | Add a contextual link to the page from relevant body copy; a page reachable only through boilerplate is not linked the way a page in the content graph is. |

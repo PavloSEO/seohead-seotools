@@ -16,6 +16,34 @@ All notable public changes are documented here.
   real requests instead of always sending the toolkit's default. Add `crawl-describe-settings`
   (CLI) and `seo_crawl_describe_settings` (MCP) so an agent can discover the configuration surface
   without a filesystem (#23).
+- Add custom search (`tools/custom_search.py`) and custom extraction
+  (`tools/custom_extract.py`) over an already-crawled corpus: presence/absence filters
+  (raw source, visible text, a named CSS element, or an XPath node) and CSS/XPath/regex
+  extractors, both reporting which representation (static markup vs. rendered DOM) they ran
+  against. Absence is counted honestly: a page whose fetch failed is excluded from both the
+  numerator and the denominator rather than counted as missing. Extraction runs each
+  (document, extractor) pair under a wall-clock budget (`SIGALRM` on POSIX): a pathological
+  expression aborts only that document, and the run still finishes.
+- Add link position classification (`tools/link_position.py`): nav/header/sidebar/footer/content,
+  by ordered rule over a link's ancestor path, reusing `content_area.py`'s notion of content
+  rather than inventing a second one. Wired into `crawl/spider.py`'s link recording behind
+  `link_position.classify` (default off — a position per link costs memory on a large crawl) and
+  aggregated site-wide by `crawl/linkgraph.py`'s `inlink_composition`, which now feeds a new
+  `INLINK_BOILERPLATE_ONLY` audit finding for pages linked only from boilerplate. Registry grows
+  from 104 to 105 checks.
+- Add eight post-crawl second-pass computations that only become answerable once a crawl is
+  complete (issue #15): an internal link score computed from the `all_inlinks` edge graph
+  (`LOW_LINK_SCORE`); a canonical target no hyperlink ever points to (`UNLINKED_CANONICAL`);
+  `rel="next"` loop and unlinked-series detection (`PAGINATION_LOOP`,
+  `UNLINKED_PAGINATION_SERIES`); hreflang reciprocity (`HREFLANG_MISSING_RETURN_LINK`);
+  inlink-composition aggregates (`ONLY_NOFOLLOW_INLINKS`, `ONLY_NONINDEXABLE_SOURCE_INLINKS`);
+  the concrete shortest discovery path from the crawl seed (`DEEP_DISCOVERY_PATH`); a
+  self-computed mixed-content fallback (`INSECURE_SUBRESOURCE`); and near-duplicate clustering
+  from stored page text (`NEAR_DUPLICATE`/`DUPLICATE_BY_HASH`), wiring `tools/duplicate.py` and
+  `tools/content_area.py` into the audit for the first time. `ORPHAN_PAGE`, `SITEMAP_ORPHAN` and
+  the two new "unlinked" checks are now withheld — reported as a named skip, not a finding — on a
+  crawl the aggregator has marked partial, since "nothing links here" is unprovable on a
+  truncated crawl. Registry grows from 104 to 114 checks.
 - Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
   verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
   missing x-default, duplicate entries, non-canonical targets), two robots directives
@@ -72,6 +100,21 @@ All notable public changes are documented here.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
 - Require TLS 1.2 or newer and pin direct certificate probes to prevalidated public addresses.
+- Add an HTTP response cache for `crawl-site` (`seohead/crawl/cache.py`, opt-in via
+  `cache.mode` — default `off`, so no side effect appears behind a default): real HTTP freshness
+  semantics (`max-age`/`Expires`, `ETag`/`Last-Modified` revalidation, `Vary`-aware variants,
+  `no-store`/`no-cache` honoured), a `replay` mode for debugging that is stamped in the manifest
+  and never the default, and an `invalidate` flag for an explicit hard refresh. Every fetched
+  page carries `cache_status` (`hit`/`revalidated`/`miss`); the run carries `cache_stats` and
+  `cache_replay` in both the handler output and `audit.json`'s `run` block, so a report built
+  partly from cache says so. A cache hit costs no request and consumes no throttle delay or
+  concurrent dispatch-gate slot either — the wait is issued from inside `fetch_one` itself, only
+  once a real network round trip is actually about to happen.
+- Add journal-driven reuse to `seohead/runlog.py` (`SEOHEAD_REUSE_POLICY`, a per-tool maximum
+  age in seconds; default empty, meaning nothing is ever reused). A configured, still-fresh,
+  successful prior answer is returned instead of calling the tool again, marked `reused: true`
+  with `reused_from_ts` in both the result and the new journal entry it still writes — freshness
+  is always measured against when the value was actually fetched, never extended by reuse itself.
 
 ## 3.0.0 — first public snapshot
 

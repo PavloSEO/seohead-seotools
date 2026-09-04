@@ -408,6 +408,36 @@ def _print_config_help() -> None:
     print("* changes what the audit finds; recorded in the run manifest.")
 
 
+def _print_effective_rate(kwargs: dict[str, Any]) -> None:
+    """Print the worst-case requests/second a crawl-site run permits, before it runs.
+
+    Politeness is a combination of settings, not one knob (#14): printing the
+    derived number at startup, on stderr so the JSON result on stdout stays
+    clean, is what lets an operator catch a dangerous combination before the
+    crawl — rather than only from a killed process or a struggling site — and
+    it is what `--config`'s values actually resolve to, not just what the file
+    or flags said in isolation.
+    """
+    from seohead.crawl import settings as crawl_config
+
+    try:
+        resolved = crawl_config.load(
+            kwargs.get("config"),
+            overrides={
+                "limits.max_urls": kwargs.get("max_urls"),
+                "limits.max_depth": kwargs.get("max_depth"),
+                "speed.min_delay_seconds": kwargs.get("min_delay"),
+                "robots.policy": kwargs.get("robots"),
+                "output.dir": kwargs.get("out_dir"),
+            },
+        )
+    except crawl_config.ConfigError:
+        return  # the handler call below reports the same error to the user
+    rate = crawl_config.effective_request_rate(resolved)
+    shown = "unbounded" if rate == float("inf") else f"{rate:.2f} req/s"
+    print(f"crawl-site: effective worst-case request rate to one host: {shown}", file=sys.stderr)
+
+
 def _read_donors(path: str) -> list[str]:
     """Read one donor URL per line, ignoring blank lines and ``#`` comments."""
     with open(path, "r", encoding="utf-8") as fh:  # noqa: UP015 - explicit read-only contract
@@ -701,6 +731,8 @@ def main(argv: list[str] | None = None) -> int:
         handler_name, kwargs = _build_kwargs(cmd, args)
         report_fmt = kwargs.pop("_report", None)
         report_out = kwargs.pop("_out", None)
+        if cmd == "crawl-site":
+            _print_effective_rate(kwargs)
         result = handlers.HANDLERS[handler_name](**kwargs)
         if report_fmt and isinstance(result, dict) and result.get("ok"):
             # Build an optional report from the in-memory audit result. This keeps the structured
