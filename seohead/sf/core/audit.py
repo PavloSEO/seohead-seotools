@@ -20,7 +20,7 @@ from .inlinks import run_inlinks
 from .loader import load_exports
 from .models import AuditResult
 from .rules import run_rules
-from .sitemap import run_sitemap
+from .sitemap_coverage import run_sitemap
 
 CRAWL_MODES = {"crawl", "crawl-list", "load-crawl"}
 _VERSION_RE = re.compile(rb"(\d+\.\d+)")

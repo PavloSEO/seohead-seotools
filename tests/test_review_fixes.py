@@ -6,7 +6,7 @@ import gzip
 
 import pytest
 
-from seohead.sf.core import heuristics, sitemap
+from seohead.sf.core import heuristics, sitemap_coverage as sitemap
 from seohead.sf.core.aggregate import _fingerprint
 from seohead.sf.core.models import Issue
 from seohead.sf.core.rules import _path_of
