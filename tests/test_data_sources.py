@@ -181,7 +181,7 @@ def test_serp_body_never_asks_for_sync_search():
 
 def test_region_lookup_understands_both_official_and_api_names():
     """The official and API-specific names resolve to the same federal district."""
-    from seohead.data_sources import regions
+    from seohead.data_sources import yandex_regions as regions
 
     assert regions.by_name("Поволжье") == "40"
     assert regions.by_name("Приволжский") == "40"
@@ -189,21 +189,21 @@ def test_region_lookup_understands_both_official_and_api_names():
 
 
 def test_region_lookup_returns_none_for_unknown():
-    from seohead.data_sources import regions
+    from seohead.data_sources import yandex_regions as regions
 
     assert regions.by_name("Atlantis") is None
 
 
 def test_vladivostok_city_is_not_the_district():
     """Code 75 is the city and 73 the district; mixing them distorts demand data."""
-    from seohead.data_sources import regions
+    from seohead.data_sources import yandex_regions as regions
 
     assert regions.CITIES["Владивосток"] == "75"
     assert regions.DISTRICTS["Дальний Восток"] == "73"
 
 
 def test_every_district_alias_points_at_a_real_district():
-    from seohead.data_sources import regions
+    from seohead.data_sources import yandex_regions as regions
 
     assert all(target in regions.DISTRICTS for target in regions.DISTRICT_ALIASES.values())
 

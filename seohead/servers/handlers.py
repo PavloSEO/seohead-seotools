@@ -873,7 +873,7 @@ def regions_tree(save_to: str | None = None) -> dict[str, Any]:
     but some entries are documentation-derived rather than verified against the current API; use
     this live tree to validate an unfamiliar region before issuing a paid request.
     """
-    from seohead.data_sources import regions as regions_core
+    from seohead.data_sources import yandex_regions as regions_core
 
     return regions_core.fetch_tree(save_to=save_to)
 
