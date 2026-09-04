@@ -33,7 +33,8 @@ HOME = """<!doctype html>
 </head><body>
 <a class="skip-link" href="#content">Skip to content</a>
 <header><div class="branding">header</div><p>Call us any time on 555 0100</p></header>
-<nav><a href="/a/">Alpha</a> <a href="/b/">Beta</a> <a href="/legacy">Legacy</a></nav>
+<nav><a href="/a/">Alpha</a> <a href="/a">Alpha again, no slash</a>
+<a href="/b/">Beta</a> <a href="/legacy">Legacy</a></nav>
 <main id="content">
   <h1>Chain fixture home</h1>
   <p>The body of the home page, with enough words in it that the content region and the whole
