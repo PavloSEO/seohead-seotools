@@ -16,10 +16,14 @@ from seohead.tools.asset_weight import (
     check_cache_lifetime,
     check_compression,
     content_hash,
+    find_css_imports,
+    find_debug_code,
     find_duplicate_libraries,
     find_missing_font_display,
     find_render_blocking_resources,
+    find_source_map_comment,
     flag_outlier_pages,
+    has_document_write,
     is_render_blocking,
     looks_legacy_transpiled,
     looks_minified,
@@ -190,6 +194,88 @@ def test_legacy_transpile_markers_detected():
     assert looks_legacy_transpiled("require('core-js/modules/es.promise')")
     assert looks_legacy_transpiled("var regeneratorRuntime = {}")
     assert not looks_legacy_transpiled("const x = () => 1;")
+
+
+# ── issue #78: source maps, debug code, document.write, @import chains ──────
+
+
+def test_source_map_comment_found_in_js():
+    assert find_source_map_comment("var x=1;\n//# sourceMappingURL=app.js.map") == "app.js.map"
+
+
+def test_source_map_comment_found_in_css_block_comment():
+    css = "body{color:red}/*# sourceMappingURL=app.css.map */"
+    assert find_source_map_comment(css) == "app.css.map"
+
+
+def test_source_map_comment_absent_returns_none():
+    assert find_source_map_comment("var x = 1;") is None
+
+
+def test_source_map_inline_data_uri_is_not_reported():
+    # An inline map is never fetched over the network, so it is not "exposed".
+    encoded = "//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozfQ=="
+    assert find_source_map_comment(encoded) is None
+
+
+def test_source_map_last_comment_wins_when_more_than_one():
+    text = "//# sourceMappingURL=old.js.map\nvar x=1;\n//# sourceMappingURL=new.js.map"
+    assert find_source_map_comment(text) == "new.js.map"
+
+
+def _repeat_readable_js(block_count: int = 6) -> str:
+    block = (
+        "function calculateTotal(items) {\n"
+        "    console.log('debugging total calculation');\n"
+        "    let total = 0;\n"
+        "    for (const item of items) {\n"
+        "        total += item.price;\n"
+        "    }\n"
+        "    return total;\n"
+        "}\n\n"
+    )
+    return block * block_count
+
+
+def test_debug_code_flagged_in_minified_bundle():
+    minified = _minify(_repeat_readable_js())
+    assert "console.log(" in find_debug_code(minified)
+
+
+def test_debug_code_detects_debugger_and_alert():
+    minified = _minify("function f(){debugger;alert('hi');return 1;}" * 10)
+    markers = find_debug_code(minified)
+    assert "debugger" in markers
+    assert "alert(" in markers
+
+
+def test_debug_code_in_unminified_source_produces_nothing():
+    # Acceptance criterion: the same console.log call is noise, not a finding,
+    # in hand-authored (unminified) source.
+    assert find_debug_code(_repeat_readable_js()) == []
+
+
+def test_debug_code_absent_from_clean_minified_bundle():
+    minified = _minify("function f(){return 1;}" * 20)
+    assert find_debug_code(minified) == []
+
+
+def test_document_write_detected():
+    assert has_document_write("document.write('<script src=\"x.js\"></script>')")
+
+
+def test_document_write_absent():
+    assert not has_document_write("document.writeln('<p>x</p>')")  # not the same call
+    assert not has_document_write("console.log('no document.write here')")
+
+
+def test_css_import_targets_extracted_in_all_syntaxes():
+    css = '@import "a.css";@import url(b.css);@import url("c.css") screen;'
+    assert find_css_imports(css) == ["a.css", "b.css", "c.css"]
+
+
+def test_css_import_absent_returns_empty_list():
+    assert find_css_imports("body{color:red}") == []
 
 
 def test_cache_control_missing():
@@ -380,6 +466,120 @@ def test_duplicate_library_bundled_twice_is_caught_end_to_end():
         "https://example.com/vendor/lib.min.js",
         "https://example.com/chunks/9f.js",
     }
+
+
+def test_source_map_reported_only_when_the_target_actually_resolves():
+    site = {
+        "https://example.com/": FakeResponse(
+            text=(
+                "<html><head>"
+                '<script src="/app.js"></script>'
+                '<script src="/legacy.js"></script>'
+                "</head><body></body></html>"
+            )
+        ),
+        "https://example.com/app.js": FakeResponse(
+            text="var x=1;\n//# sourceMappingURL=app.js.map"
+        ),
+        "https://example.com/app.js.map": FakeResponse(text='{"version":3}'),
+        # legacy.js references a map that 404s: the comment exists but nothing
+        # is actually exposed, so it must not be reported.
+        "https://example.com/legacy.js": FakeResponse(
+            text="var y=2;\n//# sourceMappingURL=legacy.js.map"
+        ),
+        # /legacy.js.map deliberately absent -> the fetcher returns a 404
+    }
+
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+
+    assert result["exposed_source_maps"] == [
+        {"source": "https://example.com/app.js", "map_url": "https://example.com/app.js.map"}
+    ]
+    assert any("source map" in f for f in result["findings"])
+
+
+def test_debug_code_flagged_end_to_end_only_when_minified():
+    minified_with_console = _minify("function f(){console.log('x');return 1;}" * 15)
+    site = {
+        "https://example.com/": FakeResponse(
+            text=(
+                "<html><head>"
+                '<script src="/bad.js"></script>'
+                '<script src="/dev.js"></script>'
+                "</head><body></body></html>"
+            )
+        ),
+        "https://example.com/bad.js": FakeResponse(text=minified_with_console),
+        # Hand-authored (unminified): the same console.log call is noise here.
+        "https://example.com/dev.js": FakeResponse(text=_repeat_readable_js()),
+    }
+
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+
+    assert result["debug_code"] == [
+        {"url": "https://example.com/bad.js", "markers": ["console.log("]}
+    ]
+    assert any("debug code" in f for f in result["findings"])
+
+
+def test_document_write_flagged_end_to_end():
+    site = {
+        "https://example.com/": FakeResponse(
+            text='<html><head><script src="/inject.js"></script></head><body></body></html>'
+        ),
+        "https://example.com/inject.js": FakeResponse(
+            text="document.write('<script src=\"ads.js\"></script>')"
+        ),
+    }
+
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+
+    assert result["document_write"] == ["https://example.com/inject.js"]
+    assert any("document.write" in f for f in result["findings"])
+
+
+def test_css_import_chain_depth_follows_one_level():
+    site = {
+        "https://example.com/": FakeResponse(
+            text='<html><head><link rel="stylesheet" href="/a.css"></head><body></body></html>'
+        ),
+        # a.css imports b.css (depth so far: 1)...
+        "https://example.com/a.css": FakeResponse(text='@import "b.css"; .a{color:red}'),
+        # ...and b.css itself imports c.css, so the chain is confirmed 2 deep.
+        "https://example.com/b.css": FakeResponse(text='@import "c.css"; .b{color:blue}'),
+        "https://example.com/c.css": FakeResponse(text=".c{color:green}"),
+    }
+
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+
+    assert result["css_import_chains"] == [
+        {
+            "source": "https://example.com/a.css",
+            "import_url": "https://example.com/b.css",
+            "depth": 2,
+        }
+    ]
+    assert any("@import chain" in f for f in result["findings"])
+
+
+def test_css_import_without_further_chaining_is_depth_one():
+    site = {
+        "https://example.com/": FakeResponse(
+            text='<html><head><link rel="stylesheet" href="/a.css"></head><body></body></html>'
+        ),
+        "https://example.com/a.css": FakeResponse(text='@import "b.css"; .a{color:red}'),
+        "https://example.com/b.css": FakeResponse(text=".b{color:blue}"),
+    }
+
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+
+    assert result["css_import_chains"] == [
+        {
+            "source": "https://example.com/a.css",
+            "import_url": "https://example.com/b.css",
+            "depth": 1,
+        }
+    ]
 
 
 def test_a_broken_resource_is_reported_not_silently_dropped():
