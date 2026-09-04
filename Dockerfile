@@ -19,8 +19,14 @@ ARG EXTRAS=mcp,reports
 
 COPY pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md ./
 COPY seohead ./seohead
+# --no-compile skips pip's post-install compileall pass: PYTHONDONTWRITEBYTECODE
+# below only stops *runtime* imports from writing .pyc, it does nothing about
+# the ~67 MB of __pycache__ that compileall bakes in at install time. pip
+# itself (~13 MB) is removed once installation is done — the runtime image
+# only ever runs the `seohead` entry point, never pip.
 RUN python -m pip install --upgrade pip && \
-    python -m pip install ".[${EXTRAS}]"
+    python -m pip install --no-compile ".[${EXTRAS}]" && \
+    python -m pip uninstall -y pip
 
 FROM python:3.12-slim AS runtime
 
