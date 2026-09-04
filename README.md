@@ -77,6 +77,14 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
+### What it does end to end
+
+Individual tools are listed below; **[docs/scenarios/](docs/scenarios/README.md)** describes the
+chains — several tools in order, ending in something a person can act on. Ten of them, each
+with the real commands, the artifact that comes out, what it costs, and what that chain cannot
+answer. Start there if you are evaluating what this repository is for; every command shown in
+those files is executed against a fixture site on every CI run.
+
 ### 49 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |

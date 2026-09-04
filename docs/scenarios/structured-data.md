@@ -1,0 +1,70 @@
+# Scenario 5 — Structured data: from "we have markup" to a rich result
+
+## The question
+
+> We added Schema.org months ago and still get no rich results. What is wrong with it?
+
+## The chain
+
+**1. Read what the page actually declares.**
+
+```bash
+seohead schema-check --url https://example.com/page
+```
+
+Two layers, reported separately because they fail for different reasons: vocabulary validity
+(is this a real Schema.org type, are these real properties, is anything deprecated) and
+rich-result eligibility (does Google's own requirement list for this type have everything it
+needs).
+
+**2. Check whether the markup survives the crawl at scale.** `pages.jsonl` records
+`jsonld_blocks_found` against `jsonld_blocks_parsed` per page:
+
+```bash
+seohead crawl-site --url https://example.com --out-dir ./run
+```
+
+"Found 3, parsed 2" on one page is a malformed block. Reporting "no structured data" for that
+page would describe a different page — which is why both numbers are kept.
+
+**3. Generate the graph that is missing.**
+
+```bash
+seohead schema-build --url https://example.com/page
+```
+
+It reads the page and builds the `@graph` that page should carry, rather than asking you to
+describe it. The point is the connected graph — `Organization` ← `WebSite` ← `WebPage` ← the page's own
+type — not an isolated blob per page. Isolated blobs are the most common reason correct markup
+produces nothing.
+
+**4. Confirm the page as a whole.**
+
+```bash
+seohead parse --url https://example.com/page
+```
+
+## What comes out
+
+```json
+{
+  "types": ["LocalBusiness"],
+  "vocabulary": {"unknown_properties": ["opening_hours"], "deprecated": []},
+  "rich_result": {"eligible": false, "missing": ["address", "telephone"]}
+}
+```
+
+`opening_hours` is not a Schema.org property — `openingHours` is. That single underscore is a
+common and entirely invisible failure.
+
+## What it costs
+
+One request per page checked. Nothing paid, no Google API involved.
+
+## What it cannot answer
+
+- **Whether Google will show a rich result.** Eligibility is necessary, not sufficient: Google
+  decides, and quality and trust signals nobody can read are part of it.
+- **Whether the data is true.** Nothing verifies that the declared address or price is real.
+  Markup that contradicts the visible page is a manual-action risk this cannot see.
+- **Markup injected after load.** See [scenario 4](rendering.md).

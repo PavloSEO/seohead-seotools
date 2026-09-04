@@ -4,6 +4,13 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `docs/scenarios/`: ten end-to-end chains, each with the real commands in order, the
+  artifact that comes out, what it costs, and what that chain cannot answer (#110). The
+  rest of the documentation lists what the toolkit has; this describes what it does. Linked
+  from the README above the tool list, so an agent evaluating the repository finds the
+  chains before the inventory. Every command shown is executed against the fixture site by
+  `tests/test_docs_commands_execute.py`, whose extractor and whose English-only and count
+  gates now walk `docs/` at every level rather than only its top.
 - Add `log-scan` (CLI) and `seo_log_scan` (MCP): read a finished run's own artifacts and
   report claims that cannot all be true at once (#109). Eight rules, each written from a
   defect that shipped past the whole test suite — a recorded size that disagrees with the

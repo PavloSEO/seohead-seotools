@@ -28,7 +28,7 @@ from seohead.sf.core.registry import CHECKS
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCS = sorted(
     p
-    for p in list(ROOT.glob("*.md")) + list((ROOT / "docs").glob("*.md"))
+    for p in list(ROOT.glob("*.md")) + list((ROOT / "docs").glob("**/*.md"))
     if p.name != "CHANGELOG.md"  # a changelog records what was true at the time
 )
 

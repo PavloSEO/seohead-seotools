@@ -99,6 +99,9 @@ def _seed_workdir(tmp_path: Path, base_url: str) -> None:
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "old-audit.json")
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "new-audit.json")
     shutil.copy(ROOT / "config.example.json", tmp_path / "config.json")
+    # A finished, internally consistent crawl output, so a documented `log-scan --run ./run`
+    # actually scans something instead of reporting that the directory is empty.
+    shutil.copytree(ROOT / "tests" / "doc_fixtures" / "run", tmp_path / "run")
     (tmp_path / "report").mkdir()
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "report" / "audit.json")
     (tmp_path / "crawl.json").write_text(json.dumps({"limits": {"max_urls": 5}}), encoding="utf-8")
