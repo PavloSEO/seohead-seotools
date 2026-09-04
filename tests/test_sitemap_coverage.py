@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
+
+import pytest
+
 from seohead.sf.core import sitemap_coverage as S
 
 NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
@@ -77,3 +81,35 @@ def test_xxe_payload_rejected():
         b"<urlset><url><loc>&e;</loc></url></urlset>"
     )
     assert S._parse_sitemap_bytes(xxe, "ua", 1, set(), set()) == []
+
+
+def test_fetch_rejects_non_http_schemes():
+    # SSRF/file-read guard: never touch file://, ftp://, etc. (no network needed)
+    assert S._fetch("file:///etc/passwd", "ua", 1) is None
+    assert S._fetch("ftp://host/x", "ua", 1) is None
+
+
+def test_gunzip_bomb_guarded(monkeypatch):
+    monkeypatch.setattr(S, "MAX_DECOMPRESSED_BYTES", 1000)
+    bomb = gzip.compress(b"A" * 50_000)  # expands well past the lowered cap
+    with pytest.raises(ValueError):
+        S._safe_gunzip(bomb)
+
+
+def test_sitemap_rejects_dtd_and_entities():
+    xxe = (
+        b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>'
+        b"<urlset><url><loc>&e;</loc></url></urlset>"
+    )
+    assert S._parse_sitemap_bytes(xxe, "ua", 1, set(), set()) == []
+
+
+def test_sitemap_parses_clean_urlset():
+    xml = (
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/a</loc><lastmod>2025-01-01</lastmod></url>"
+        b"<url><loc>https://example.com/b</loc></url></urlset>"
+    )
+    out = S._parse_sitemap_bytes(xml, "ua", 1, set(), {"x.com"})
+    assert [e["loc"] for e in out] == ["https://example.com/a", "https://example.com/b"]
+    assert out[0]["lastmod"] == "2025-01-01"
