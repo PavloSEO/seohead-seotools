@@ -373,20 +373,20 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
 
 
 def _print_config_help() -> None:
-    """List every crawl-site config setting, generated from seohead.crawl.config.
+    """List every crawl-site config setting, generated from seohead.crawl.settings.
 
     One source of truth: this reads the same DEFAULTS/DESCRIPTIONS that the
     config file loader validates against, so a setting cannot be added to the
     module without becoming visible here.
     """
-    from seohead.crawl import config as crawl_config
+    from seohead.crawl import settings as crawl_settings
 
     print(
-        "Crawler config settings (seohead/crawl/config.py). Set these in a JSON file passed to "
+        "Crawler config settings (seohead/crawl/settings.py). Set these in a JSON file passed to "
         '--config, e.g. {"limits": {"max_urls": 50}}.'
     )
     print()
-    for setting in crawl_config.describe_settings():
+    for setting in crawl_settings.describe_settings():
         marker = "*" if setting["results_affecting"] else " "
         print(f"{marker} {setting['path']} ({setting['type']}, default {setting['default']!r})")
         print(f"      {setting['description']}")

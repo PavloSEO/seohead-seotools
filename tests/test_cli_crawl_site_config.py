@@ -11,7 +11,7 @@ import io
 import pytest
 
 from seohead import cli
-from seohead.crawl import config as crawl_config
+from seohead.crawl import settings as crawl_settings
 from seohead.servers import handlers
 
 # A generous but real ceiling: CI fails if crawl-site --help grows past this,
@@ -52,7 +52,7 @@ def test_config_help_lists_every_setting_from_the_config_module(capsys):
     rc = cli.main(["crawl-site", "--config-help"])
     assert rc == 0
     out = capsys.readouterr().out
-    for row in crawl_config.describe_settings():
+    for row in crawl_settings.describe_settings():
         assert row["path"] in out, row["path"]
 
 

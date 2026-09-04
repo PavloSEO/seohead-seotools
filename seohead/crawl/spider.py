@@ -25,7 +25,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
 from seohead.crawl.collect import CrawlResult, PageRecord, _write, fetch_one
-from seohead.crawl.config import resolve_credential_headers
+from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots

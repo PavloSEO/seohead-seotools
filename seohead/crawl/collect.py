@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
-from seohead.crawl.config import resolve_credential_headers
+from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import UA, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
