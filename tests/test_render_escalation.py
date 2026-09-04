@@ -284,3 +284,122 @@ def test_a_page_never_rendered_is_left_untouched():
     apply_rendered_evidence([record], [], EscalationResult())
     assert record.title == "Original"
     assert record.representation == "static"
+
+
+# ── #143: an empty-shell render must never overwrite a healthy raw record ───
+
+
+def test_an_empty_shell_render_leaves_a_healthy_raw_record_untouched():
+    """render_fetch can return ok:True for a page that crashed client-side after
+    load: no exception, no navigation error, just a blank mount point. That must
+    not be indistinguishable from a real, fuller render.
+    """
+    from seohead.crawl.collect import PageRecord
+
+    record = PageRecord(
+        url="https://example.com/product/1",
+        title="Wireless Mouse - Acme Store",
+        meta_description="Buy the Acme wireless mouse, free shipping.",
+        h1="Wireless Mouse",
+        canonical="https://example.com/product/1",
+        word_count=420,
+        representation="static",
+    )
+    result = EscalationResult()
+    result.representations[record.url] = "rendered"
+    result.rendered[record.url] = {
+        "ok": True,
+        "html": '<html><body><div id="root"></div></body></html>',
+        "final_url": record.url,
+    }
+
+    apply_rendered_evidence([record], [], result)
+
+    assert record.title == "Wireless Mouse - Acme Store"
+    assert record.meta_description == "Buy the Acme wireless mouse, free shipping."
+    assert record.h1 == "Wireless Mouse"
+    assert record.canonical == "https://example.com/product/1"
+    assert record.word_count == 420
+    assert record.representation == "static"
+    assert result.degenerate_render_urls == [record.url]
+
+
+def test_a_render_that_is_thinner_but_still_real_is_applied_and_visible():
+    """The floor guard rejects a blank shell, not a page that is genuinely
+    thinner once JavaScript runs (hydration removing content a non-rendering
+    crawler cannot see is a real finding, not a failed render) -- that finding
+    must reach the report as the rendered numbers, not be silently kept as the
+    raw ones.
+    """
+    from seohead.crawl.collect import PageRecord
+
+    record = PageRecord(
+        url="https://example.com/product/1",
+        title="Wireless Mouse - Acme Store",
+        h1="Wireless Mouse",
+        canonical="https://example.com/product/1",
+        word_count=200,
+        representation="static",
+    )
+    words = " ".join(f"word{i}" for i in range(60))
+    rendered_html = (
+        f"<html><head><title>Acme Store</title></head><body><p>{words}</p></body></html>"
+    )
+    result = EscalationResult()
+    result.representations[record.url] = "rendered"
+    result.rendered[record.url] = {
+        "ok": True,
+        "html": rendered_html,
+        "final_url": record.url,
+    }
+
+    apply_rendered_evidence([record], [], result)
+
+    assert result.degenerate_render_urls == []
+    assert record.representation == "rendered"
+    assert record.title == "Acme Store"
+    # The reduced word count is the real, rendered figure -- not swallowed.
+    assert record.word_count == 60
+
+
+# ── #139: every body-derived field is recomputed from the rendered body ─────
+
+
+def test_render_escalation_recomputes_size_bytes_text_ratio_and_jsonld():
+    from seohead.crawl.collect import PageRecord
+
+    # An empty SPA shell, exactly as a static-only fetch would have measured it.
+    record = PageRecord(
+        url="https://example.com/article/1",
+        size_bytes=109,
+        text_ratio=0.0,
+        word_count=0,
+        jsonld_blocks_found=0,
+        jsonld_blocks_parsed=0,
+        representation="static",
+    )
+    words = " ".join(f"word{i}" for i in range(200))
+    rendered_html = (
+        "<html><head><title>Real Article</title>"
+        '<script type="application/ld+json">'
+        '{"@context": "https://schema.org", "@type": "Article", "headline": "Real Article"}'
+        "</script></head>"
+        f"<body><h1>Real Article</h1><p>{words}</p></body></html>"
+    )
+    result = EscalationResult()
+    result.representations[record.url] = "rendered"
+    result.rendered[record.url] = {
+        "ok": True,
+        "html": rendered_html,
+        "final_url": record.url,
+    }
+
+    apply_rendered_evidence([record], [], result)
+
+    assert record.representation == "rendered"
+    assert record.word_count >= 200
+    # None of these four stayed at the static shell's pre-render values.
+    assert record.size_bytes == len(rendered_html.encode("utf-8"))
+    assert record.text_ratio is not None and record.text_ratio > 0.0
+    assert record.jsonld_blocks_found == 1
+    assert record.jsonld_blocks_parsed == 1
