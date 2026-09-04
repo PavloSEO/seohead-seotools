@@ -21,12 +21,14 @@ Public API:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from html import unescape
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from seohead.models import LinkInfo, ParsedPage, ParseResult
 from seohead.recon.net import http_client
 from seohead.tools.content_area import extract_area_text, resolve_content_area
 
@@ -117,7 +119,7 @@ def is_external(href_abs: str, base_url: str) -> bool:
     return target.lower() != base.lower()
 
 
-def _resolve_options(options: dict | None) -> dict[str, bool]:
+def _resolve_options(options: dict[str, Any] | None) -> dict[str, bool]:
     """Normalize the options dict: every flag defaults to True except url_sources."""
     options = options or {}
     return {key: bool(options.get(key, key != "url_sources")) for key in _OPTION_KEYS}
@@ -126,8 +128,12 @@ def _resolve_options(options: dict | None) -> dict[str, bool]:
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     """Return the ``content`` of ``<meta name=...>`` (case-insensitive)."""
     tag = soup.find("meta", attrs={"name": _ci(name)})
-    if tag and tag.get("content") is not None:
-        return collapse_whitespace(tag.get("content"))
+    # "content" is not one of BeautifulSoup's multi-valued attributes, so this
+    # is always a plain string at runtime; the stub types it broadly because
+    # .get() is generic across every attribute.
+    content = cast("str | None", tag.get("content")) if tag else None
+    if content is not None:
+        return collapse_whitespace(content)
     return None
 
 
@@ -204,7 +210,7 @@ def robots_directives(*values: str | None) -> set[str]:
     return tokens
 
 
-def _ci(value: str):
+def _ci(value: str) -> Callable[[Any], bool]:
     """A case-insensitive attribute matcher for BeautifulSoup ``find``."""
     target = value.lower()
     return lambda v: isinstance(v, str) and v.lower() == target
@@ -289,7 +295,8 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
             href = match.group(1).strip()
     else:
         for tag in document.find_all("base"):
-            candidate = (tag.get("href") or "").strip()
+            # "href" is single-valued, so this is always a plain string.
+            candidate = (cast("str | None", tag.get("href")) or "").strip()
             if candidate:
                 href = candidate
                 break
@@ -301,7 +308,7 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
         return final_url
 
 
-def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[dict[str, Any]]:
+def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[LinkInfo]:
     """Collect ``<a href>`` links resolved against ``base_url``.
 
     ``base_url`` resolves the hrefs; ``final_url`` decides what counts as
@@ -313,9 +320,10 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[d
     href, anchor text, rel tokens, a ``nofollow`` flag, and an ``external``
     flag.
     """
-    links: list[dict[str, Any]] = []
+    links: list[LinkInfo] = []
     for tag in soup.find_all("a"):
-        href_raw = (tag.get("href") or "").strip()
+        # "href" is single-valued, so this is always a plain string.
+        href_raw = (cast("str | None", tag.get("href")) or "").strip()
         if not href_raw:
             continue
         lowered = href_raw.lower()
@@ -330,7 +338,7 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[d
             abs_href = urljoin(base_url, href_raw)
         except ValueError:
             continue
-        rel_attr = tag.get("rel") or []
+        rel_attr: str | list[str] = tag.get("rel") or []
         # BeautifulSoup returns rel as a list; normalize to lowercase tokens.
         rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
         rel_tokens = [t.lower() for t in rel_tokens]
@@ -380,7 +388,7 @@ def _split_srcset(value: str) -> list[str]:
 _CSS_URL_RE = re.compile(r"""url\(\s*(['"]?)([^'")]+)\1\s*\)""", re.IGNORECASE)
 
 
-def extract_css_urls(css_text: str) -> list[str]:
+def extract_css_urls(css_text: str | None) -> list[str]:
     """URLs referenced from CSS text, in source order, duplicates kept.
 
     Deliberately not limited to ``background-image``: ``border-image``,
@@ -451,7 +459,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
         if isinstance(equiv, list):
             equiv = " ".join(equiv)
         if equiv.lower().strip() == "refresh":
-            content = meta.get("content") or ""
+            # "content" is single-valued, so this is always a plain string.
+            content = cast("str | None", meta.get("content")) or ""
             match = re.search(r"url\s*=\s*['\"]?([^\s'\"]+)", content, re.IGNORECASE)
             if match:
                 push(match.group(1), "meta", "refresh")
@@ -485,7 +494,7 @@ def image_url_sources(url_sources: list[dict[str, str]]) -> list[dict[str, str]]
     ]
 
 
-def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[str, Any]:
+def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None) -> ParsedPage:
     """Extract SEO data from an HTML string (pure — no network).
 
     Honors each option flag; skips the corresponding extraction when False.
@@ -514,7 +523,8 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
 
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
-        href = canonical_tag.get("href") if canonical_tag else None
+        # "href" is single-valued, so this is always a plain string.
+        href = cast("str | None", canonical_tag.get("href")) if canonical_tag else None
         result["canonical"] = urljoin(base_url, href.strip()) if href else None
     else:
         result["canonical"] = None
@@ -523,7 +533,8 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         og: dict[str, str] = {}
         twitter: dict[str, str] = {}
         for tag in soup.find_all("meta"):
-            content = tag.get("content")
+            # "content" is single-valued, so this is always a plain string.
+            content = cast("str | None", tag.get("content"))
             if content is None:
                 continue
             prop = tag.get("property")
@@ -572,14 +583,17 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         result["content_area_strategy"] = None
         result["word_count"] = 0
 
-    return result
+    # Built imperatively above (one assignment per option branch) rather than as
+    # one literal, so a plain dict is the natural builder; cast once at the
+    # boundary instead of restructuring the loop above around a TypedDict literal.
+    return cast(ParsedPage, result)
 
 
-def _rel_has(token: str):
+def _rel_has(token: str) -> Callable[[Any], bool]:
     """Match a ``rel`` attribute (list or string) that contains ``token``."""
     target = token.lower()
 
-    def _matcher(value) -> bool:
+    def _matcher(value: Any) -> bool:
         if value is None:
             return False
         tokens = value.split() if isinstance(value, str) else list(value)
@@ -591,7 +605,7 @@ def _rel_has(token: str):
 # ── FETCH + PARSE ─────────────────────────────────────────────────────────────
 
 
-def parse_url(url: str, options: dict | None = None) -> dict[str, Any]:
+def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """Fetch ``url`` and return its extracted SEO data.
 
     ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,

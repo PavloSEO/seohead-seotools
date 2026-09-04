@@ -27,6 +27,13 @@ jobs:
       - run: python -m pip install -e ".[dev,mcp,cluster,reports]"
       - run: ruff check .
       - run: ruff format --check .
+      - name: Type-check the covered surface (issue #31)
+        run: |
+          # Explicit file list, not `mypy seohead`: passing the package would check
+          # every file as a source target (follow_imports=silent only silences
+          # imports OUTSIDE these targets) and pull in modules not annotated yet.
+          # Extend this list only as a module is brought fully under the checker.
+          mypy seohead/models.py seohead/tools/parser.py seohead/tools/robots.py
       - run: pytest --cov=seohead --cov-report=term-missing
 
   contracts:

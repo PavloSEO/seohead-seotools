@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from seohead import runlog
+from seohead.models import ParseManyResult, RobotsCheckResult
 from seohead.tools import (
     asset_weight,
     clusterer,
@@ -44,7 +45,7 @@ DEFAULT_PARSE_OPTIONS: dict[str, bool] = {
 
 def parse(
     url: str | None = None, urls: list[str] | None = None, options: dict[str, Any] | None = None
-) -> dict[str, Any]:
+) -> ParseManyResult:
     targets = urls if isinstance(urls, list) else ([url] if url else [])
     if not targets:
         raise ValueError("url or urls[] required")
@@ -311,7 +312,7 @@ def keywords_cluster(**params: Any) -> dict[str, Any]:
 
 def robots_check(
     url: str | None = None, user_agent: str = "*", paths: list[str] | None = None
-) -> dict[str, Any]:
+) -> RobotsCheckResult:
     if not url:
         raise ValueError("url required")
     return robots_core.check_robots(url, user_agent=user_agent, paths=paths)
