@@ -181,7 +181,14 @@ CATEGORIES: dict[str, list[Entry]] = {
         _c("Grammar Errors", "GRAMMAR_ERRORS", note="from an SF export column; not computed"),
         _t("Soft 404 Pages", "soft404-check"),
         _g("Lorem Ipsum Placeholder", "no placeholder-text detection"),
-        _c("Near Duplicates", "NEAR_DUPLICATE"),
+        _p(
+            "Near Duplicates",
+            'an SF export\'s native "No. Near Duplicates" column is read directly and answers '
+            "this fully; the SimHash-based fallback that answers it without one needs HTML "
+            "stored to disk (input.html_store_dir), which a native `crawl-site` run never "
+            "writes, so that run always skips this one by name instead",
+            "NEAR_DUPLICATE",
+        ),
         _g(
             "Semantically Similar",
             "needs embeddings; simhash finds near-duplicates by shingles, not by meaning",
@@ -349,7 +356,12 @@ CATEGORIES: dict[str, list[Entry]] = {
         _c("XML Sitemap Over 50mb", "SITEMAP_TOO_LARGE"),
         _c("URLs Not In Sitemap", "URL_NOT_IN_SITEMAP"),
         _c("Orphan URLs", "SITEMAP_ORPHAN", "ORPHAN_PAGE"),
-        _c("Non-Indexable URLs In Sitemap", "SITEMAP_URL_NON_INDEXABLE"),
+        _p(
+            "Non-Indexable URLs In Sitemap",
+            "reads an SF Sitemaps:* comparison export directly; a native `crawl-site` run "
+            "produces no equivalent, so that run always skips this one by name instead",
+            "SITEMAP_URL_NON_INDEXABLE",
+        ),
         _c("URLs In Multiple Sitemaps", "SITEMAP_URL_DUPLICATED"),
     ],
     "PageSpeed": [
@@ -370,7 +382,14 @@ CATEGORIES: dict[str, list[Entry]] = {
         _o("Reduce Unused JavaScript", "needs coverage instrumentation from a real render"),
         _o("Reduce JavaScript Execution Time", "needs a CPU profile"),
         _o("Minimize Main-Thread Work", "needs a CPU profile"),
-        _c("Optimize DOM Size", "DOM_TOO_MANY_NODES", "DOM_TOO_DEEP"),
+        _p(
+            "Optimize DOM Size",
+            "needs HTML stored to disk (input.html_store_dir) to measure; a Screaming Frog "
+            "export configured to store HTML supplies it, but a native `crawl-site` run never "
+            "writes one, so that run always skips both by name instead",
+            "DOM_TOO_MANY_NODES",
+            "DOM_TOO_DEEP",
+        ),
         _t("Font Display", "asset-weight-check"),
     ],
     "Mobile": [

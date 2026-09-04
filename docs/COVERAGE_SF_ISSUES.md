@@ -15,16 +15,16 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| check | 96 | a registry check finds it |
+| check | 93 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
-| partial | 17 | we find part of it; the missing part is stated |
+| partial | 20 | we find part of it; the missing part is stated |
 | gap | 38 | we should find it and do not |
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-remaining 212 issues, **129 are found today**, 17 are
+remaining 212 issues, **126 are found today**, 20 are
 found in part, 38 are gaps worth closing, and
 28 need something we have decided not to build.
 
@@ -141,7 +141,7 @@ having, because the alternative is an absence nobody has noticed.
 | Grammar Errors | check | `GRAMMAR_ERRORS` | from an SF export column; not computed |
 | Soft 404 Pages | tool | `soft404-check` |  |
 | Lorem Ipsum Placeholder | gap | — | no placeholder-text detection |
-| Near Duplicates | check | `NEAR_DUPLICATE` |  |
+| Near Duplicates | partial | `NEAR_DUPLICATE` | an SF export's native "No. Near Duplicates" column is read directly and answers this fully; the SimHash-based fallback that answers it without one needs HTML stored to disk (input.html_store_dir), which a native `crawl-site` run never writes, so that run always skips this one by name instead |
 | Semantically Similar | gap | — | needs embeddings; simhash finds near-duplicates by shingles, not by meaning |
 | Low Relevance Content | gap | — | needs a query or a topic model to be relevant to |
 | Low Content Pages | check | `THIN_CONTENT` `LOW_TEXT_RATIO` |  |
@@ -276,7 +276,7 @@ having, because the alternative is an absence nobody has noticed.
 | XML Sitemap Over 50mb | check | `SITEMAP_TOO_LARGE` |  |
 | URLs Not In Sitemap | check | `URL_NOT_IN_SITEMAP` |  |
 | Orphan URLs | check | `SITEMAP_ORPHAN` `ORPHAN_PAGE` |  |
-| Non-Indexable URLs In Sitemap | check | `SITEMAP_URL_NON_INDEXABLE` |  |
+| Non-Indexable URLs In Sitemap | partial | `SITEMAP_URL_NON_INDEXABLE` | reads an SF Sitemaps:* comparison export directly; a native `crawl-site` run produces no equivalent, so that run always skips this one by name instead |
 | URLs In Multiple Sitemaps | check | `SITEMAP_URL_DUPLICATED` |  |
 
 ## PageSpeed
@@ -300,7 +300,7 @@ having, because the alternative is an absence nobody has noticed.
 | Reduce Unused JavaScript | out of scope | — | needs coverage instrumentation from a real render |
 | Reduce JavaScript Execution Time | out of scope | — | needs a CPU profile |
 | Minimize Main-Thread Work | out of scope | — | needs a CPU profile |
-| Optimize DOM Size | check | `DOM_TOO_MANY_NODES` `DOM_TOO_DEEP` |  |
+| Optimize DOM Size | partial | `DOM_TOO_MANY_NODES` `DOM_TOO_DEEP` | needs HTML stored to disk (input.html_store_dir) to measure; a Screaming Frog export configured to store HTML supplies it, but a native `crawl-site` run never writes one, so that run always skips both by name instead |
 | Font Display | tool | `asset-weight-check` |  |
 
 ## Mobile

@@ -186,6 +186,25 @@ def _base_url(ctx: AuditContext) -> str | None:
     return counts.most_common(1)[0][0] if counts else None
 
 
+def _site_target(ctx: AuditContext, base: str | None) -> str | None:
+    """A site-wide finding's URL, in the form this run actually recorded it.
+
+    ``_base_url`` returns a bare origin because that is what a robots.txt or
+    sitemap fetch needs. A finding is read by a person, though, and an origin
+    without a path matches no row in ``pages.jsonl`` -- so a site-wide finding
+    aimed at it names a URL the reader cannot look up in the very run that
+    reported it. Prefer the crawled home page; fall back to the origin only
+    when the crawl never fetched one.
+    """
+    if base is None:
+        return None
+    for candidate in (base, base + "/"):
+        for page in ctx.pages:
+            if page.url == candidate:
+                return page.url
+    return base
+
+
 # --------------------------------------------------------------------------
 # lastmod parsing
 # --------------------------------------------------------------------------
@@ -284,7 +303,9 @@ def _check_protocol_limits(
 # --------------------------------------------------------------------------
 # main entry
 # --------------------------------------------------------------------------
-def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, Any]:
+def run_sitemap(
+    ctx: AuditContext, sitemap_url: str | None = None, compare_with_crawl: bool = True
+) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     cfg_live = ctx.config.get("live_recheck", {})
     ua = cfg_live.get(
@@ -317,7 +338,7 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
             sitemaps_declared = SITEMAP_DIRECTIVE.findall(robots_text)
             declared_in_robots = bool(sitemaps_declared)
             if not declared_in_robots:
-                ctx.add("SITEMAP_NOT_IN_ROBOTS", target_url=base)
+                ctx.add("SITEMAP_NOT_IN_ROBOTS", target_url=_site_target(ctx, base))
             # robots blocking render-critical resources breaks Google's rendering
             disallows = re.findall(r"(?im)^\s*disallow:\s*(\S+)", robots_text)
             res_re = re.compile(
@@ -326,7 +347,9 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
             blocked_res = [d for d in disallows if res_re.search(d)]
             if blocked_res:
                 ctx.add(
-                    "ROBOTS_BLOCKS_RESOURCES", target_url=base, details={"rules": blocked_res[:10]}
+                    "ROBOTS_BLOCKS_RESOURCES",
+                    target_url=_site_target(ctx, base),
+                    details={"rules": blocked_res[:10]},
                 )
         targets = [sitemap_url] if sitemap_url else (sitemaps_declared or [f"{base}/sitemap.xml"])
         # SSRF allow-list: the base host plus the hosts of explicitly-given sitemaps.
@@ -358,8 +381,33 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
                 target_url=base,
                 details={"failed_count": len(fetch_failures), "examples": fetch_failures[:10]},
             )
+    else:
+        # No sitemap URL is known (no export, no explicit sitemap_url, live_recheck
+        # off) or the crawl never resolved a base host to check robots.txt against
+        # -- either way robots.txt was never fetched, so nothing here can honestly
+        # answer whether it declares a sitemap or blocks a resource path.
+        reason = (
+            "no sitemap URL to check (no export, no --sitemap, and live_recheck disabled)"
+            if not want_network
+            else "could not determine the crawled site's base URL"
+        )
+        ctx.skip("SITEMAP_NOT_IN_ROBOTS", reason)
+        ctx.skip("ROBOTS_BLOCKS_RESOURCES", reason)
+        ctx.skip("SITEMAP_FETCH_INCOMPLETE", reason)
 
     _check_protocol_limits(ctx, sitemap_documents, sitemap_entries, summary)
+    # Both lists come only from the live parse above; an export never fills them
+    # (see _urls_from_export/sf_in for the export-driven half). No document at all
+    # means the protocol-limit checks have nothing to measure; no entry at all
+    # means there is nothing to compare across sitemaps or date-check.
+    if not sitemap_documents:
+        reason = "no sitemap document was fetched to measure"
+        ctx.skip("SITEMAP_TOO_MANY_URLS", reason)
+        ctx.skip("SITEMAP_TOO_LARGE", reason)
+    if not sitemap_entries:
+        reason = "no sitemap entries were fetched to compare"
+        ctx.skip("SITEMAP_URL_DUPLICATED", reason)
+        ctx.skip("SITEMAP_STALE_LASTMOD", reason)
 
     # Prefer the richer source for the URL set / lastmod analysis.
     sitemap_locs = [e["loc"] for e in sitemap_entries] or sf_in
@@ -380,7 +428,16 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
         if sitemap_set:
             page.metrics["is_in_sitemap"] = page.url in sitemap_set
 
-    if sitemap_set:
+    if sitemap_set and not compare_with_crawl:
+        # The caller reconciles the sitemap against its own crawl and owns these
+        # findings (see seohead.crawl.reconcile.reconcile_sitemap, wired in
+        # handlers.crawl_site). Emitting here as well would answer one question
+        # twice with two different degrees of rigour -- and this side compares
+        # against the whole page list rather than the comparable subset, so it
+        # is the cruder of the two. Skipping by name keeps the check accounted
+        # for; it is not silently absent.
+        ctx.skip("SITEMAP_DESYNC", "the caller reconciles the sitemap against its own crawl")
+    elif sitemap_set:
         threshold = ctx.thresholds["sitemap_desync_pct_warn"]
         # direction 1: indexable pages crawled but missing from the sitemap
         crawl_only_pct = round(100 * len(in_crawl_not_sitemap) / max(len(indexable), 1), 1)
@@ -389,7 +446,7 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
         if crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
             ctx.add(
                 "SITEMAP_DESYNC",
-                target_url=base,
+                target_url=_site_target(ctx, base),
                 details={
                     "in_crawl_not_in_sitemap": len(in_crawl_not_sitemap),
                     "in_sitemap_not_in_crawl": len(in_sitemap_not_crawl),

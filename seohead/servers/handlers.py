@@ -282,7 +282,11 @@ def crawl_site(
     ``sitemap`` (or ``sitemaps.auto_discover`` in ``config``) seeds the crawl
     from a sitemap's declared URLs, in addition to following links from
     ``url``, and reconciles the two sources — see
-    ``seohead.crawl.reconcile.reconcile_sitemap``.
+    ``seohead.crawl.reconcile.reconcile_sitemap``. The same URL also feeds
+    ``seohead.sf.core.sitemap_coverage.run_sitemap``, which independently
+    re-fetches it to check the sitemap protocol's own limits and whether
+    robots.txt declares it; with none given, those checks skip by name
+    rather than guess at a default sitemap location.
     """
     import json
     import os
@@ -297,9 +301,11 @@ def crawl_site(
     from seohead.sf.config import load_config
     from seohead.sf.core.aggregate import aggregate
     from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.heuristics import run_heuristics
     from seohead.sf.core.inlinks import run_inlinks
     from seohead.sf.core.loader import LoadedExports
     from seohead.sf.core.rules import run_rules
+    from seohead.sf.core.sitemap_coverage import run_sitemap
 
     if not url and not urls:
         raise ValueError("url or urls required")
@@ -474,8 +480,41 @@ def crawl_site(
     # hyperlink graph when one exists (see crawl/evidence.py), so the checks it
     # feeds now answer for real instead of only reaching their skip branch.
     run_inlinks(ctx)
+    # Same gap, two more modules (issue #165): DOM size, HTML weight, templated
+    # titles and the near-duplicate/exact-duplicate heuristic fallback all live in
+    # heuristics.py and were never reached from a crawl either. DOM depth/nodes and
+    # the near-duplicate fallback need HTML stored to disk (``input.html_store_dir``),
+    # which a native crawl never writes -- they land on their own existing "no
+    # stored HTML" skip branch rather than gaining new evidence here. HTML weight
+    # and templated-title detection need only Size (bytes), Word Count and Title,
+    # which build_evidence already puts on every page, so those genuinely fire.
+    run_heuristics(ctx)
 
-    sitemap_summary: dict[str, Any] = {}
+    # ``run_sitemap`` covers the sitemap-protocol and robots.txt checks that need a
+    # live network fetch (SITEMAP_TOO_LARGE, SITEMAP_STALE_LASTMOD, SITEMAP_NOT_IN_ROBOTS,
+    # ROBOTS_BLOCKS_RESOURCES, ...) and, before this, was never called from crawl_site
+    # either (issue #165) -- those checks were silently uninvoked on every native crawl,
+    # sitemap or not. It is given the same sitemap URL used to seed this crawl, if any;
+    # with none, it reaches its own honest per-check skip branches instead of guessing
+    # at a default sitemap location. Its own declared-vs-crawled comparison
+    # (SITEMAP_DESYNC and the "in_sitemap_and_linked"-shaped summary keys) is cruder
+    # than the dedicated reconciliation below, so those three summary keys are
+    # overwritten by it further down rather than the other way around.
+    measured = run_sitemap(
+        ctx,
+        sitemap_url=sitemap_seed["sitemap_url"],
+        compare_with_crawl=not sitemap_seed["declared"],
+    )
+    # Only surfaced when something was actually measured. run_sitemap always
+    # returns its keys, and a run with no sitemap at all would otherwise report
+    # urls_in_sitemap: 0 -- which reads as "the sitemap is empty" when the truth
+    # is "there was no sitemap". The checks themselves still ran and skipped by
+    # name above; it is the summary that must not invent a zero.
+    sitemap_summary: dict[str, Any] = (
+        dict(measured)
+        if (measured.get("sitemaps") or measured.get("declared_in_robots") is not None)
+        else {}
+    )
     if sitemap_seed["declared"]:
         # "Reached by following links" — not merely fetched, since a seeded
         # URL is fetched regardless of whether anything links to it. Three
@@ -483,14 +522,43 @@ def crawl_site(
         # pipeline already uses for the same distinction (SITEMAP_ORPHAN,
         # URL_NOT_IN_SITEMAP), so audit.json has one schema either way.
         observed = [edge.destination for edge in result.links]
-        sitemap_summary = reconcile_sitemap(
+        reconciled = reconcile_sitemap(
             sitemap_seed["declared"], observed, _sitemap_comparable_pages(result, url)
         )
-        sitemap_summary["sitemap_url"] = sitemap_seed["sitemap_url"]
-        for orphan_url in sitemap_summary["in_sitemap_not_linked"]:
+        reconciled["sitemap_url"] = sitemap_seed["sitemap_url"]
+        for orphan_url in reconciled["in_sitemap_not_linked"]:
             ctx.add("SITEMAP_ORPHAN", target_url=orphan_url, details={"in_sitemap": True})
-        for extra_url in sitemap_summary["linked_not_in_sitemap"]:
+        for extra_url in reconciled["linked_not_in_sitemap"]:
             ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
+        # The site-level verdict belongs to whichever module did the comparison,
+        # and here that is this one -- run_sitemap was told to skip it by name
+        # (compare_with_crawl above) precisely so the two never answer the same
+        # question with two different degrees of rigour. The per-URL findings
+        # above say which URLs disagree; this says whether the disagreement is
+        # large enough to be a fact about the site rather than a handful of URLs.
+        comparable_total = max(
+            len(reconciled["in_sitemap_and_linked"]) + len(reconciled["linked_not_in_sitemap"]), 1
+        )
+        crawl_only_pct = round(100 * len(reconciled["linked_not_in_sitemap"]) / comparable_total, 1)
+        sitemap_only_pct = round(
+            100 * len(reconciled["in_sitemap_not_linked"]) / max(len(sitemap_seed["declared"]), 1),
+            1,
+        )
+        threshold = ctx.thresholds["sitemap_desync_pct_warn"]
+        if crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
+            ctx.add(
+                "SITEMAP_DESYNC",
+                target_url=url,
+                details={
+                    "in_crawl_not_in_sitemap": len(reconciled["linked_not_in_sitemap"]),
+                    "in_sitemap_not_in_crawl": len(reconciled["in_sitemap_not_linked"]),
+                    "crawl_not_in_sitemap_pct": crawl_only_pct,
+                    "sitemap_not_in_crawl_pct": sitemap_only_pct,
+                    "examples_missing_from_sitemap": reconciled["linked_not_in_sitemap"][:20],
+                    "examples_in_sitemap_not_crawled": reconciled["in_sitemap_not_linked"][:20],
+                },
+            )
+        sitemap_summary.update(reconciled)
 
     # Same "native crawl produces evidence the SF export never carries" shape
     # as the sitemap reconciliation above: classification runs inside the
