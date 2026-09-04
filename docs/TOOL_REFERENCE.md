@@ -6,7 +6,7 @@ Generated from the MCP tool definitions in `seohead/servers/mcp_server.py` and `
 python scripts/generate_tool_reference.py
 ```
 
-**45 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 50 in total.
+**48 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 53 in total.
 
 Every tool shares one contract: JSON in, JSON out. A target that could not be reached comes back as `{"ok": false, "error": "..."}` instead of raising, so an unreachable site is data, not a crash.
 
@@ -72,6 +72,7 @@ Crawl a site from a start URL by following links, then audit the result through 
 | `max_depth` | `int` | `5` |
 | `min_delay` | `float` | `0.5` |
 | `robots` | `str` | `'respect'` |
+| `concurrency` | `int` | `1` |
 | `out_dir` | `str | None` | `None` |
 
 **Cost** — network: yes · writes files: yes · idempotent: no · spends money: no
@@ -80,7 +81,18 @@ Crawl a site from a start URL by following links, then audit the result through 
 
 ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
 anyway, and report what a compliant crawler would have missed) or
-"ignore" (do not fetch it at all).
+"ignore" (do not fetch it at all). ``concurrency`` is a per-origin
+ceiling the adaptive throttle grows into, not a fixed thread count.
+
+### `crawl-describe-settings`
+
+MCP name: `seo_crawl_describe_settings`
+
+List every crawl-site config setting: dotted path, type, default value, description, and whether it changes what the audit finds (results-affecting) or only cost/duration. The same source ``crawl-site --config-help`` reads, so an agent can discover the configuration surface without a filesystem.
+
+Takes no arguments.
+
+**Cost** — network: no · writes files: no · idempotent: yes · spends money: no
 
 ### `sitemap-crawl`
 
@@ -303,13 +315,14 @@ Suggest a connected Schema.org @graph for a page. Classifies the page (Article/P
 
 MCP name: `seo_duplicate_check`
 
-Find near-duplicate pages among a list of {id, text} documents using simhash + locality-sensitive hashing (no O(n^2) pairwise comparison). Returns clusters of pages whose similarity is at or above the threshold, with exact pairwise similarity inside each cluster. Feed it page texts from a crawl (SF export, sitemap + parse) to surface thin/duplicate content on large sites.
+Find near-duplicate pages among a list of {id, text} documents using simhash + locality-sensitive hashing (no O(n^2) pairwise comparison). Returns exact duplicates (by content hash) separately from near-duplicate clusters (similarity at or above the threshold, with exact pairwise similarity inside each cluster), so a byte-identical pair is never reported twice. Feed it page texts from a crawl (SF export, sitemap + parse) to surface thin/duplicate content on large sites; ideally each item's text is already scoped to the page's content area (see seo_markdown_extract or parse's content_text field), so shared navigation and footer boilerplate does not create false matches. only_indexable=True (default) compares only items whose indexable flag is true or absent, since a page canonicalised to another is an intended twin, not a defect; set it to false to audit the canonical tags themselves.
 
 | Argument | Type | Default |
 |---|---|---|
 | `items` | `list[dict]` | `required` |
 | `threshold` | `float` | `0.92` |
 | `with_fingerprints` | `bool` | `False` |
+| `only_indexable` | `bool` | `True` |
 
 **Cost** — network: no · writes files: no · idempotent: yes · spends money: no
 
@@ -356,14 +369,41 @@ Fetch and score the site's /llms.txt (the LLM-facing manifest): 9 checks — H1 
 
 MCP name: `seo_citability_check`
 
-Score how citable a piece of content is for AI answers (GEO/AEO): 0-100 across four dimensions (25 each) — Answer Blocks (self-contained 20-200 word paragraphs), Self-Containment (no context-dependent phrases like 'as mentioned above'), Statistical Density (numbers/percentages/dates + evidence markers per 100 words), and Structure Quality (headings/lists/TL;DR). Pass text to score a fragment, or url to fetch and score the page's visible text.
+Score how citable a piece of content is for AI answers (GEO/AEO): 0-100 across four dimensions (25 each) — Answer Blocks (self-contained 20-200 word paragraphs), Self-Containment (no context-dependent phrases like 'as mentioned above'), Statistical Density (numbers/percentages/dates + evidence markers per 100 words), and Structure Quality (headings/lists/TL;DR). Pass text to score a fragment exactly as given, or url to fetch the page and score it: fetching scores the resolved content area's Markdown (navigation and footer excluded, headings/lists/paragraph breaks preserved), not the raw whole-document text, since a flat text blob has no structure for the scorer to find. content_area configures that region — see seo_markdown_extract / seo_parse's content_area option for its keys.
 
 | Argument | Type | Default |
 |---|---|---|
 | `url` | `str` | `''` |
 | `text` | `str` | `''` |
+| `content_area` | `dict[str, Any] | None` | `None` |
 
 **Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+### `markdown-extract`
+
+MCP name: `seo_markdown_extract`
+
+Render a page as Markdown in two scopes. content_markdown strips navigation and footer (boilerplate) while keeping headings, lists, and links -- the representation worth diffing between crawls, feeding to content scoring (seo_citability_check, seo_duplicate_check), or handing to a model. full_markdown keeps header/nav/footer too; it is the input seo_boilerplate_report hashes to check whether boilerplate is actually the same across a crawl. content_area_strategy records how the region was resolved for this page. Pass html to render offline, or url to fetch it first. content_area configures the region (root/include CSS selectors, tag/selector exclusions); defaults exclude <nav> and <footer>.
+
+| Argument | Type | Default |
+|---|---|---|
+| `url` | `str` | `''` |
+| `html` | `str` | `''` |
+| `content_area` | `dict[str, Any] | None` | `None` |
+
+**Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+### `boilerplate-report`
+
+MCP name: `seo_boilerplate_report`
+
+Answer "is the boilerplate actually the same everywhere?" across a crawled corpus. Hashes each page's header/nav/footer markup (structure kept, not just text, so a link dropped from a menu still changes the hash), groups pages by that hash, and reports every group that is not the dominant one -- with its fraction of the corpus and a sample URL. Catches a nav block that lost links on one template, a footer never migrated on old pages, or a menu that renders differently under one language branch. Each page is {"url", "html"}, or {"url", "hash"} when the hash was already computed upstream.
+
+| Argument | Type | Default |
+|---|---|---|
+| `pages` | `list[dict]` | `required` |
+
+**Cost** — network: no · writes files: no · idempotent: yes · spends money: no
 
 ### `social-meta-check`
 

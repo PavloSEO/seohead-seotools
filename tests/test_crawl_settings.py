@@ -15,6 +15,8 @@ def test_defaults_load_and_validate():
     resolved = cfg.load()
     assert resolved["limits"]["max_urls"] == cfg.DEFAULTS["limits"]["max_urls"]
     assert resolved["robots"]["policy"] == "respect"
+    # 1 is the sequential crawler: concurrency must be opt-in, not a surprise.
+    assert resolved["speed"]["concurrency"] == 1
 
 
 def test_every_setting_is_classified_as_results_affecting_or_not():
@@ -30,6 +32,18 @@ def test_every_setting_is_classified_as_results_affecting_or_not():
         "output.dir",
         "output.write_pages_jsonl",
         "speed.max_delay_seconds",
+        # Changes only how fast a crawl runs, never what it finds: the spider
+        # sorts batched results back into queue order before anything is
+        # written, so pages.jsonl is the same at any concurrency.
+        "speed.concurrency",
+        # Optional artefacts (off by default): they add files on disk, never
+        # change a finding.
+        "rendering.artifacts.screenshots",
+        "rendering.artifacts.console_errors",
+        # The profile's identity, not whether one is used (that part is
+        # rendering.browser.persistent_profile, which is results-affecting):
+        # same rationale as excluding a credential's value from the manifest.
+        "rendering.browser.persistent_profile_dir",
     }
     every = set(cfg._flatten(cfg.DEFAULTS))
     unclassified = every - cfg.RESULTS_AFFECTING - cost_only
@@ -116,11 +130,44 @@ def test_free_form_headers_are_a_leaf_not_a_branch(tmp_path):
         ({"limits.max_urls": 0}, "max_urls"),
         ({"limits.max_depth": -1}, "max_depth"),
         ({"speed.min_delay_seconds": -1}, "min_delay_seconds"),
+        ({"speed.concurrency": 0}, "concurrency"),
+        ({"cache.mode": "always"}, "cache.mode"),
+        ({"rendering.mode": "always"}, "rendering.mode"),
+        ({"rendering.browser.viewport": "tablet"}, "rendering.browser.viewport"),
+        ({"rendering.browser.wait_until": "instant"}, "rendering.browser.wait_until"),
+        ({"rendering.browser.script_timeout_seconds": -1}, "script_timeout_seconds"),
+        (
+            {"rendering.browser.resize_to_content_max_height_px": 0},
+            "resize_to_content_max_height_px",
+        ),
+        ({"rendering.browser.device_pixel_ratio": 0}, "device_pixel_ratio"),
+        ({"rendering.escalation.sample_per_pattern": 0}, "sample_per_pattern"),
+        ({"rendering.escalation.max_render_urls": -1}, "max_render_urls"),
+        ({"rendering.escalation.max_render_seconds": -1}, "max_render_seconds"),
     ],
 )
 def test_invalid_values_are_refused(override, message):
     with pytest.raises(cfg.ConfigError, match=message):
         cfg.load(overrides=override)
+
+
+def test_cache_defaults_to_off():
+    """No side effect (a cache directory written outside any explicit output directory) may
+    appear behind a default; caching is opt-in."""
+    resolved = cfg.load()
+    assert resolved["cache"]["mode"] == "off"
+    assert resolved["cache"]["invalidate"] is False
+
+
+def test_cache_mode_and_invalidate_are_results_affecting():
+    assert "cache.mode" in cfg.RESULTS_AFFECTING
+    assert "cache.invalidate" in cfg.RESULTS_AFFECTING
+
+
+def test_cache_mode_is_configurable_through_a_file(tmp_path):
+    path = tmp_path / "crawl.json"
+    path.write_text(json.dumps({"cache": {"mode": "replay"}}))
+    assert cfg.load(str(path))["cache"]["mode"] == "replay"
 
 
 def test_a_missing_file_is_refused_rather_than_ignored():
@@ -298,3 +345,54 @@ def test_credential_values_are_redacted_from_the_manifest(monkeypatch):
     assert entry["host"] == "example.com"
     assert entry["headers"]["Authorization"] == "REDACTED"
     assert "s3cr3t" not in json.dumps(manifest)
+
+
+# ── rendering (#18) ──────────────────────────────────────────────────────────
+
+
+def test_rendering_defaults_to_raw_with_no_browser_needed():
+    resolved = cfg.load()
+    assert resolved["rendering"]["mode"] == "raw"
+
+
+def test_a_persistent_profile_without_a_directory_is_refused():
+    with pytest.raises(cfg.ConfigError, match="persistent_profile_dir"):
+        cfg.load(overrides={"rendering.browser.persistent_profile": True})
+
+
+def test_a_persistent_profile_with_a_directory_loads():
+    resolved = cfg.load(
+        overrides={
+            "rendering.browser.persistent_profile": True,
+            "rendering.browser.persistent_profile_dir": "/tmp/some-profile",
+        }
+    )
+    assert resolved["rendering"]["browser"]["persistent_profile_dir"] == "/tmp/some-profile"
+
+
+def test_the_persistent_profile_directory_is_not_in_the_manifest():
+    """Same rationale as a credential's value: a shareable manifest should not carry a path."""
+    manifest = cfg.manifest(
+        cfg.load(
+            overrides={
+                "rendering.browser.persistent_profile": True,
+                "rendering.browser.persistent_profile_dir": "/tmp/some-profile",
+            }
+        )
+    )
+    assert "rendering.browser.persistent_profile_dir" not in manifest
+    assert manifest["rendering.browser.persistent_profile"] is True
+
+
+def test_two_viewports_differ_at_exactly_that_manifest_key():
+    """Acceptance criterion: two runs at different viewport widths produce
+    manifests differing at exactly that key."""
+    desktop = cfg.manifest(cfg.load(overrides={"rendering.browser.viewport": "desktop"}))
+    mobile = cfg.manifest(cfg.load(overrides={"rendering.browser.viewport": "mobile"}))
+    assert [k for k in desktop if desktop[k] != mobile[k]] == ["rendering.browser.viewport"]
+
+
+def test_the_render_extras_are_cost_only_and_off_the_manifest():
+    first = cfg.manifest(cfg.load(overrides={"rendering.artifacts.screenshots": True}))
+    second = cfg.manifest(cfg.load(overrides={"rendering.artifacts.screenshots": False}))
+    assert first == second

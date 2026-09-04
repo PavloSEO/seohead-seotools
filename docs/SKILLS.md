@@ -1,6 +1,6 @@
 # Skill map
 
-21 skills in `.claude/skills/`. A skill is not tool documentation — it is a
+22 skills in `.claude/skills/`. A skill is not tool documentation — it is a
 **method**: when to apply, in what order, how to read the result, and where
 the boundary is beyond which the tool starts to lie.
 
@@ -8,9 +8,11 @@ the boundary is beyond which the tool starts to lie.
 
 ```
 given a domain, what to do?
-   └─ seo-deep-audit ─── the single entry point, orchestrates the rest
-        └─ audit-roadmap ─ when the domain is new: scout the minimum first
-                           and decide what to collect
+   └─ seotools-operator ─ run the system: crawl, read the audit honestly,
+        │                 verify live, produce the deliverable
+        └─ seo-deep-audit ─ the analysis entry point, orchestrates the rest
+             └─ audit-roadmap ─ when the domain is new: scout the minimum
+                                first and decide what to collect
 ```
 
 Then by the layer of the task.
@@ -19,6 +21,7 @@ Then by the layer of the task.
 
 | Skill | When |
 |---|---|
+| **seotools-operator** | Given a site and asked to audit it, or you are about to write a one-off script to check pages. The whole loop: crawl, read `audit.json`'s honesty fields before its findings, verify criticals with `curl`, build the deliverable. Written against a 4 260-URL run over three live sites |
 | **seo-deep-audit** | Given a site and asked "look what's there". Single entry, distributes the work |
 | **audit-roadmap** | Unfamiliar domain: 5 minutes of recon to decide what to collect next |
 | **sf-boundaries** | The fork "does Screaming Frog cover this, or does it need an agent?" — a router |
@@ -68,15 +71,15 @@ Then by the layer of the task.
 
 ## Tools without a skill of their own
 
-19 of the 45 commands are not named in any skill's own body (a mention inside
+18 of the 48 commands are not named in any skill's own body (a mention inside
 another tool's Markdown table above does not count) — used inline as plumbing
 inside a workflow's write-up, or not yet needed by one at all — and have no
 skill of their own, deliberately: a skill per single command is noise.
 `tests/test_docs_drift.py` recomputes this list by scanning every skill file
 for each command name, so it cannot silently rot the way this line once did.
 
-Page-level utilities: `asset-weight-check` · `crawl-site` ·
-`hreflang-check` · `images-download` · `images-optimize` · `keywords-cluster` ·
+Page-level utilities: `asset-weight-check` · `boilerplate-report` ·
+`crawl-describe-settings` · `hreflang-check` · `keywords-cluster` ·
 `log-analyze` · `mirror-check` · `redirects-check` ·
 `redirects-generate` · `soft404-check`
 

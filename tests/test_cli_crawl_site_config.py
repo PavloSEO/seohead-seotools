@@ -125,3 +125,36 @@ def _read_echo(capsys):
     import json
 
     return json.loads(capsys.readouterr().out)["echo"]
+
+
+# ── effective rate printed at startup (#14 acceptance criteria) ─────────────
+
+
+def test_the_effective_rate_is_printed_before_the_crawl_runs(monkeypatch, capsys):
+    """Politeness is a combination; the derived number must be visible up front."""
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, "crawl_site", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(["crawl-site", "--url", "https://example.com/", "--min-delay", "2"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "0.50 req/s" in err
+
+
+def test_a_zero_delay_prints_as_unbounded_not_a_math_error(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, "crawl_site", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(["crawl-site", "--url", "https://example.com/", "--min-delay", "0"])
+    assert rc == 0
+    assert "unbounded" in capsys.readouterr().err
+
+
+def test_the_rate_reflects_a_config_file_too_not_only_direct_flags(monkeypatch, capsys, tmp_path):
+    import json as _json
+
+    path = tmp_path / "crawl.json"
+    path.write_text(_json.dumps({"speed": {"min_delay_seconds": 4}}))
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, "crawl_site", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(["crawl-site", "--url", "https://example.com/", "--config", str(path)])
+    assert rc == 0
+    assert "0.25 req/s" in capsys.readouterr().err

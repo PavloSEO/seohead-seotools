@@ -102,7 +102,7 @@ def _commands_without_a_dedicated_skill() -> set[str]:
 
     docs/SKILLS.md's per-skill tables are a hand-curated summary; whether a skill's
     write-up actually names the command is the mechanical fact this recomputes, so the
-    "N of the 45 commands have no skill of their own" line in docs/SKILLS.md cannot drift
+    "N of the 48 commands have no skill of their own" line in docs/SKILLS.md cannot drift
     the way it did before (issue #22: it said "Twenty-one of the 42").
     """
     skill_files = [*TECHNICAL_SKILLS, *PACKAGED_SKILLS]
@@ -136,20 +136,20 @@ def test_skills_map_command_coverage_is_current():
 def test_documented_product_counts_match_the_registries():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     provenance = (ROOT / "PROVENANCE.md").read_text(encoding="utf-8")
-    assert len(COMMANDS) == len(HANDLERS) == 45
+    assert len(COMMANDS) == len(HANDLERS) == 48
     assert len(_sf_tool_names()) == 5
-    assert len(CHECKS) == 104
-    assert len(TECHNICAL_SKILLS) == 21
+    assert len(CHECKS) == 118
+    assert len(TECHNICAL_SKILLS) == 22
     assert len(PACKAGED_SKILLS) == 7
     for text in (readme, provenance):
-        assert "45" in text and "104" in text and "five" in text.lower()
-    assert "50 callable tools" in readme
-    assert "28 workflow skills" in readme
+        assert "48" in text and "118" in text and "five" in text.lower()
+    assert "53 callable tools" in readme
+    assert "29 workflow skills" in readme
     assert (ROOT / "CITATION.cff").is_file()
 
 
 def test_stale_tool_counts_do_not_reappear():
-    """The toolkit has carried 45 core commands (not 42, not 44, not 49) for a while now;
+    """Each of these substrings was found stale in a different file while fixing issue #22;
     each of these substrings was found stale in a different file while fixing issue #22
     and is pinned here so the next rename cannot silently reintroduce one of them."""
     combined = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_MARKDOWN)
@@ -250,7 +250,7 @@ def test_tool_reference_is_generated_and_current():
     sf_tools = load_sf_tools()
     expected = {tool.command or tool.name for tool in (*seo_tools, *sf_tools)}
     assert documented == expected, "every seo_*/sf_* tool must appear in the generated reference"
-    assert len(seo_tools) == len(COMMANDS) == 45
+    assert len(seo_tools) == len(COMMANDS) == 48
     assert len(sf_tools) == 5
 
 

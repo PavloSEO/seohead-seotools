@@ -46,12 +46,21 @@ the same "bands," and only candidates are compared. The similarity threshold is 
 
 ## Workflow
 
-**Step 1. Collect page text.** There are three sources; choose the one available:
+**Step 1. Collect page text, scoped to the content area.** There are three sources; choose the
+one available. Whichever you use, prefer text that already excludes navigation and footer
+boilerplate — otherwise shared menus and footers inflate similarity across unrelated pages and
+can hide genuine differences:
 - **From an SF crawl** (recommended for a large site): take `internal_html.html`
-  (or `all_bodytext` from the normalized export) and map each URL to its visible text.
+  (or `all_bodytext` from the normalized export) and map each URL to its visible text. This is
+  Screaming Frog's own extraction and is not scoped to a content area; a manual boilerplate
+  trim before hashing is worth it on templates with heavy menus.
 - **From sitemap + parse** (without SF): run `seohead sitemap-crawl --url .../sitemap.xml`,
-  then run `seohead parse` on the URL list, collecting each page's `text` field.
-- **Prepared list**: ``[{"id": "<url>", "text": "..."}]``.
+  then run `seohead parse` on the URL list, collecting each page's `content_text` field (not
+  `text` — `text` is the whole document including nav/footer; `content_text` is scoped to the
+  resolved content area, nav/footer excluded by default). Or run `seohead markdown-extract` and
+  use `content_markdown` when the near-duplicate diff benefits from structure (headings, lists).
+- **Prepared list**: ``[{"id": "<url>", "text": "..."}]`` — same rule: feed content-area text,
+  not raw page text.
 
 **Step 2. Find duplicate clusters.**
 ```bash
@@ -60,18 +69,24 @@ seohead duplicate-check --input '{"items":[{"id":"https://example.com/a","text":
 ```
 - `threshold` 0.92 (the default) means nearly identical. Lower it to 0.85 for "highly
   similar" pages, or raise it to 0.97 for "strict duplicates."
-- In the response, `clusters[]` contains groups of ≥2 pages, with pairwise similarity
-  within each group and the group's `min_similarity`; `candidate_pairs_checked` is the
-  number of pairs checked exactly (after LSH filtering).
+- `only_indexable` defaults to true: non-indexable items (canonicalised, noindex) are dropped
+  before comparison, since a canonicalised twin is not a defect. Pass `--all-pages` (CLI) or
+  `only_indexable: false` (MCP `seo_duplicate_check`) to audit the canonical tags themselves.
+- In the response, `exact_duplicates[]` lists groups that hash identically (byte-for-byte same
+  extracted text); `clusters[]` lists near-duplicate groups of ≥2 pages, each with pairwise
+  similarity and the group's `min_similarity`. A cluster that is fully explained by exact
+  duplication is reported once, under `exact_duplicates` only — it never also appears in
+  `clusters[]`. `candidate_pairs_checked` is the number of pairs checked exactly (after LSH
+  filtering); re-running with a different `threshold` against the same items costs zero requests.
 
 **Step 3. Interpret the results.**
-- A cluster with `min_similarity = 1.0` contains exact duplicates (often utility pages or
-  pagination). Resolution: canonical, redirect, or noindex.
-- A cluster in the 0.85–0.95 range contains near-duplicates (product pages differing only
-  in color or size). Resolution: make them unique, consolidate them, or canonicalize to
-  the reference page.
-- Unique pages with small `text` values (word_count) are a separate thin-content finding;
-  use `parse` to check their content volume.
+- `exact_duplicates[]` groups (often utility pages or pagination) resolve the same way:
+  canonical, redirect, or noindex.
+- A `clusters[]` entry with `min_similarity` in the 0.85–0.95 range is a near-duplicate group
+  (product pages differing only in color or size). Resolution: make them unique, consolidate
+  them, or canonicalize to the reference page.
+- Unique pages with a small `content_text`/`word_count` value are a separate thin-content
+  finding, already scoped to the content area; use `parse` to check their content volume.
 
 ## Decision points
 - **`min_similarity = 1.0` vs 0.85–0.95 clusters.** Exact duplicates (utility/pagination pages)

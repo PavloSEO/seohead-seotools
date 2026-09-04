@@ -21,12 +21,14 @@ Public API:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from html import unescape
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
+from seohead.models import LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
 from seohead.recon.net import http_client
 from seohead.tools.content_area import extract_area_text, resolve_content_area
 
@@ -56,7 +58,22 @@ DEFAULT_HEADERS = {
 }
 
 # Which extractions run by default. Each may be switched off via options.
-_OPTION_KEYS = ("meta", "canonical", "og", "headings", "jsonld", "links", "text", "url_sources")
+_OPTION_KEYS = (
+    "meta",
+    "canonical",
+    "og",
+    "headings",
+    "jsonld",
+    "links",
+    "text",
+    "url_sources",
+    "classify_links",
+)
+
+# Options that default to False rather than True: each adds cost (a resolved
+# content root, a per-link ancestor walk) that most callers of parse_html
+# never need.
+_DEFAULT_OFF_OPTIONS = ("url_sources", "classify_links")
 
 # URL-bearing attributes beyond a[href]: media, forms, citations, ping,
 # meta-refresh, and itemtype. This covers carriers that a crawler or auditor
@@ -117,17 +134,54 @@ def is_external(href_abs: str, base_url: str) -> bool:
     return target.lower() != base.lower()
 
 
-def _resolve_options(options: dict | None) -> dict[str, bool]:
-    """Normalize the options dict: every flag defaults to True except url_sources."""
+def _resolve_options(options: dict[str, Any] | None) -> dict[str, bool]:
+    """Normalize the options dict: every flag defaults to True except the opt-in ones."""
     options = options or {}
-    return {key: bool(options.get(key, key != "url_sources")) for key in _OPTION_KEYS}
+    return {key: bool(options.get(key, key not in _DEFAULT_OFF_OPTIONS)) for key in _OPTION_KEYS}
+
+
+# Lighthouse's `charset` audit only looks in the first 1024 bytes of the HTML
+# (or the Content-Type header, checked separately in rules.py from the
+# response we already have). See https://developer.chrome.com/docs/lighthouse/best-practices/charset/
+_CHARSET_WINDOW_CHARS = 1024
+_CHARSET_META_RE = re.compile(r"<meta[^>]+charset[^<]+>", re.IGNORECASE)
+_CHARSET_VALUE_RE = re.compile(r'charset\s*=\s*["\']?([a-zA-Z0-9_\-:.()]{2,})', re.IGNORECASE)
+# A doctype declaration is only meaningful at the top of the document; scanning
+# the whole body would risk matching an escaped/quoted example elsewhere.
+_DOCTYPE_WINDOW_CHARS = 2048
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE\b[^>]*>", re.IGNORECASE | re.DOTALL)
+
+
+def document_charset(html: str) -> str | None:
+    """The charset named by an early ``<meta charset>``/``http-equiv`` tag, if any.
+
+    Lighthouse's ``charset`` audit (see module docstring above) also accepts a
+    charset on the ``Content-Type`` response header; that half is checked
+    against the header seohead already captured, in
+    ``seohead.sf.core.rules.check_charset``, not here.
+    """
+    match = _CHARSET_META_RE.search(html[:_CHARSET_WINDOW_CHARS])
+    if not match:
+        return None
+    value = _CHARSET_VALUE_RE.search(match.group(0))
+    return value.group(1) if value else match.group(0)
+
+
+def document_doctype(html: str) -> str | None:
+    """The raw ``<!DOCTYPE ...>`` declaration text, if the document has one."""
+    match = _DOCTYPE_RE.search(html[:_DOCTYPE_WINDOW_CHARS])
+    return match.group(0).strip() if match else None
 
 
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     """Return the ``content`` of ``<meta name=...>`` (case-insensitive)."""
     tag = soup.find("meta", attrs={"name": _ci(name)})
-    if tag and tag.get("content") is not None:
-        return collapse_whitespace(tag.get("content"))
+    # "content" is not one of BeautifulSoup's multi-valued attributes, so this
+    # is always a plain string at runtime; the stub types it broadly because
+    # .get() is generic across every attribute.
+    content = cast("str | None", tag.get("content")) if tag else None
+    if content is not None:
+        return collapse_whitespace(content)
     return None
 
 
@@ -204,7 +258,7 @@ def robots_directives(*values: str | None) -> set[str]:
     return tokens
 
 
-def _ci(value: str):
+def _ci(value: str) -> Callable[[Any], bool]:
     """A case-insensitive attribute matcher for BeautifulSoup ``find``."""
     target = value.lower()
     return lambda v: isinstance(v, str) and v.lower() == target
@@ -289,7 +343,8 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
             href = match.group(1).strip()
     else:
         for tag in document.find_all("base"):
-            candidate = (tag.get("href") or "").strip()
+            # "href" is single-valued, so this is always a plain string.
+            candidate = (cast("str | None", tag.get("href")) or "").strip()
             if candidate:
                 href = candidate
                 break
@@ -301,7 +356,15 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
         return final_url
 
 
-def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[dict[str, Any]]:
+def _extract_links(
+    soup: BeautifulSoup,
+    base_url: str,
+    final_url: str,
+    *,
+    classify_links: bool = False,
+    content_area_config: dict[str, Any] | None = None,
+    position_rules: Any = None,
+) -> list[LinkInfo]:
     """Collect ``<a href>`` links resolved against ``base_url``.
 
     ``base_url`` resolves the hrefs; ``final_url`` decides what counts as
@@ -312,10 +375,26 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[d
     pure-fragment (``#...``) links. Each entry carries the resolved absolute
     href, anchor text, rel tokens, a ``nofollow`` flag, and an ``external``
     flag.
+
+    ``classify_links`` additionally resolves each link's ``position`` (nav,
+    header, sidebar, footer, content, other; see ``link_position.py``). It is
+    off by default: computing an ancestor-path classification for every link
+    on every page has a real per-link cost, and most callers never read it.
+    When off, links carry no ``position`` key at all, which is what makes the
+    absence visible rather than a silently empty string.
     """
-    links: list[dict[str, Any]] = []
+    links: list[LinkInfo] = []
+    content_root = None
+    rules = None
+    if classify_links:
+        from seohead.tools.content_area import find_content_root
+        from seohead.tools.link_position import classify_link, rules_from_config
+
+        content_root, _ = find_content_root(soup, content_area_config)
+        rules = rules_from_config(position_rules)
     for tag in soup.find_all("a"):
-        href_raw = (tag.get("href") or "").strip()
+        # "href" is single-valued, so this is always a plain string.
+        href_raw = (cast("str | None", tag.get("href")) or "").strip()
         if not href_raw:
             continue
         lowered = href_raw.lower()
@@ -330,19 +409,20 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[d
             abs_href = urljoin(base_url, href_raw)
         except ValueError:
             continue
-        rel_attr = tag.get("rel") or []
+        rel_attr: str | list[str] = tag.get("rel") or []
         # BeautifulSoup returns rel as a list; normalize to lowercase tokens.
         rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
         rel_tokens = [t.lower() for t in rel_tokens]
-        links.append(
-            {
-                "href": abs_href,
-                "text": collapse_whitespace(tag.get_text(" ")),
-                "rel": " ".join(rel_tokens),
-                "nofollow": "nofollow" in rel_tokens,
-                "external": is_external(abs_href, final_url),
-            }
-        )
+        entry: LinkInfo = {
+            "href": abs_href,
+            "text": collapse_whitespace(tag.get_text(" ")),
+            "rel": " ".join(rel_tokens),
+            "nofollow": "nofollow" in rel_tokens,
+            "external": is_external(abs_href, final_url),
+        }
+        if classify_links:
+            entry["position"] = classify_link(tag, content_root, rules=rules)
+        links.append(entry)
     return links
 
 
@@ -380,7 +460,7 @@ def _split_srcset(value: str) -> list[str]:
 _CSS_URL_RE = re.compile(r"""url\(\s*(['"]?)([^'")]+)\1\s*\)""", re.IGNORECASE)
 
 
-def extract_css_urls(css_text: str) -> list[str]:
+def extract_css_urls(css_text: str | None) -> list[str]:
     """URLs referenced from CSS text, in source order, duplicates kept.
 
     Deliberately not limited to ``background-image``: ``border-image``,
@@ -451,7 +531,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
         if isinstance(equiv, list):
             equiv = " ".join(equiv)
         if equiv.lower().strip() == "refresh":
-            content = meta.get("content") or ""
+            # "content" is single-valued, so this is always a plain string.
+            content = cast("str | None", meta.get("content")) or ""
             match = re.search(r"url\s*=\s*['\"]?([^\s'\"]+)", content, re.IGNORECASE)
             if match:
                 push(match.group(1), "meta", "refresh")
@@ -485,7 +566,7 @@ def image_url_sources(url_sources: list[dict[str, str]]) -> list[dict[str, str]]
     ]
 
 
-def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[str, Any]:
+def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None) -> ParsedPage:
     """Extract SEO data from an HTML string (pure — no network).
 
     Honors each option flag; skips the corresponding extraction when False.
@@ -506,15 +587,25 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         # Separate from "robots": that key keeps its literal meaning, this one
         # carries every crawler-addressed tag, which is what indexability needs.
         result["robots_meta"] = robots_meta_values(soup)
+        # Static Lighthouse audits (see seohead.sf.core.rules): charset/doctype
+        # read the raw markup directly (their rule is positional), viewport
+        # reuses the existing meta-content helper.
+        result["charset"] = document_charset(html)
+        result["doctype"] = document_doctype(html)
+        result["viewport"] = _meta_content(soup, name="viewport")
     else:
         result["title"] = None
         result["meta_description"] = None
         result["robots"] = None
         result["robots_meta"] = []
+        result["charset"] = None
+        result["doctype"] = None
+        result["viewport"] = None
 
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
-        href = canonical_tag.get("href") if canonical_tag else None
+        # "href" is single-valued, so this is always a plain string.
+        href = cast("str | None", canonical_tag.get("href")) if canonical_tag else None
         result["canonical"] = urljoin(base_url, href.strip()) if href else None
     else:
         result["canonical"] = None
@@ -523,7 +614,8 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         og: dict[str, str] = {}
         twitter: dict[str, str] = {}
         for tag in soup.find_all("meta"):
-            content = tag.get("content")
+            # "content" is single-valued, so this is always a plain string.
+            content = cast("str | None", tag.get("content"))
             if content is None:
                 continue
             prop = tag.get("property")
@@ -546,7 +638,19 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         result["jsonld"], result["jsonld_invalid"] = _extract_jsonld(soup)
     else:
         result["jsonld"], result["jsonld_invalid"] = [], []
-    result["links"] = _extract_links(soup, base_url, final_url) if opts["links"] else []
+    if opts["links"]:
+        content_config = options.get("content_area") if isinstance(options, dict) else None
+        position_rules = options.get("link_position_rules") if isinstance(options, dict) else None
+        result["links"] = _extract_links(
+            soup,
+            base_url,
+            final_url,
+            classify_links=opts["classify_links"],
+            content_area_config=content_config,
+            position_rules=position_rules,
+        )
+    else:
+        result["links"] = []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.
     if opts["url_sources"]:
@@ -557,8 +661,14 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         result["text"] = text
         # Word count is scoped to the content area (nav/footer excluded by
         # default) so a mega-menu can't make a thin page look substantial;
-        # "text" above stays whole-body for callers that rely on it (e.g.
-        # citability, price/rating heuristics). Link discovery never sees the
+        # "text" above stays whole-body on purpose. page_facts.py's schema
+        # evidence (sameAs social links, breadcrumbs, price/rating regexes)
+        # depends on facts that legitimately live in header/footer widgets the
+        # content area excludes, so scoping "text" would silently cost that
+        # evidence. citability_check(url=...) does not read this field either
+        # way: it scores markdown_extract's content-area Markdown instead,
+        # because "text" is a single collapsed line with no paragraph or
+        # heading breaks for the scorer to find. Link discovery never sees the
         # resolved root, so restricting text never restricts the crawl.
         content_config = options.get("content_area") if isinstance(options, dict) else None
         content_root, strategy = resolve_content_area(soup, content_config)
@@ -572,14 +682,17 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
         result["content_area_strategy"] = None
         result["word_count"] = 0
 
-    return result
+    # Built imperatively above (one assignment per option branch) rather than as
+    # one literal, so a plain dict is the natural builder; cast once at the
+    # boundary instead of restructuring the loop above around a TypedDict literal.
+    return cast(ParsedPage, result)
 
 
-def _rel_has(token: str):
+def _rel_has(token: str) -> Callable[[Any], bool]:
     """Match a ``rel`` attribute (list or string) that contains ``token``."""
     target = token.lower()
 
-    def _matcher(value) -> bool:
+    def _matcher(value: Any) -> bool:
         if value is None:
             return False
         tokens = value.split() if isinstance(value, str) else list(value)
@@ -591,49 +704,86 @@ def _rel_has(token: str):
 # ── FETCH + PARSE ─────────────────────────────────────────────────────────────
 
 
-def parse_url(url: str, options: dict | None = None) -> dict[str, Any]:
-    """Fetch ``url`` and return its extracted SEO data.
+def fetch_html(url: str, timeout: float | None = None) -> dict[str, Any]:
+    """Fetch ``url`` and return its raw response, unparsed.
 
-    ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
-    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True). A
-    ``timeout`` (seconds) may also be provided, and a ``content_area`` dict
-    configures the region ``word_count`` is scoped to — see
-    ``content_area.resolve_content_area`` for its keys.
+    ``ok`` reports whether the *request* succeeded, not the HTTP status: a
+    404 or 500 still returns ``ok: True`` with the body it sent, exactly
+    like ``parse_url`` has always tolerated (a soft-404 page's own markup is
+    evidence, not noise). Only a transport failure (DNS, TLS, timeout, ...)
+    sets ``ok: False`` with an ``error``. Callers that need something other
+    than ``parse_html``'s extraction (Markdown rendering, boilerplate
+    hashing, a content-area-only citability score) fetch through this
+    function rather than duplicating the request logic.
 
-    On success returns a dict with keys: ``url``, ``final_url``,
-    ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
-    ``robots``, ``og``, ``twitter``, ``headings``, ``jsonld``, ``links``,
-    ``text``, ``content_text``, ``content_area_strategy`` and ``word_count``.
-
-    On any fetch or parse error returns ``{"url", "ok": False, "error"}``
-    rather than raising.
+    Returns ``{"ok", "url", "final_url", "status_code", "html"}`` on a
+    completed request, or ``{"ok": False, "url", "error"}`` on a transport
+    failure.
     """
-    opts = options or {}
     try:
-        timeout = float(opts.get("timeout") or DEFAULT_TIMEOUT)
+        resolved_timeout = float(timeout or DEFAULT_TIMEOUT)
     except (TypeError, ValueError):
-        timeout = DEFAULT_TIMEOUT
-
+        resolved_timeout = DEFAULT_TIMEOUT
     try:
         client, _http2_capable = http_client(
-            timeout,
+            resolved_timeout,
             headers=DEFAULT_HEADERS,
             follow_redirects=True,
             max_redirects=_MAX_REDIRECTS,
         )
         with client:
             response = client.get(url)
-        final_url = str(response.url)
-        data = parse_html(response.text, final_url, options)
         return {
+            "ok": True,
             "url": url,
-            "final_url": final_url,
+            "final_url": str(response.url),
             "status_code": response.status_code,
-            "ok": response.is_success,
-            **data,
+            "html": response.text,
         }
     except Exception as exc:
-        return {"url": url, "ok": False, "error": str(exc)}
+        return {"ok": False, "url": url, "error": str(exc)}
+
+
+def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
+    """Fetch ``url`` and return its extracted SEO data.
+
+    ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
+    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True), plus
+    ``url_sources`` and ``classify_links`` (both default False). A ``timeout``
+    (seconds) may also be provided, a ``content_area`` dict configures the
+    region ``word_count`` is scoped to — see ``content_area.resolve_content_area``
+    for its keys — and, when ``classify_links`` is on, ``link_position_rules``
+    (a list of ``{"position", "selector"}`` dicts; see ``link_position.py``)
+    overrides the default nav/header/sidebar/footer rules.
+
+    On success returns a dict with keys: ``url``, ``final_url``,
+    ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
+    ``robots``, ``charset``, ``doctype``, ``viewport``, ``og``, ``twitter``,
+    ``headings``, ``jsonld``, ``links``, ``text``, ``content_text``,
+    ``content_area_strategy`` and ``word_count``.
+
+    On any fetch or parse error returns ``{"url", "ok": False, "error"}``
+    rather than raising.
+    """
+    opts = options or {}
+    fetched = fetch_html(url, timeout=opts.get("timeout"))
+    # fetch_html builds plain dicts, so the two shapes are asserted here rather
+    # than checked: a transport failure carries url/ok/error, and a completed
+    # request carries the page fields on top of the response metadata. The
+    # runtime guard for both is tests/test_typed_handlers.py.
+    if not fetched["ok"]:
+        return cast("ParseFailed", fetched)
+    data = parse_html(fetched["html"], fetched["final_url"], options)
+    return cast(
+        "ParseFetched",
+        {
+            "url": url,
+            "final_url": fetched["final_url"],
+            "status_code": fetched["status_code"],
+            "ok": 200 <= fetched["status_code"] < 300,
+            **data,
+        },
+    )
 
 
 # ── SMOKE TEST (no network) ───────────────────────────────────────────────────

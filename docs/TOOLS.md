@@ -1,10 +1,10 @@
 # Tool reference
 
-45 tools, reachable identically from the CLI and from MCP. One
+48 tools, reachable identically from the CLI and from MCP. One
 implementation, two faces: `seohead <command>` in the terminal and
 `seo_<command>` on the MCP server (`seohead mcp`). Five more `sf_*` tools cover
 the Screaming Frog crawl audit workflow specifically — see that section below
-and the generated [CHECKS.md](CHECKS.md) for the 104 checks it runs.
+and the generated [CHECKS.md](CHECKS.md) for the 118 checks it runs.
 
 This page is hand-written orientation: what each group is for, and the calling
 conventions shared across it. The generated [TOOL_REFERENCE.md](TOOL_REFERENCE.md)
@@ -69,9 +69,11 @@ the report says `http_version_measurable: false`.
 | `schema-check` | Schema.org validation **in two layers**: the vocabulary (1010 types, `domainIncludes`/`rangeIncludes`, inheritance, deprecated terms) and Google rich-result eligibility |
 | `schema-build` | Builds a suggested connected `@graph` with `@id`s for the page type; `--type` sets the type manually when the classifier is unsure |
 | `social-meta-check` | Open Graph and Twitter Card: what is there, what is missing, what contradicts the content |
-| `citability-check` | How quotable a text is for an AI answer: direct answers, facts, structure |
+| `citability-check` | How quotable a text is for an AI answer: direct answers, facts, structure. Fetching a URL scores the resolved content area's Markdown (nav/footer excluded), not the raw whole-document text |
 | `llms-txt-check` | Is there a `/llms.txt`, how useful it is to a model, is the brand mentioned |
-| `duplicate-check` | Near-duplicates via simhash + LSH: finds almost-identical texts in a large set without comparing all pairs |
+| `duplicate-check` | Near-duplicates via simhash + LSH: finds almost-identical texts in a large set without comparing all pairs; exact duplicates (by content hash) are reported separately and excluded from near-duplicate clusters. `--all-pages` also compares non-indexable items (default: indexable only) |
+| `markdown-extract` | Renders a page as Markdown in two scopes: `content_markdown` (boilerplate stripped, structure kept — worth diffing, scoring, or feeding to a model) and `full_markdown` (header/footer included, the input `boilerplate-report` hashes) |
+| `boilerplate-report` | Hashes header/nav/footer per page across a crawled corpus and reports minority template groups (fraction + sample URL), answering whether boilerplate is actually the same everywhere |
 | `keywords-cluster` | Keyword clustering; the algorithm and parameters come via `--input` |
 | `render-check` | Raw HTML vs the rendered DOM + lab metrics. See the [js-render-check](../.claude/skills/js-render-check/SKILL.md) skill |
 
@@ -118,10 +120,12 @@ details (adaptive back-off, which checks come back `skipped` and why) and
 |---|---|---|
 | `crawl-site` | Follows links from a start URL on the same host, respects `robots.txt`, and audits the result. Not full Screaming Frog parity — checks needing evidence a native crawl cannot produce (redirect chains, near-duplicates, readability, ...) come back `skipped`, never a false clean | writes `pages.jsonl` and the audit document under `--out-dir` |
 | `compare-crawls` | Diffs two audit documents into `entered` / `left` / `appeared` / `disappeared` findings, so a fix is distinguished from a page that simply dropped out of the crawl | — |
+| `crawl-describe-settings` | Lists every `crawl-site` config setting — dotted path, type, default, description, and whether it is results-affecting — generated from `seohead/crawl/settings.py`. Same source as `crawl-site --config-help`, reachable over MCP for an agent with no filesystem access | — |
 
 ```bash
 seohead crawl-site --url https://example.com/ --max-urls 200 --out-dir ./report
 seohead compare-crawls --before old-audit.json --after new-audit.json
+seohead crawl-describe-settings
 ```
 
 ---
@@ -211,7 +215,7 @@ seohead sf tasks --json report/audit.json                            # backlog f
 Note: `sf tasks` takes the audit path via the required `--json` flag, not as
 a positional argument (`seohead/sf/cli.py`).
 
-**104 checks**: 8 critical, 44 warnings, 52 notices. Sources: SF exports,
+**118 checks**: 8 critical, 54 warnings, 56 notices. Sources: SF exports,
 derived metrics, inlink exports, the sitemap module, and heuristics.
 
 **Two modes.** A crawls by itself through the SF CLI (license required). B
@@ -233,6 +237,8 @@ the handler's arguments. Frequent parameters are duplicated as flags:
 seohead schema-check --url https://example.com/product/nasos
 seohead backlinks-check --target example.com --donors-file donors.txt
 seohead duplicate-check --input '{"items":[{"id":"a","text":"..."}],"threshold":0.9}'
+seohead markdown-extract --url https://example.com/product/nasos
+seohead boilerplate-report --input '{"pages":[{"url":"https://example.com/a","html":"..."}]}'
 echo '{"url":"https://example.com"}' | seohead parse
 ```
 
@@ -241,7 +247,7 @@ echo '{"url":"https://example.com"}' | seohead parse
 tool must not knock where it was not asked to.
 
 **MCP.** The same set under the `seo_*` names plus the `sf_*` audit tools
-(45 + 5):
+(48 + 5):
 
 ```bash
 seohead mcp        # stdio
@@ -249,7 +255,7 @@ seohead mcp        # stdio
 
 ## Where to go next
 - [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — every tool's arguments, types, defaults, cost, and failure modes, generated from the MCP definitions
-- [CHECKS.md](CHECKS.md) — the 104 checks the SF crawl audit runs, generated from the registry
+- [CHECKS.md](CHECKS.md) — the 118 checks the SF crawl audit runs, generated from the registry
 - [ARCHITECTURE.md](ARCHITECTURE.md) — layers, invariants, where new code goes
 - [SKILLS.md](SKILLS.md) — which skill drives which tool
 - [DECISIONS.md](DECISIONS.md) — why it was decided this way and not another

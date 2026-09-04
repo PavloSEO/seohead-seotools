@@ -111,6 +111,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "high_external_outlinks": 100,
         "high_outlinks": 300,
         "redirect_hop_cap": 20,
+        "link_score_low_ratio": 0.25,
+        "near_duplicate_similarity": 0.92,
     },
     "requirements": {
         "require_canonical": True,

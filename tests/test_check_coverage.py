@@ -946,7 +946,7 @@ def test_hreflang_broken_target_fires_and_skips(tmp_path):
     fired = {}
     for i in res.issues:
         fired.setdefault(i.check, set()).add(i.target_url)
-    assert "https://example.com/" in fired.get("HREFLANG_BROKEN_TARGET", set())
+    assert fired.get("HREFLANG_BROKEN_TARGET") == {"https://example.com/"}
     issue = next(i for i in res.issues if i.check == "HREFLANG_BROKEN_TARGET")
     targets = {t["target_url"] for t in issue.details["broken_targets"]}
     assert "https://example.com/en" in targets

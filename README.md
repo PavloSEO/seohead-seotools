@@ -6,13 +6,13 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-50 callable tools · 104 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
+53 callable tools · 118 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
 [![CI](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
-![Tests](https://img.shields.io/badge/tests-1181%20offline-BDDDF5)
+![Tests](https://img.shields.io/badge/tests-1500%2B%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
 [![MIT License](https://img.shields.io/badge/code-MIT-1565C0)](LICENSE)
 
@@ -21,7 +21,7 @@
 </div>
 
 **SEOHEAD is not a crawler replacement.** Screaming Frog produces the CSV/XLSX exports consumed
-by SEOHEAD's 104-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
+by SEOHEAD's 118-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
 unavailable measurements visible, and gives a specialist or tool-calling agent one tested CLI/MCP
 surface for assembling an audit, prioritized backlog, and reports.
 
@@ -40,7 +40,7 @@ commercial-proposal draft while a specialist keeps control of interpretation.
 | Stage | Primary owner | Role |
 |---|---|---|
 | Crawl collection | Screaming Frog | Discover site-scale URLs and produce compatible CSV/XLSX exports |
-| Evidence processing | SEOHEAD Tools | Analyze those exports against a 104-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
+| Evidence processing | SEOHEAD Tools | Analyze those exports against a 118-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
 | Interpretation and approval | SEO specialist, optionally supported by an AI agent | Connect findings to business context, implementation risk, and final priorities |
 
 See [how SEOHEAD fits with crawlers and data providers](docs/COMPARISON.md) for the exact scope
@@ -59,9 +59,9 @@ No client data is included.
 
 | Starting point | Start with | What it does |
 |---|---|---|
-| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 104-check registry and builds an audit plus backlog |
+| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 118-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 45 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| A tool-calling AI agent | `seohead mcp` | Exposes 48 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -77,15 +77,15 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
-### 45 core CLI commands and MCP tools
+### 48 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |
 |---|---:|---|
-| Live page and URL evidence | 12 | parsing, robots.txt, headers, CSS/JS weight and delivery, links, hreflang, redirects, sitemaps, image download and optimization, keyword clustering |
+| Live page and URL evidence | 14 | parsing, robots.txt, headers, CSS/JS weight and delivery, links, hreflang, redirects, sitemaps, image download and optimization, keyword clustering |
 | Domain and infrastructure reconnaissance | 8 | domain/DNS/TLS, CDN cache behavior, technology detection, security headers, mirrors, regional structure, donor backlink verification, AI crawler access |
-| Structured data, content, rendering, and logs | 10 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
-| Audit orchestration and reporting | 2 | bounded sitemap-based site evidence and XLSX/DOCX/CSV/Markdown/JSON output |
-| Demand, SERP, and traffic sources | 11 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
+| Structured data, content, rendering, and logs | 11 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, content-area Markdown extraction, boilerplate consistency, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
+| Audit orchestration and reporting | 3 | bounded sitemap-based site evidence, the crawler's own configuration surface, and XLSX/DOCX/CSV/Markdown/JSON output |
+| Demand, SERP, and traffic sources | 12 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
 
 Run `seohead --help` for the authoritative command list. Every core command goes through the
 same handler used by its `seo_*` MCP counterpart; a test gate fails if the interfaces drift.
@@ -95,7 +95,7 @@ same handler used by its `seo_*` MCP counterpart; a test gate fails if the inter
 Five additional `sf_*` MCP tools turn a Screaming Frog crawl into machine-readable evidence,
 compact summaries, filtered findings, an export inventory, and a prioritized task backlog.
 
-The analyzer has a registry of **104 checks** across metadata, indexability, canonicals, redirects,
+The analyzer has a registry of **118 checks** across metadata, indexability, canonicals, redirects,
 internal links, sitemaps, hreflang, structured data, page depth, HTML weight, performance signals,
 and other crawl-derived evidence. It applies the checks supported by the available exports;
 missing input is reported as skipped with a reason, never silently converted into “zero issues.”
@@ -109,7 +109,7 @@ Two modes are intentionally supported:
 
 ### 28 agent workflow skills
 
-The repository ships 21 technical-audit playbooks in `.claude/skills/` and seven broader SEO
+The repository ships 22 technical-audit playbooks in `.claude/skills/` and seven broader SEO
 content/research playbooks in `seohead/skills/`. They teach an agent when to call tools, how to
 separate evidence from inference, and how to assemble outputs without pretending that an
 unmeasured signal is clean.
@@ -201,7 +201,7 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **45 `seo_*` tools plus five `sf_*` tools**. The 45 core tools share the tested
+The server exposes **48 `seo_*` tools plus five `sf_*` tools**. The 48 core tools share the tested
 handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
 opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
 return paths instead of dumping large reports into an agent context.
@@ -264,7 +264,7 @@ Read [provider gotchas](docs/GOTCHAS.md) before enabling production credentials.
   backlink index.
 - International tools validate hreflang and regional structure; the package does not claim a
   machine-translation engine. Translation belongs to a reviewed model or localization workflow.
-- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 45 core
+- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 47 core
   tools and not a replacement for a production crawler.
 - SEOHEAD does not include its own general-purpose crawler. Whole-site crawling is delegated to
   Screaming Frog; export analysis remains available without live crawl mode.
@@ -283,7 +283,7 @@ seohead sf run --exports-dir examples/exports --out /tmp/seohead-report --tasks
 python -m build
 ```
 
-The suite contains **1181 offline tests**. CI also checks interface registration, layer boundaries,
+The suite contains **over 1500 offline tests**. CI also checks interface registration, layer boundaries,
 the synthetic crawl audit, package metadata, and English-only public documentation.
 
 README visuals are generated from committed synthetic examples with

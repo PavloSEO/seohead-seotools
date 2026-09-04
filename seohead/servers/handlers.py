@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from seohead import runlog
+from seohead.models import ParseManyResult, RobotsCheckResult
 from seohead.tools import (
     asset_weight,
     clusterer,
@@ -44,7 +45,7 @@ DEFAULT_PARSE_OPTIONS: dict[str, bool] = {
 
 def parse(
     url: str | None = None, urls: list[str] | None = None, options: dict[str, Any] | None = None
-) -> dict[str, Any]:
+) -> ParseManyResult:
     targets = urls if isinstance(urls, list) else ([url] if url else [])
     if not targets:
         raise ValueError("url or urls[] required")
@@ -104,6 +105,98 @@ def _seed_urls_from_sitemap(url: str, sitemap: str | None, auto_discover: bool) 
     return {"sitemap_url": target, "declared": declared}
 
 
+def _run_render_escalation(
+    result: Any, rendering_config: dict[str, Any], settings: dict[str, Any]
+) -> Any:
+    """Bind the escalation orchestrator to a real probe and re-fetch.
+
+    This is the interface layer's own job, same as ``crawl_site`` above:
+    ``seohead.crawl.render_escalation`` stays free of Playwright and the
+    network so it can be unit-tested with fake callables, and this function
+    is what supplies the real ones for an actual run. "js" mode reuses
+    ``render_check`` for the sample probe -- the raw-versus-rendered
+    comparison #18 asks for reuse of -- and the cheaper ``render_document``
+    for the full re-fetch of every page an escalated pattern contains.
+    "legacy_fragment" mode needs no browser at all: probing and re-fetching
+    are both a plain HTTP GET.
+    """
+    import os
+
+    from seohead.crawl import render_escalation
+    from seohead.recon.net import http_client, validate_url
+    from seohead.tools import render as render_tool
+
+    mode = rendering_config["mode"]
+    browser_cfg = rendering_config["browser"]
+    timeout = settings["http"]["timeout_seconds"]
+    artifacts_dir = (
+        os.path.join(settings["output"]["dir"], "render_artifacts")
+        if settings["output"]["dir"]
+        else None
+    )
+
+    if mode == "js":
+
+        def probe(target: str) -> dict[str, Any]:
+            probed = render_tool.render_check(
+                target,
+                timeout=timeout,
+                wait=browser_cfg["wait_until"],
+                viewport=browser_cfg["viewport"],
+            )
+            probed["needs_escalation"] = bool(probed.get("js_dependent"))
+            return probed
+
+        def render_fetch(target: str) -> dict[str, Any]:
+            return render_tool.render_document(
+                target, rendering_config, artifacts_dir=artifacts_dir
+            )
+
+        label = "rendered"
+    else:  # legacy_fragment
+
+        def _fetch_raw(target: str) -> str:
+            try:
+                validate_url(target)
+            except ValueError:
+                return ""
+            client, _ = http_client(timeout)
+            try:
+                return client.get(target).text
+            except Exception:
+                return ""
+            finally:
+                client.close()
+
+        def probe(target: str) -> dict[str, Any]:
+            html = _fetch_raw(target)
+            return {
+                "ok": bool(html),
+                "needs_escalation": render_tool.legacy_fragment_target(target, html) is not None,
+                "empty_shell": render_tool.detect_empty_shell(html),
+            }
+
+        def render_fetch(target: str) -> dict[str, Any]:
+            html = _fetch_raw(target)
+            escaped = render_tool.legacy_fragment_target(target, html)
+            if not escaped:
+                return {"ok": False}
+            fetched_html = _fetch_raw(escaped)
+            if not fetched_html:
+                return {"ok": False}
+            return {"ok": True, "url": target, "final_url": escaped, "html": fetched_html}
+
+        label = "legacy_fragment"
+
+    return render_escalation.escalate(
+        result.pages,
+        rendering_config,
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label=label,
+    )
+
+
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
@@ -111,6 +204,7 @@ def crawl_site(
     max_urls: int | None = None,
     max_depth: int | None = None,
     min_delay: float | None = None,
+    concurrency: int | None = None,
     robots: str | None = None,
     out_dir: str | None = None,
     sitemap: str | None = None,
@@ -134,6 +228,7 @@ def crawl_site(
     import os
     from datetime import datetime, timezone
 
+    from seohead.crawl import cache as http_cache
     from seohead.crawl import settings as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
@@ -155,6 +250,7 @@ def crawl_site(
             "limits.max_urls": max_urls,
             "limits.max_depth": max_depth,
             "speed.min_delay_seconds": min_delay,
+            "speed.concurrency": concurrency,
             "robots.policy": robots,
             "output.dir": out_dir,
         },
@@ -168,6 +264,15 @@ def crawl_site(
         else None
     )
     max_seconds = settings["limits"]["max_crawl_seconds"]
+    # One cache per run, shared by every worker thread a concurrent crawl starts — see
+    # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
+    # cache.invalidate. A directory this session cannot trust (missing, world-writable) degrades
+    # to no cache rather than failing the run.
+    cache = http_cache.build(
+        http_cache.resolve_dir(),
+        mode=settings["cache"]["mode"],
+        invalidate=settings["cache"]["invalidate"],
+    )
 
     sitemap_seed = {"sitemap_url": None, "declared": []}
     if url and (sitemap or settings["sitemaps"]["auto_discover"]):
@@ -190,6 +295,20 @@ def crawl_site(
             # crawl with no out_dir has nothing to resume into anyway.
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
+            concurrency=settings["speed"]["concurrency"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            max_query_variants_per_path=settings["limits"]["max_query_variants_per_path"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            robots_token=settings["robots"]["user_agent_token"],
+            unavailable_means_stop=settings["robots"]["unavailable_means_stop"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
+            follow_nofollow=settings["discovery"]["follow_nofollow"],
+            classify_links=settings["link_position"]["classify"],
+            link_position_rules=settings["link_position"]["rules"] or None,
+            cache=cache,
         )
         discovery = {
             "mode": "spider",
@@ -200,6 +319,7 @@ def crawl_site(
             "robots_blocked": len(result.robots_blocked),
             "crawl_delay_applied": result.crawl_delay_applied,
             "effective_delay_seconds": round(result.effective_delay, 3),
+            "effective_concurrency": result.effective_concurrency,
             "resume_note": result.resume_note,
             "sitemap_url": sitemap_seed["sitemap_url"],
             "sitemap_seeded": len(result.seed_urls),
@@ -213,8 +333,55 @@ def crawl_site(
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
+            cache=cache,
         )
         discovery = {"mode": "list"}
+
+    requires_rendering = False
+    requires_rendering_reason = ""
+    render_summary: dict[str, Any] = {}
+    if url:
+        from seohead.crawl import render_escalation
+        from seohead.recon.net import normalize_url
+
+        start_norm = normalize_url(url)
+        rendering_config = settings["rendering"]
+        escalation = None
+        if rendering_config["mode"] != "raw" and result.pages:
+            escalation = _run_render_escalation(result, rendering_config, settings)
+            render_escalation.apply_rendered_evidence(result.pages, result.links, escalation)
+            render_summary = {
+                "mode": escalation.mode,
+                "patterns_sampled": escalation.patterns_sampled,
+                "patterns_escalated": escalation.patterns_escalated,
+                "probe_requests": escalation.probe_requests,
+                "render_requests": escalation.render_requests,
+                "render_budget_exhausted": escalation.render_budget_exhausted,
+            }
+
+        # Re-evaluated after escalation so a run that actually renders its
+        # start page is judged on that rendered evidence, not the raw
+        # snapshot escalation was meant to fix -- but the gate itself is
+        # static-only (see start_page_gate) so it still fires for "raw" mode,
+        # which has no render to fall back on.
+        start_record = next((p for p in result.pages if p.url == start_norm), None)
+        if start_record is not None:
+            rendered_start = escalation.rendered.get(start_norm) if escalation else None
+            start_html = (rendered_start or {}).get("html") or result.start_page_evidence.get(
+                "html", ""
+            )
+            gate = render_escalation.start_page_gate(
+                start_norm,
+                max(start_record.outlinks - start_record.external_outlinks, 0),
+                start_html,
+            )
+            requires_rendering, requires_rendering_reason = gate.requires_rendering, gate.reason
 
     evidence = build_evidence(result)
     exports = LoadedExports()
@@ -241,6 +408,24 @@ def crawl_site(
         for extra_url in sitemap_summary["linked_not_in_sitemap"]:
             ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
 
+    # Same "native crawl produces evidence the SF export never carries" shape
+    # as the sitemap reconciliation above: classification runs inside the
+    # spider's own link recording (see crawl/spider.py), never through the
+    # analyzer, and only meets the SF-shaped audit here.
+    link_position: dict[str, Any] = {}
+    if url and settings["link_position"]["classify"]:
+        from seohead.crawl.linkgraph import inlink_composition
+
+        link_position = inlink_composition(result.links)
+        for page in link_position["pages"]:
+            if page["boilerplate_only"]:
+                ctx.add(
+                    "INLINK_BOILERPLATE_ONLY",
+                    target_url=page["url"],
+                    occurrences_count=page["inlinks_total"],
+                    details={"by_position": page["by_position"]},
+                )
+
     audit = aggregate(
         ctx,
         {
@@ -258,6 +443,16 @@ def crawl_site(
             # Without these two reports on the same site are not comparable.
             "crawl_config": crawl_config.manifest(settings),
             "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
+            # "The site is fine" and "the site was fine when we last looked" are different
+            # claims — cache_replay says which one this report can support, and cache_stats
+            # says how much of the corpus was measured now versus remembered.
+            "cache_replay": result.cache_replay,
+            "cache_stats": result.cache_stats,
+            # Whether this run is a false-green that must not reach a health
+            # score (#18), and the escalation that ran (if any) to check.
+            "requires_rendering": requires_rendering,
+            "requires_rendering_reason": requires_rendering_reason,
+            "render_escalation": render_summary or None,
         },
         {},
         sitemap_summary,
@@ -275,10 +470,32 @@ def crawl_site(
         "resumed": result.resumed,
         "discovery": discovery,
         "limitations": result.limitations,
+        "link_position": link_position,
         "summary": audit["summary"],
         "checks_skipped": len(audit["run"].get("checks_skipped", [])),
         "out_dir": out_dir,
+        # See the matching keys in audit["run"] for why these are surfaced twice: a caller
+        # reading only this dict (no out_dir, no audit.json) must still be able to tell a
+        # replayed answer from a measured one.
+        "cache_replay": result.cache_replay,
+        "cache_stats": result.cache_stats,
+        "requires_rendering": requires_rendering,
+        "requires_rendering_reason": requires_rendering_reason,
+        "render_escalation": render_summary,
     }
+
+
+def crawl_describe_settings() -> dict[str, Any]:
+    """Every crawl-site config setting: path, type, default, and description.
+
+    The MCP half of #23: an agent can ask what it can configure instead of
+    guessing a key name or reading the source. Backed by the same
+    ``describe_settings`` that ``crawl-site --config-help`` prints, so the CLI
+    and MCP surfaces cannot describe the same setting two different ways.
+    """
+    from seohead.crawl import settings as crawl_config
+
+    return {"settings": crawl_config.describe_settings()}
 
 
 def images_download(
@@ -311,7 +528,7 @@ def keywords_cluster(**params: Any) -> dict[str, Any]:
 
 def robots_check(
     url: str | None = None, user_agent: str = "*", paths: list[str] | None = None
-) -> dict[str, Any]:
+) -> RobotsCheckResult:
     if not url:
         raise ValueError("url required")
     return robots_core.check_robots(url, user_agent=user_agent, paths=paths)
@@ -551,32 +768,89 @@ def llms_txt_check(url: str | None = None, brand: str | None = None) -> dict[str
     return llms_core.check_llms_txt(url, brand=brand)
 
 
-def citability_check(url: str | None = None, text: str | None = None) -> dict[str, Any]:
-    """Score whether content is self-contained and evidence-rich enough to support a cited AI answer."""
+def _require_fetched_html(url: str) -> dict[str, Any]:
+    """Fetch ``url`` and tighten ``fetch_html``'s transport-only ``ok`` to a 2xx status.
+
+    Matches the success contract every other URL-fetching handler here already
+    uses (``parse_url``'s ``ok``): a transport failure or a non-2xx response
+    both come back as ``ok: False``, so a caller can check one flag either way.
+    """
+    fetched = parser.fetch_html(url)
+    if fetched["ok"]:
+        fetched["ok"] = 200 <= fetched["status_code"] < 300
+    return fetched
+
+
+def citability_check(
+    url: str | None = None, text: str | None = None, content_area: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Score whether content is self-contained and evidence-rich enough to support a cited AI answer.
+
+    Scored over the resolved content area when fetched from a ``url``: nav and
+    footer boilerplate would otherwise dilute statistical density, and — more
+    importantly — the parser's whole-document ``text`` field has no paragraph
+    or heading breaks at all (it is a single collapsed line), which silently
+    zeroes the Answer-Blocks and Structure-Quality dimensions for every live
+    page. ``markdown_extract``'s content-area Markdown keeps both the
+    boilerplate exclusion and the structure the scorer depends on. Passing
+    ``text`` directly is unaffected: the caller chose exactly what to score.
+    """
     if not url and not text:
         raise ValueError("url or text required")
     from seohead.tools import citability as cit_core
 
     if text is not None:
         return cit_core.score_citability(text)
-    # Fetch only visible text through the shared parser; other extraction fields are unnecessary.
-    from seohead.tools import parser as _parser
+    fetched = _require_fetched_html(url)
+    if not fetched["ok"]:
+        return {"ok": False, "url": url, "error": fetched.get("error", "fetch failed")}
+    from seohead.tools import markdown_extract as md_core
 
-    page = _parser.parse_url(
-        url,
-        {
-            "meta": False,
-            "canonical": False,
-            "og": False,
-            "headings": False,
-            "jsonld": False,
-            "links": False,
-            "text": True,
-        },
-    )
-    if not page.get("ok"):
-        return {"ok": False, "url": url, "error": page.get("error", "parse failed")}
-    return {"url": url, **cit_core.score_citability(page.get("text") or "")}
+    content_markdown = md_core.extract_markdown(fetched["html"], content_area)["content_markdown"]
+    return {"url": url, **cit_core.score_citability(content_markdown)}
+
+
+def markdown_extract(
+    url: str | None = None, html: str | None = None, content_area: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Render a page as Markdown in two scopes: content-area only, and full document.
+
+    Pass ``html`` to render offline, or ``url`` to fetch it first. The
+    content-area rendering is what is worth diffing between crawls, scoring,
+    or handing to a model; the full-document rendering (header and footer
+    included) is what ``boilerplate_report`` hashes to check whether
+    boilerplate is actually consistent across a crawl.
+    """
+    if not url and not html:
+        raise ValueError("url or html required")
+    from seohead.tools import markdown_extract as md_core
+
+    if html is not None:
+        return {"ok": True, **md_core.extract_markdown(html, content_area)}
+    fetched = _require_fetched_html(url)
+    if not fetched["ok"]:
+        return {"ok": False, "url": url, "error": fetched.get("error", "fetch failed")}
+    return {
+        "ok": True,
+        "url": url,
+        "final_url": fetched["final_url"],
+        "status_code": fetched["status_code"],
+        **md_core.extract_markdown(fetched["html"], content_area),
+    }
+
+
+def boilerplate_report(pages: list[dict] | None = None) -> dict[str, Any]:
+    """Group a crawled corpus by header/nav/footer hash and report minority template groups.
+
+    Each page is ``{"url": str, "html": str}`` or, when the hash was already
+    computed upstream (``boilerplate_report.boilerplate_hash``), ``{"url": str,
+    "hash": str}``.
+    """
+    if not pages:
+        raise ValueError("pages[] required (list of {url, html} or {url, hash})")
+    from seohead.tools import boilerplate_report as bp_core
+
+    return bp_core.boilerplate_consistency_report(pages)
 
 
 def social_meta_check(
@@ -980,6 +1254,7 @@ _RAW_HANDLERS = {
     "redirects_check": redirects_check,
     "sitemap_crawl": sitemap_crawl,
     "crawl_site": crawl_site,
+    "crawl_describe_settings": crawl_describe_settings,
     "images_download": images_download,
     "images_optimize": images_optimize,
     "keywords_cluster": keywords_cluster,
@@ -1000,6 +1275,8 @@ _RAW_HANDLERS = {
     "mirror_check": mirror_check,
     "llms_txt_check": llms_txt_check,
     "citability_check": citability_check,
+    "markdown_extract": markdown_extract,
+    "boilerplate_report": boilerplate_report,
     "social_meta_check": social_meta_check,
     "soft404_check": soft404_check,
     "log_analyze": log_analyze,

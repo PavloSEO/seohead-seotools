@@ -653,6 +653,49 @@ def check_canonical_to_redirect(ctx: AuditContext) -> None:
             )
 
 
+def check_unlinked_canonical(ctx: AuditContext) -> None:
+    """UNLINKED_CANONICAL — a canonical target no hyperlink ever points to.
+
+    A URL that is only ever named as *someone else's* canonical is reachable
+    by a search engine following the annotation, but never by a user or crawler
+    following a link — and "never" is knowable only once the crawl is complete
+    (issue #15, item 4: a set difference between canonical targets and hyperlink
+    targets). This reuses the canonical edge graph ``check_canonical_chain``
+    already builds and Internal:All's own Inlinks column — no new export is
+    needed, since Inlinks already counts every hyperlink the finished crawl
+    found pointing at that URL. On a partial crawl "never" cannot be proven,
+    so ``aggregate.aggregate`` withholds this finding rather than report it.
+    """
+    edges, has_any = _canonical_edges(ctx)
+    if not has_any:
+        ctx.skip("UNLINKED_CANONICAL", "no Canonical column in Internal:All")
+        return
+    if not any(_rec(p).get("inlinks") is not None for p in ctx.pages):
+        ctx.skip("UNLINKED_CANONICAL", "no Inlinks column in Internal:All")
+        return
+    sources_by_target: dict[str, list[str]] = defaultdict(list)
+    for source_norm, target_norm in edges.items():
+        sources_by_target[target_norm].append(source_norm)
+    for target_norm, source_norms in sources_by_target.items():
+        target = ctx.page_by_norm.get(target_norm)
+        if target is None:
+            continue  # canonical points outside the crawl — cannot classify
+        rec = _rec(target)
+        if rec.get("crawl_depth") == 0:
+            continue  # the homepage is never "unlinked"
+        inlinks = rec.get("inlinks")
+        if inlinks is None or inlinks > 0:
+            continue
+        sources = sorted(
+            ctx.page_by_norm[n].url if n in ctx.page_by_norm else n for n in source_norms
+        )
+        ctx.add(
+            "UNLINKED_CANONICAL",
+            target_url=target.url,
+            details={"canonicalized_from": sources},
+        )
+
+
 def check_pagination(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         rec = _rec(page)
@@ -662,6 +705,78 @@ def check_pagination(ctx: AuditContext) -> None:
                 target_url=page.url,
                 details={"indexability_status": page.indexability_status},
             )
+
+
+def check_pagination_series(ctx: AuditContext) -> None:
+    """PAGINATION_LOOP / UNLINKED_PAGINATION_SERIES — the rel="next" graph.
+
+    rel="next"/rel="prev" edges form a discovery graph exactly like redirects
+    and canonicals: a hop's role in the series is only known once every page's
+    own rel="next" is on hand, so this is a post-crawl pass over the same
+    Internal:All columns ``check_pagination`` already reads (issue #15, item
+    5). A loop is provable when a next-pointer walk revisits a URL already in
+    its own chain, mirroring ``check_canonical_chain``. "Unlinked" — a series
+    whose first page has no hyperlink inlink, so it is reachable only by
+    following rel="next" from itself — can only be trusted on a complete
+    crawl, so ``aggregate.aggregate`` withholds ``UNLINKED_PAGINATION_SERIES``
+    on a partial one.
+    """
+    next_map: dict[str, str] = {}
+    for page in ctx.html_pages():
+        nxt = _rec(page).get("rel_next")
+        if nxt:
+            next_map[norm_url(page.url)] = norm_url(nxt)
+    if not next_map:
+        ctx.skip("PAGINATION_LOOP", 'no rel="next" column in Internal:All')
+        ctx.skip("UNLINKED_PAGINATION_SERIES", 'no rel="next" column in Internal:All')
+        return
+
+    hop_cap = ctx.thresholds.get("redirect_hop_cap", 20)
+    has_predecessor = set(next_map.values())
+    reported: set[str] = set()
+
+    def _url_of(n: str) -> str:
+        page = ctx.page_by_norm.get(n)
+        return page.url if page is not None else n
+
+    for start in next_map:
+        if start in reported:
+            continue
+        path = [start]
+        seen = {start}
+        cur = start
+        is_loop = False
+        for _ in range(hop_cap):
+            nxt = next_map.get(cur)
+            if nxt is None:
+                break
+            if nxt in seen:
+                is_loop = True
+                break
+            path.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+        if is_loop:
+            reported.update(path)
+            ctx.add(
+                "PAGINATION_LOOP",
+                target_url=_url_of(start),
+                details={"series": [_url_of(n) for n in path], "loops_back_to": _url_of(nxt)},
+            )
+            continue
+        if start in has_predecessor:
+            continue  # not the head of its series
+        page = ctx.page_by_norm.get(start)
+        if page is None or not page.is_indexable or _rec(page).get("crawl_depth") == 0:
+            continue
+        inlinks = _rec(page).get("inlinks")
+        if inlinks is None or inlinks > 0 or len(path) < 2:
+            continue
+        ctx.add(
+            "UNLINKED_PAGINATION_SERIES",
+            target_url=page.url,
+            details={"series": [_url_of(n) for n in path], "length": len(path)},
+        )
 
 
 def check_links_extra(ctx: AuditContext) -> None:
@@ -707,6 +822,139 @@ def check_tech_extra(ctx: AuditContext) -> None:
             )
         if rec.get("amphtml"):
             ctx.add("AMPHTML_PRESENT", target_url=page.url, details={"amphtml": rec.get("amphtml")})
+
+
+# --------------------------------------------------------------------------
+# Static Lighthouse audits (issue #59) — see seohead/sf/core/lighthouse.py for
+# which audit id each check corresponds to and its documentation link. None
+# of these run a browser or a performance trace, and none of them contributes
+# to, or can be mistaken for, a Lighthouse Performance score: each is a
+# from-the-description reimplementation of one narrow, documented rule
+# against the response and markup a crawl already has.
+#
+# None of the four fields these checks read (Content-Encoding, Doctype,
+# Viewport, Meta Charset) is a default Screaming Frog export column; a native
+# seohead crawl (seohead.crawl.evidence) always populates them, an SF export
+# only does with matching Custom Extraction configured. Each check follows
+# check_og's honesty contract: if no page in the run carries the evidence at
+# all, it skips by name rather than flag every page.
+# --------------------------------------------------------------------------
+
+_CHARSET_IN_HEADER_RE = re.compile(r"charset\s*=", re.IGNORECASE)
+
+
+def check_charset(ctx: AuditContext) -> None:
+    """Lighthouse `charset`: an encoding declared via Content-Type or an early <meta> tag."""
+    pages = ctx.html_pages()
+    has_evidence = any(
+        (page.content_type and _CHARSET_IN_HEADER_RE.search(page.content_type))
+        or _rec(page).get("meta_charset")
+        for page in pages
+    )
+    if not has_evidence:
+        ctx.skip(
+            "MISSING_CHARSET",
+            "no charset visibility (Content-Type carries no charset and no Meta Charset "
+            "column; needs a native seohead crawl or Custom Extraction in SF)",
+        )
+        return
+    for page in pages:
+        header_charset = bool(page.content_type and _CHARSET_IN_HEADER_RE.search(page.content_type))
+        meta_charset = bool(_rec(page).get("meta_charset"))
+        if not header_charset and not meta_charset:
+            ctx.add(
+                "MISSING_CHARSET", target_url=page.url, details={"content_type": page.content_type}
+            )
+
+
+_DOCTYPE_NAME_RE = re.compile(r"<!DOCTYPE\s+([a-zA-Z0-9]+)", re.IGNORECASE)
+
+
+def check_doctype(ctx: AuditContext) -> None:
+    """Lighthouse `doctype`: exactly ``<!DOCTYPE html>``, no PUBLIC/SYSTEM identifier."""
+    pages = ctx.html_pages()
+    has_evidence = any(_rec(p).get("doctype") for p in pages)
+    if not has_evidence:
+        ctx.skip(
+            "MISSING_DOCTYPE",
+            "no Doctype column (needs a native seohead crawl or Custom Extraction in SF)",
+        )
+        return
+    for page in pages:
+        raw = _rec(page).get("doctype")
+        if not raw:
+            ctx.add("MISSING_DOCTYPE", target_url=page.url, details={"reason": "no doctype"})
+            continue
+        name_match = _DOCTYPE_NAME_RE.match(raw)
+        name = name_match.group(1).lower() if name_match else ""
+        has_legacy_identifier = "public" in raw.lower() or "system" in raw.lower()
+        if name != "html" or has_legacy_identifier:
+            ctx.add("MISSING_DOCTYPE", target_url=page.url, details={"doctype": raw})
+
+
+_INITIAL_SCALE_RE = re.compile(r"initial-scale\s*=\s*([0-9.]+)", re.IGNORECASE)
+_VIEWPORT_WIDTH_RE = re.compile(r"\bwidth\s*=", re.IGNORECASE)
+
+
+def check_viewport(ctx: AuditContext) -> None:
+    """Lighthouse `viewport` (now `viewport-insight`): see lighthouse.LIGHTHOUSE_MAP."""
+    pages = ctx.html_pages()
+    has_evidence = any(_rec(p).get("viewport") for p in pages)
+    if not has_evidence:
+        ctx.skip(
+            "VIEWPORT_MISSING",
+            "no Viewport column (needs a native seohead crawl or Custom Extraction in SF)",
+        )
+        return
+    for page in pages:
+        content = _rec(page).get("viewport")
+        if not content:
+            ctx.add(
+                "VIEWPORT_MISSING", target_url=page.url, details={"reason": "no viewport meta tag"}
+            )
+            continue
+        scale_match = _INITIAL_SCALE_RE.search(content)
+        if scale_match and float(scale_match.group(1)) < 1:
+            ctx.add(
+                "VIEWPORT_MISSING",
+                target_url=page.url,
+                details={"viewport": content, "reason": "initial-scale below 1"},
+            )
+        elif not scale_match and not _VIEWPORT_WIDTH_RE.search(content):
+            ctx.add(
+                "VIEWPORT_MISSING",
+                target_url=page.url,
+                details={"viewport": content, "reason": "no width or initial-scale"},
+            )
+
+
+# Lighthouse's own ignore threshold for `uses-text-compression`: below this
+# many bytes, compressing the response saves too little to report.
+_COMPRESSION_IGNORE_BYTES = 1400
+_COMPRESSED_ENCODINGS = frozenset({"gzip", "br", "deflate", "zstd"})
+
+
+def check_compression(ctx: AuditContext) -> None:
+    """Lighthouse `uses-text-compression` (now `document-latency-insight`): see lighthouse.py."""
+    pages = ctx.html_pages()
+    has_evidence = any(_rec(p).get("content_encoding") for p in pages)
+    if not has_evidence:
+        ctx.skip(
+            "NO_COMPRESSION",
+            "no Content-Encoding column (needs a native seohead crawl or Custom Extraction in SF)",
+        )
+        return
+    for page in pages:
+        rec = _rec(page)
+        encoding = str(rec.get("content_encoding") or "").strip().lower()
+        size = rec.get("size_bytes") or 0
+        if encoding in _COMPRESSED_ENCODINGS or size < _COMPRESSION_IGNORE_BYTES:
+            continue
+        ctx.add(
+            "NO_COMPRESSION",
+            target_url=page.url,
+            details={"content_encoding": rec.get("content_encoding"), "size_bytes": size},
+        )
 
 
 def check_og(ctx: AuditContext) -> None:
@@ -848,9 +1096,15 @@ ALL_CHECKS = [
     check_canonical_extra,
     check_canonical_chain,
     check_canonical_to_redirect,
+    check_unlinked_canonical,
     check_pagination,
+    check_pagination_series,
     check_links_extra,
     check_tech_extra,
+    check_charset,
+    check_doctype,
+    check_viewport,
+    check_compression,
     check_og,
     check_redirect_chains,
     check_native_exports,

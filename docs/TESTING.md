@@ -11,7 +11,7 @@
 
 If the venv does not exist, see [SETUP.md](SETUP.md) — nothing is installed
 by the tests themselves. The first public snapshot contained **458 offline tests**; the current
-suite contains **1181 offline tests**. Runtime varies
+suite contains **over 1500 offline tests**. Runtime varies
 with Python version and installed extras. CI (`.github/workflows/ci.yml`) runs the same suite on
 Python 3.10, 3.12, and 3.13 plus the gates described below.
 
@@ -40,7 +40,7 @@ Grouped by area (file names under `tests/`):
   `test_rules.py`, `test_check_coverage.py`, `test_inlinks.py`,
   `test_heuristics.py`, `test_normalize.py`, `test_context.py`,
   `test_aggregate.py`, `test_sitemap_coverage.py`, `test_sitemap_txt.py` —
-  the 104 checks over the synthetic crawl in `tests/fixtures/`.
+  the 118 checks over the synthetic crawl in `tests/fixtures/`.
 - **Audit outputs**: `test_reporters.py` (audit.json validates against
   `sf/schema/audit.schema.json` — the contract test), `test_sf_config.py`
   (threshold/profile resolution), `test_tasks.py` (backlog building).
