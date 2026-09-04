@@ -30,7 +30,17 @@ Two shapes are covered here, in order of reuse:
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+import sys
+from typing import Any, Literal
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:  # pragma: no cover - exercised by the 3.10/3.11 CI jobs
+    # Pydantic refuses typing.TypedDict below 3.12: on those versions the
+    # runtime cannot see which keys are required, so a shape used in an MCP
+    # tool signature would be validated against nothing. typing_extensions
+    # backports the __required_keys__ machinery pydantic needs.
+    from typing_extensions import TypedDict
 
 
 class LinkInfo(TypedDict):

@@ -39,6 +39,8 @@ dependencies = [
     "defusedxml>=0.7,<1",
     "Pillow>=10.2,<13",
     "pydantic>=2.6,<3",
+    # Pydantic requires TypedDict from here below Python 3.12; see seohead/models.py.
+    "typing_extensions>=4.7; python_version < '3.12'",
 ]
 
 [project.optional-dependencies]
