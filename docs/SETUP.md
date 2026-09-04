@@ -110,14 +110,24 @@ deliberately not in it: `scikit-learn` pulls `scipy` transitively, which is 119 
 unrelated to crawling a site. Rendering (Playwright) is likewise opt-in — it needs a real Chromium
 and its shared libraries.
 
-Measured: **540 MB slim, 1.3 GB full.** CI prints the image size on every run, so a transitive
+Measured: **440 MB slim, 1.08 GB full.** CI prints the image size on every run, so a transitive
 dependency that quietly adds a couple of hundred megabytes shows up in the build log rather than
-being discovered later.
+being discovered later. Both variants are built and smoke-tested in CI.
 
-One weight item is not yet addressed: `pandas` 3.x requires `pyarrow`, which is 124 MB and is never
-called by this codebase. The pandas API surface actually used here is small (`DataFrame`,
-`read_csv`, `read_excel`, `to_numeric`, `Series`, `isna`), all of which exist in 2.x — so pinning
-below 3 is likely to remove it. That change is tracked separately rather than made blind.
+The builder stage also drops build-only weight that a straight `pip install` leaves behind: it
+installs with `--no-compile` (pip's install-time `compileall` pass otherwise bakes in ~67 MB of
+`__pycache__` that `PYTHONDONTWRITEBYTECODE` at runtime does nothing to prevent, since that only
+stops imports from writing bytecode later) and uninstalls `pip` itself (~13 MB) before the venv is
+copied into the runtime stage — the image only ever runs the `seohead` entry point, never pip.
+
+`pandas` does **not** require `pyarrow`: as of pandas 3.0, `pyarrow` is still an optional extra
+(`pandas[pyarrow]`), not a runtime dependency — confirmed against the pandas 3.0.5 wheel metadata
+and by building this image and checking `pip`'s own dependency-resolution log. `pyarrow` is real
+weight in the *full* image, but it comes from `advertools` (the `sitemap` extra, pulled in by
+`EXTRAS=all`), not from pandas, and not from anything in the default slim build — the slim image
+never installs `pyarrow` regardless of the pandas pin. Pinning `pandas<3` would therefore not
+remove it and was not made; if `sitemap`'s ~46 MB `pyarrow` weight needs trimming later, the fix is
+in `advertools`'s own dependency tree, tracked separately from this issue.
 
 ## Comparing two crawls
 
