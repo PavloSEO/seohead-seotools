@@ -72,7 +72,7 @@ Twenty-one of the 42 commands are used inside other skills or are plumbing,
 and have no skill of their own — deliberately: a skill per single command
 is noise.
 
-Page-level utilities: `headers-check` · `hreflang-check` · `links-check` ·
+Page-level utilities: `headers-check` · `asset-weight-check` · `hreflang-check` · `links-check` ·
 `redirects-check` · `redirects-generate` · `soft404-check` ·
 `social-meta-check` · `log-analyze` · `keywords-cluster` ·
 `images-download` · `images-optimize`

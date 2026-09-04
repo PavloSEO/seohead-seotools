@@ -51,9 +51,9 @@ from different starting lists; read both before filing a new gap.
 | 1.1 | Real Core Web Vitals (LCP/INP/CLS) | Field/lab metrics vs official thresholds (LCP 2.5/4 s, INP 200/500 ms, CLS 0.1/0.25) | **high** | A/live | new `cwv.py` or a `pagespeed` skill (PSI/CrUX) |
 | 1.2 | TTFB separate from `response_time` | Time to first byte as its own metric (800/1800 ms), not overall response time | medium | B+ (SF "Response Time" ≈ TTFB only with a light body; exact TTFB is A/live) | extend `check_url_and_perf`, id `SLOW_TTFB` |
 | 1.3 | FCP / render speed | First Contentful Paint (1.8/3 s) | medium | A/live | `cwv.py` / PSI |
-| 1.4 | Response compression (Brotli/gzip) | content-encoding on text responses | medium | A/live (header probe) | id `NO_COMPRESSION` |
-| 1.5 | Cache-Control / cacheability | Presence and sanity of cache headers on static resources | medium | A/live | id `WEAK_CACHE_POLICY` |
-| 1.6 | Render-blocking resources | CSS/JS in `<head>` blocking first paint | medium | A/live (render/HTML) | id `RENDER_BLOCKING` |
+| 1.4 | Response compression (Brotli/gzip) | content-encoding on text responses | medium | **partially DONE** in the live `asset-weight-check` (CSS/JS only; the HTML response itself is still open) | id `NO_COMPRESSION` |
+| 1.5 | Cache-Control / cacheability | Presence and sanity of cache headers on static resources | medium | **partially DONE** in `asset-weight-check` (CSS/JS only; images/fonts still open) | id `WEAK_CACHE_POLICY` |
+| 1.6 | Render-blocking resources | CSS/JS in `<head>` blocking first paint | medium | **DONE** in the live `asset-weight-check` (no registry id) | id `RENDER_BLOCKING` |
 | 1.7 | Page weight (total) | Total page weight with resources, not HTML only (`LARGE_HTML` covers markup alone) | medium | A/live | id `HEAVY_PAGE_WEIGHT` |
 
 **Context.** `SLOW_RESPONSE` already catches a slow server, but it is no

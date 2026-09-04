@@ -1,6 +1,6 @@
 # Tool reference
 
-44 tools, reachable identically from the CLI and from MCP. One
+45 tools, reachable identically from the CLI and from MCP. One
 implementation, two faces: `seohead <command>` in the terminal and
 `seo_<command>` on the MCP server (`seohead mcp`). Five more `sf_*` tools cover
 the Screaming Frog crawl audit workflow specifically — see that section below
@@ -47,6 +47,7 @@ the report says `http_version_measurable: false`.
 |---|---|---|
 | `parse` | Page breakdown: title, description, headings, canonical, meta robots, OG, counters | — |
 | `headers-check` | The full response header set with the SEO-relevant ones decoded | — |
+| `asset-weight-check` | Fetches a page's linked CSS/JS and reports render-blocking resources, oversized files, duplicate libraries (by content hash), missing minification, missing `font-display`, legacy polyfilled JS, and missing compression/long-lived caching. Unused-code and cross-page outlier checks need rendering/multiple pages and are reported under `skipped` | — |
 | `redirects-check` | The live redirect chain to the final URL: hop count, codes, where the loop is | — |
 | `redirects-generate` | Ready redirect rules from URL pairs: Apache (rewrite/redirect), nginx, a custom format | writes to stdout |
 | `links-check` | Broken links on a page; `--internal-only` — own links only | — |
