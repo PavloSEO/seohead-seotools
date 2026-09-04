@@ -9,6 +9,7 @@ import tokenize
 
 from seohead.cli import COMMANDS, URL_COMMANDS
 from seohead.servers.handlers import HANDLERS
+from seohead.sf.core.checks_reference import render as render_checks_reference
 from seohead.sf.core.registry import CHECKS
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -137,6 +138,35 @@ def test_python_comments_and_docstrings_are_english():
                     bad.append(f"{path.relative_to(ROOT)}:{getattr(node, 'lineno', 1)} docstring")
 
     assert not bad, "Cyrillic remains in comments/docstrings: " + "; ".join(bad)
+
+
+def test_checks_reference_is_generated_and_current():
+    """docs/CHECKS.md is generated output (scripts/generate_checks_reference.py); a hand
+    edit or a registry change without regenerating it must fail here rather than ship as
+    stale prose. This is the check catalogue the issue calls out as having no coverage."""
+    committed = (ROOT / "docs" / "CHECKS.md").read_text(encoding="utf-8")
+    assert committed == render_checks_reference(), (
+        "docs/CHECKS.md is stale: run scripts/generate_checks_reference.py and commit the result"
+    )
+    documented = set(re.findall(r"^\| `([A-Z0-9_]+)`", committed, re.M))
+    assert documented == set(CHECKS), "every check must appear in the generated reference"
+
+
+def test_every_cli_command_is_documented_in_tools_reference():
+    tools_doc = (ROOT / "docs" / "TOOLS.md").read_text(encoding="utf-8")
+    missing = sorted(command for command in COMMANDS if f"`{command}`" not in tools_doc)
+    assert not missing, f"commands missing from docs/TOOLS.md: {missing}"
+
+
+def test_severity_breakdown_in_tools_reference_matches_the_registry():
+    from collections import Counter
+
+    counts = Counter(meta["severity"] for meta in CHECKS.values())
+    tools_doc = (ROOT / "docs" / "TOOLS.md").read_text(encoding="utf-8")
+    expected = (
+        f"{counts['critical']} critical, {counts['warning']} warnings, {counts['notice']} notices"
+    )
+    assert expected in tools_doc, f"docs/TOOLS.md severity breakdown is stale, expected: {expected}"
 
 
 def test_private_research_journal_is_not_part_of_the_snapshot():

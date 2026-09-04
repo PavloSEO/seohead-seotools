@@ -1,8 +1,10 @@
 # Tool reference
 
-42 tools, reachable identically from the CLI and from MCP. One
+44 tools, reachable identically from the CLI and from MCP. One
 implementation, two faces: `seohead <command>` in the terminal and
-`seo_<command>` on the MCP server (`seohead mcp`).
+`seo_<command>` on the MCP server (`seohead mcp`). Five more `sf_*` tools cover
+the Screaming Frog crawl audit workflow specifically — see that section below
+and the generated [CHECKS.md](CHECKS.md) for the 96 checks it runs.
 
 The shared contract: JSON out; when a source is unreachable the tool returns
 `{"ok": false, "error": "..."}` instead of raising. An unreachable site is
@@ -94,6 +96,26 @@ The finding level (`critical`/`warning`/`notice`) is assigned by **aggregator
 rules**, not measured by a tool; the document says so itself in
 `summary.severity_note`. The rules table is `SEVERITY_RULES` in
 `seohead/audit/site.py`.
+
+---
+
+## Crawl your own site (`seohead/crawl/`)
+
+No Screaming Frog licence required: the toolkit drives its own spider and audits the
+result through the same check registry as a Screaming Frog export. See
+[SETUP.md](SETUP.md#crawling-without-a-screaming-frog-licence) for the module
+details (adaptive back-off, which checks come back `skipped` and why) and
+[SETUP.md](SETUP.md#comparing-two-crawls) for the four-way diff `compare-crawls` makes.
+
+| Command | What it does | Side effects |
+|---|---|---|
+| `crawl-site` | Follows links from a start URL on the same host, respects `robots.txt`, and audits the result. Not full Screaming Frog parity — checks needing evidence a native crawl cannot produce (redirect chains, near-duplicates, readability, ...) come back `skipped`, never a false clean | writes `pages.jsonl` and the audit document under `--out-dir` |
+| `compare-crawls` | Diffs two audit documents into `entered` / `left` / `appeared` / `disappeared` findings, so a fix is distinguished from a page that simply dropped out of the crawl | — |
+
+```bash
+seohead crawl-site --url https://example.com/ --max-urls 200 --out-dir ./report
+seohead compare-crawls --before old-audit.json --after new-audit.json
+```
 
 ---
 
@@ -212,13 +234,14 @@ echo '{"url":"https://example.com"}' | seohead parse
 tool must not knock where it was not asked to.
 
 **MCP.** The same set under the `seo_*` names plus the `sf_*` audit tools
-(42 + 5):
+(44 + 5):
 
 ```bash
 seohead mcp        # stdio
 ```
 
 ## Where to go next
+- [CHECKS.md](CHECKS.md) — the 96 checks the SF crawl audit runs, generated from the registry
 - [ARCHITECTURE.md](ARCHITECTURE.md) — layers, invariants, where new code goes
 - [SKILLS.md](SKILLS.md) — which skill drives which tool
 - [DECISIONS.md](DECISIONS.md) — why it was decided this way and not another
