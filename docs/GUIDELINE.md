@@ -100,7 +100,7 @@ measured:
 ```
 
 ```bash
-seohead crawl-site --url https://example.com --config ./config.json --out-dir ./run
+seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./run
 ```
 
 ### The lesson worth reading twice
