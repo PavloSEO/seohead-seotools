@@ -58,7 +58,7 @@ from different starting lists; read both before filing a new gap.
 
 **Context.** `SLOW_RESPONSE` already catches a slow server, but it is no
 substitute for real CWV — Google ranks by LCP/INP/CLS. This is the largest
-qualitative gap: none of the 96 checks measures them directly. (Lab LCP/CLS
+qualitative gap: none of the 118 checks measures them directly. (Lab LCP/CLS
 from one Chromium run exist in the live `render-check` as `metrics_lab` —
 labelled lab, not field.)
 
