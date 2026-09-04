@@ -187,11 +187,15 @@ def aggregate(
     # A crawl far below the declared sitemap still scores, but says so: the
     # score describes what was crawled, not the site.
     urls_in_sitemap = int((sitemap_summary or {}).get("urls_in_sitemap") or 0)
-    partial = bool(
+    sitemap_partial = bool(
         urls_in_sitemap and crawl_valid and urls_crawled < urls_in_sitemap * PARTIAL_CRAWL_RATIO
     )
-    run["crawl_partial"] = partial
-    if partial:
+    # A caller may already know the run is partial — a URL limit, a timeout, an
+    # interrupted crawl — before any sitemap comparison happens. That signal
+    # must survive here, not be replaced by a sitemap check that has nothing to
+    # say when there is no sitemap.
+    run["crawl_partial"] = bool(run.get("crawl_partial")) or sitemap_partial
+    if sitemap_partial:
         summary["health_score_scope"] = (
             f"{urls_crawled} of {urls_in_sitemap} sitemap URLs crawled — "
             "the score describes the crawled subset, not the whole site"

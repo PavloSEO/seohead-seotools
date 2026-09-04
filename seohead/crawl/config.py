@@ -449,6 +449,20 @@ def describe_settings() -> list[dict[str, Any]]:
     return out
 
 
+def fingerprint(config: dict[str, Any]) -> str:
+    """Stable identity for "this configuration", to detect a change across runs.
+
+    Used to invalidate a resumable crawl's checkpoint: a frontier built under
+    one scope or limit set must not be resumed under another, or the result
+    silently mixes rules from two different runs.
+    """
+    import hashlib
+    import json
+
+    payload = json.dumps(manifest(config), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def effective_request_rate(config: dict[str, Any]) -> float:
     """Worst-case requests per second this configuration permits.
 

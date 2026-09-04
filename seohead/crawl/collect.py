@@ -80,6 +80,11 @@ class CrawlResult:
     pages: list[PageRecord] = field(default_factory=list)
     partial: bool = False
     stopped_reason: str = ""
+    # Categorical companion to stopped_reason, for callers that branch on why a
+    # crawl stopped rather than parse a sentence. Always set, so "why did this
+    # stop" never depends on whether stopped_reason happened to be non-empty.
+    finish_reason: str = "finished"
+    resumed: bool = False
     limitations: list[str] = field(default_factory=list)
 
 
@@ -242,21 +247,25 @@ def collect_urls(
     urls: Iterable[str],
     *,
     max_urls: int = 500,
+    max_seconds: float = 0,
     timeout: float = DEFAULT_TIMEOUT_S,
     min_delay: float = 0.0,
     out_path: str | None = None,
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     credential_headers: list[dict[str, Any]] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
     ``out_path`` receives one JSON object per line as each URL completes, so an
-    interrupted run still leaves usable evidence behind.
+    interrupted run still leaves usable evidence behind. ``max_seconds`` is a
+    wall-clock budget for the whole call; 0 means none.
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
     throttle = Throttle(min_delay=min_delay)
+    started = clock()
 
     seen: set[str] = set()
     with contextlib.ExitStack() as stack:
@@ -278,6 +287,12 @@ def collect_urls(
             if len(result.pages) >= limit:
                 result.partial = True
                 result.stopped_reason = f"url limit reached ({limit})"
+                result.finish_reason = "url_limit"
+                break
+            if max_seconds and (clock() - started) >= max_seconds:
+                result.partial = True
+                result.stopped_reason = f"duration limit reached ({max_seconds:.0f}s)"
+                result.finish_reason = "duration_limit"
                 break
             url = (raw or "").strip()
             if not url or url in seen:
@@ -300,10 +315,12 @@ def collect_urls(
             if throttle.should_stop():
                 result.partial = True
                 result.stopped_reason = "origin stopped responding (repeated timeouts)"
+                result.finish_reason = "errors"
                 break
             if throttle.host_is_failing():
                 result.partial = True
                 result.stopped_reason = "origin refused repeatedly (429/5xx) — crawl stopped"
+                result.finish_reason = "errors"
                 break
 
     result.limitations = [
