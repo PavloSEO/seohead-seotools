@@ -99,11 +99,19 @@ def _parse_sitemap_bytes(
     allowed_hosts: set[str],
     depth: int = 0,
     failures: list[str] | None = None,
+    documents: list[dict[str, Any]] | None = None,
+    source: str = "",
 ) -> list[dict[str, Any]]:
     """Return [{loc, lastmod}], recursing through <sitemapindex> with guards.
 
     Child sitemaps that can't be fetched are appended to ``failures`` (so the
     caller can report a partial parse instead of silently undercounting).
+
+    ``documents``, when given, collects one record per sitemap document actually parsed:
+    its URL, its uncompressed byte size and how many entries it declares. Those are the two
+    numbers the sitemap protocol puts a hard limit on, and neither survives the flattening
+    into a single list of locations — a search engine may take the first 50,000 entries of an
+    over-long sitemap and discard the rest, silently, with no error the site owner can see.
     """
     # Reject DTDs/entities outright — sitemaps never use them (XXE / billion-laughs guard).
     if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
@@ -130,7 +138,15 @@ def _parse_sitemap_bytes(
             if child:
                 out.extend(
                     _parse_sitemap_bytes(
-                        child, user_agent, timeout, seen, allowed_hosts, depth + 1, failures
+                        child,
+                        user_agent,
+                        timeout,
+                        seen,
+                        allowed_hosts,
+                        depth + 1,
+                        failures,
+                        documents,
+                        loc,
                     )
                 )
             elif failures is not None:
@@ -138,13 +154,26 @@ def _parse_sitemap_bytes(
             if len(out) >= MAX_SITEMAP_URLS:
                 break
     else:  # urlset
+        declared = 0
         for url_el in root.findall("sm:url", _NS) or root.findall("url"):
+            declared += 1
             loc = url_el.findtext("sm:loc", namespaces=_NS) or url_el.findtext("loc")
             lastmod = url_el.findtext("sm:lastmod", namespaces=_NS) or url_el.findtext("lastmod")
             if loc:
-                out.append({"loc": loc.strip(), "lastmod": (lastmod or "").strip() or None})
+                out.append(
+                    {
+                        "loc": loc.strip(),
+                        "lastmod": (lastmod or "").strip() or None,
+                        "source": source,
+                    }
+                )
                 if len(out) >= MAX_SITEMAP_URLS:
+                    # The parse stops here, so the declared count stops being trustworthy;
+                    # the document record below says how far it got rather than implying
+                    # it read the whole file.
                     break
+        if documents is not None:
+            documents.append({"url": source, "bytes": len(data), "declared": declared})
     return out
 
 
@@ -203,6 +232,55 @@ def _emit_from_export(ctx: AuditContext, key: str, check_id: str) -> int:
     return len(urls)
 
 
+# The sitemap protocol's own limits, not thresholds anybody should configure: a file over
+# either one is invalid rather than merely large.
+MAX_SITEMAP_URLS_PER_FILE = 50_000
+MAX_SITEMAP_BYTES_PER_FILE = 52_428_800  # 50 MiB, uncompressed
+
+
+def _check_protocol_limits(
+    ctx: AuditContext,
+    documents: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    summary: dict[str, Any],
+) -> None:
+    """Assert the two hard protocol limits, and name URLs declared in two files.
+
+    Reported against the individual document rather than the index: "your sitemap is too big"
+    is not actionable when a sitemap index has forty children.
+    """
+    for doc in documents:
+        url = doc.get("url") or _base_url(ctx)
+        if doc.get("declared", 0) > MAX_SITEMAP_URLS_PER_FILE:
+            ctx.add(
+                "SITEMAP_TOO_MANY_URLS",
+                target_url=url,
+                occurrences_count=doc["declared"],
+                details={"declared": doc["declared"], "limit": MAX_SITEMAP_URLS_PER_FILE},
+            )
+        if doc.get("bytes", 0) > MAX_SITEMAP_BYTES_PER_FILE:
+            ctx.add(
+                "SITEMAP_TOO_LARGE",
+                target_url=url,
+                details={"bytes": doc["bytes"], "limit": MAX_SITEMAP_BYTES_PER_FILE},
+            )
+
+    sources: dict[str, list[str]] = {}
+    for entry in entries:
+        loc = entry.get("loc")
+        source = entry.get("source") or ""
+        if not loc:
+            continue
+        seen = sources.setdefault(loc, [])
+        if source and source not in seen:
+            seen.append(source)
+    duplicated = {loc: srcs for loc, srcs in sources.items() if len(srcs) > 1}
+    for loc, srcs in sorted(duplicated.items()):
+        ctx.add("SITEMAP_URL_DUPLICATED", target_url=loc, details={"sitemaps": srcs})
+    if duplicated:
+        summary["urls_in_multiple_sitemaps"] = len(duplicated)
+
+
 # --------------------------------------------------------------------------
 # main entry
 # --------------------------------------------------------------------------
@@ -226,6 +304,7 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
 
     # --- 2. direct robots.txt + sitemap parse (opt-in) -------------------
     sitemap_entries: list[dict[str, Any]] = []
+    sitemap_documents: list[dict[str, Any]] = []
     declared_in_robots: bool | None = None
     sitemaps_declared: list[str] = []
     want_network = bool(sitemap_url) or cfg_live.get("enabled", False)
@@ -260,7 +339,14 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
             if data:
                 sitemap_entries.extend(
                     _parse_sitemap_bytes(
-                        data, ua, timeout, seen, allowed_hosts, failures=fetch_failures
+                        data,
+                        ua,
+                        timeout,
+                        seen,
+                        allowed_hosts,
+                        failures=fetch_failures,
+                        documents=sitemap_documents,
+                        source=sm_url,
                     )
                 )
             else:
@@ -272,6 +358,8 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
                 target_url=base,
                 details={"failed_count": len(fetch_failures), "examples": fetch_failures[:10]},
             )
+
+    _check_protocol_limits(ctx, sitemap_documents, sitemap_entries, summary)
 
     # Prefer the richer source for the URL set / lastmod analysis.
     sitemap_locs = [e["loc"] for e in sitemap_entries] or sf_in

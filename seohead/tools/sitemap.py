@@ -384,8 +384,12 @@ def crawl(url: str, concurrency: int = 3) -> dict:
 
     sitemaps: list[dict] = []
     errors: list[dict] = []
-    seen_locs: set[str] = set()
+    seen_locs: dict[str, str] = {}
     duplicates: list[str] = []
+    # A URL declared in two child sitemaps is usually a generator that ran twice, and it
+    # distorts every count derived from the declared set. Counting them says it happened;
+    # naming both documents says where to look.
+    duplicate_sources: dict[str, list[str]] = {}
     all_urls: list[dict] = []
     truncated = False
 
@@ -398,7 +402,9 @@ def crawl(url: str, concurrency: int = 3) -> dict:
         parsed = parse_sitemap(body, target)
         if not parsed.get("ok"):
             return {"kind": "error", "url": target, "error": parsed.get("error", "parse error")}
-        return {"kind": "parsed", "url": target, "parsed": parsed}
+        # Measured after decompression, because the protocol's 50 MB limit is about the document
+        # a search engine has to parse, not about what travelled over the wire.
+        return {"kind": "parsed", "url": target, "parsed": parsed, "bytes": len(body)}
 
     limits = httpx.Limits(max_connections=concurrency)
     client, _http2_capable = http_client(
@@ -431,7 +437,15 @@ def crawl(url: str, concurrency: int = 3) -> dict:
                 parsed = result["parsed"]
                 if parsed["type"] == "index":
                     children = parsed["sitemaps"]
-                    sitemaps.append({"url": target, "type": "index", "count": len(children)})
+                    sitemaps.append(
+                        {
+                            "url": target,
+                            "type": "index",
+                            "count": len(children),
+                            "bytes": result.get("bytes", 0),
+                            "declared": len(children),
+                        }
+                    )
                     for child in children:
                         try:
                             norm = normalize_url(child["loc"])
@@ -449,8 +463,11 @@ def crawl(url: str, concurrency: int = 3) -> dict:
                             continue
                         if norm_loc in seen_locs:
                             duplicates.append(norm_loc)
+                            sources = duplicate_sources.setdefault(norm_loc, [seen_locs[norm_loc]])
+                            if target not in sources:
+                                sources.append(target)
                             continue
-                        seen_locs.add(norm_loc)
+                        seen_locs[norm_loc] = target
                         all_urls.append(
                             {
                                 # The address the sitemap published, not the normalised key.
@@ -471,7 +488,18 @@ def crawl(url: str, concurrency: int = 3) -> dict:
                         if len(all_urls) >= MAX_URLS:
                             truncated = True
                             break
-                    sitemaps.append({"url": target, "type": parsed["type"], "count": added})
+                    sitemaps.append(
+                        {
+                            "url": target,
+                            "type": parsed["type"],
+                            # Added to the run after de-duplication and the global budget.
+                            "count": added,
+                            # What this one document declares, before either — the number the
+                            # protocol's 50,000-URL limit is actually about.
+                            "declared": len(parsed["urls"]),
+                            "bytes": result.get("bytes", 0),
+                        }
+                    )
                 else:
                     errors.append({"url": target, "error": "Unknown sitemap format"})
 
@@ -482,6 +510,7 @@ def crawl(url: str, concurrency: int = 3) -> dict:
         "urls": all_urls,
         "sitemaps": sitemaps,
         "duplicates": duplicates,
+        "duplicate_sources": duplicate_sources,
         "errors": errors,
         "truncated": truncated,
     }

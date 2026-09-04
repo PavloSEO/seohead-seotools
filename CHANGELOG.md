@@ -4,6 +4,14 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Assert the sitemap protocol's own limits (#124): `SITEMAP_TOO_MANY_URLS` above 50,000
+  entries in one file, `SITEMAP_TOO_LARGE` above 50 MB uncompressed, and
+  `SITEMAP_URL_DUPLICATED` for a URL declared in more than one sitemap, naming both
+  documents. A file over either limit is invalid rather than merely large — a search
+  engine may read part of it and discard the rest with nothing the site owner can see —
+  and the thresholds come from the protocol, not from config. Both parsers now record the
+  per-document byte size and declared count, and the findings name the child sitemap
+  rather than the index. Registry grows from 118 to 121 checks.
 - Add `docs/COVERAGE_SF_ISSUES.md`, generated from `seohead/sf/core/sf_issue_map.py`:
   every one of the 320 issues in the field's published catalogue, each with exactly one
   status — found by a named check, found by a named command, found in part with the

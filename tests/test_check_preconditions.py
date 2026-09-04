@@ -69,7 +69,11 @@ def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
     # directly from evidence a native crawl produces (crawl/linkgraph.py),
     # never through this SF-export fixture, so it has no export-based
     # dependency to declare and is silent here by the same construction.
-    assert coverage["checks_silent"] <= 60
+    # Raised from 60 to 62 when the sitemap protocol-limit checks were added
+    # (issue #124): they need a live sitemap parse rather than an export
+    # frame, so on an export-only fixture they run clean, exactly as
+    # SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP already do.
+    assert coverage["checks_silent"] <= 62
 
 
 def test_removing_evidence_only_ever_grows_the_skip_set(tmp_path):

@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**118 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**121 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -125,6 +125,9 @@ python scripts/generate_checks_reference.py
 | `SITEMAP_ORPHAN` | warning | sitemap | Sitemap URL has no internal inlinks | Add relevant internal links to the page or remove it from the sitemap if it should not be discoverable. |
 | `URL_NOT_IN_SITEMAP` | notice | sitemap | Indexable page is missing from the sitemap | Add the canonical page URL to the appropriate sitemap. |
 | `SITEMAP_STALE_LASTMOD` | notice | sitemap | Sitemap contains stale or boilerplate lastmod values | Generate each lastmod value from the page's actual meaningful modification date. |
+| `SITEMAP_TOO_MANY_URLS` | warning | sitemap | Sitemap declares more URLs than the protocol allows | Split the sitemap into files of at most 50,000 URLs each and list them in a sitemap index. Over the limit the file is invalid and a search engine may read part of it and discard the rest without reporting anything. |
+| `SITEMAP_TOO_LARGE` | warning | sitemap | Sitemap exceeds the protocol's uncompressed size limit | Split the sitemap so each file stays under 50 MB uncompressed. The limit is about the document a search engine parses, so compressing it does not help. |
+| `SITEMAP_URL_DUPLICATED` | notice | sitemap | URL is declared in more than one sitemap | Declare each URL in exactly one sitemap. A URL in two files is usually a generator that ran twice, and it distorts every count taken from the declared set. |
 | `SITEMAP_DESYNC` | warning | sitemap | Sitemap and crawl URL sets are out of sync | Synchronize the sitemap with the site's actual set of canonical, indexable pages. |
 | `SITEMAP_FETCH_INCOMPLETE` | notice | sitemap | Some child sitemaps could not be fetched because of network or availability errors | Check that every child sitemap is reachable and retry the audit in case the sitemap service was temporarily slow. |
 

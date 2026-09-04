@@ -381,6 +381,34 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "Sitemap contains stale or boilerplate lastmod values",
         "fix": "Generate each lastmod value from the page's actual meaningful modification date.",
     },
+    "SITEMAP_TOO_MANY_URLS": {
+        "severity": "warning",
+        "source": "sitemap",
+        "message": "Sitemap declares more URLs than the protocol allows",
+        "fix": (
+            "Split the sitemap into files of at most 50,000 URLs each and list them in a "
+            "sitemap index. Over the limit the file is invalid and a search engine may read "
+            "part of it and discard the rest without reporting anything."
+        ),
+    },
+    "SITEMAP_TOO_LARGE": {
+        "severity": "warning",
+        "source": "sitemap",
+        "message": "Sitemap exceeds the protocol's uncompressed size limit",
+        "fix": (
+            "Split the sitemap so each file stays under 50 MB uncompressed. The limit is "
+            "about the document a search engine parses, so compressing it does not help."
+        ),
+    },
+    "SITEMAP_URL_DUPLICATED": {
+        "severity": "notice",
+        "source": "sitemap",
+        "message": "URL is declared in more than one sitemap",
+        "fix": (
+            "Declare each URL in exactly one sitemap. A URL in two files is usually a "
+            "generator that ran twice, and it distorts every count taken from the declared set."
+        ),
+    },
     "SITEMAP_DESYNC": {
         "severity": "warning",
         "source": "sitemap",
