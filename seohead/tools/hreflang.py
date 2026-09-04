@@ -775,11 +775,22 @@ def check_hreflang(url: str, timeout: float = 25.0) -> dict:
     except Exception as exc:
         return {"ok": False, "url": url, "error": str(exc)}
     final_url = str(resp.url)
+    if not 200 <= resp.status_code < 300:
+        # An error page carries no hreflang, and "no hreflang annotations found"
+        # is a statement about a page that was never served.
+        return {
+            "ok": False,
+            "url": url,
+            "final_url": final_url,
+            "status_code": resp.status_code,
+            "error": f"The page returned HTTP {resp.status_code}, so it has no annotations to check",
+        }
     alternates = extract_hreflang(resp.text, final_url)
     return {
         "ok": True,
         "url": url,
         "final_url": final_url,
+        "status_code": resp.status_code,
         "count": len(alternates),
         "alternates": alternates,
         "issues": validate(alternates, final_url),
