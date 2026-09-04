@@ -15,6 +15,8 @@ def test_defaults_load_and_validate():
     resolved = cfg.load()
     assert resolved["limits"]["max_urls"] == cfg.DEFAULTS["limits"]["max_urls"]
     assert resolved["robots"]["policy"] == "respect"
+    # 1 is the sequential crawler: concurrency must be opt-in, not a surprise.
+    assert resolved["speed"]["concurrency"] == 1
 
 
 def test_every_setting_is_classified_as_results_affecting_or_not():
@@ -30,6 +32,10 @@ def test_every_setting_is_classified_as_results_affecting_or_not():
         "output.dir",
         "output.write_pages_jsonl",
         "speed.max_delay_seconds",
+        # Changes only how fast a crawl runs, never what it finds: the spider
+        # sorts batched results back into queue order before anything is
+        # written, so pages.jsonl is the same at any concurrency.
+        "speed.concurrency",
     }
     every = set(cfg._flatten(cfg.DEFAULTS))
     unclassified = every - cfg.RESULTS_AFFECTING - cost_only
@@ -116,6 +122,7 @@ def test_free_form_headers_are_a_leaf_not_a_branch(tmp_path):
         ({"limits.max_urls": 0}, "max_urls"),
         ({"limits.max_depth": -1}, "max_depth"),
         ({"speed.min_delay_seconds": -1}, "min_delay_seconds"),
+        ({"speed.concurrency": 0}, "concurrency"),
     ],
 )
 def test_invalid_values_are_refused(override, message):

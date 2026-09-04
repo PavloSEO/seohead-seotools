@@ -79,6 +79,7 @@ def build_server():  # -> FastMCP
         max_depth: int = 5,
         min_delay: float = 0.5,
         robots: str = "respect",
+        concurrency: int = 1,
         out_dir: str | None = None,
     ) -> dict[str, Any]:
         """Crawl a site from a start URL by following links, then audit the result
@@ -88,13 +89,15 @@ def build_server():  # -> FastMCP
 
         ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
         anyway, and report what a compliant crawler would have missed) or
-        "ignore" (do not fetch it at all)."""
+        "ignore" (do not fetch it at all). ``concurrency`` is a per-origin
+        ceiling the adaptive throttle grows into, not a fixed thread count."""
         return handlers.crawl_site(
             url=url,
             max_urls=max_urls,
             max_depth=max_depth,
             min_delay=min_delay,
             robots=robots,
+            concurrency=concurrency,
             out_dir=out_dir,
         )
 
@@ -232,16 +235,29 @@ def build_server():  # -> FastMCP
 
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_duplicate_check(
-        items: list[dict], threshold: float = 0.92, with_fingerprints: bool = False
+        items: list[dict],
+        threshold: float = 0.92,
+        with_fingerprints: bool = False,
+        only_indexable: bool = True,
     ) -> dict[str, Any]:
         """Find near-duplicate pages among a list of {id, text} documents using
         simhash + locality-sensitive hashing (no O(n^2) pairwise comparison).
-        Returns clusters of pages whose similarity is at or above the threshold,
-        with exact pairwise similarity inside each cluster. Feed it page texts from
-        a crawl (SF export, sitemap + parse) to surface thin/duplicate content on
-        large sites."""
+        Returns exact duplicates (by content hash) separately from near-duplicate
+        clusters (similarity at or above the threshold, with exact pairwise
+        similarity inside each cluster), so a byte-identical pair is never reported
+        twice. Feed it page texts from a crawl (SF export, sitemap + parse) to
+        surface thin/duplicate content on large sites; ideally each item's text is
+        already scoped to the page's content area (see seo_markdown_extract or
+        parse's content_text field), so shared navigation and footer boilerplate
+        does not create false matches. only_indexable=True (default) compares only
+        items whose indexable flag is true or absent, since a page canonicalised to
+        another is an intended twin, not a defect; set it to false to audit the
+        canonical tags themselves."""
         return handlers.duplicate_check(
-            items=items, threshold=threshold, with_fingerprints=with_fingerprints
+            items=items,
+            threshold=threshold,
+            with_fingerprints=with_fingerprints,
+            only_indexable=only_indexable,
         )
 
     @mcp.tool(annotations=fetch, structured_output=True)
@@ -273,14 +289,51 @@ def build_server():  # -> FastMCP
         return handlers.llms_txt_check(url=url, brand=brand or None)
 
     @mcp.tool(annotations=fetch, structured_output=True)
-    def seo_citability_check(url: str = "", text: str = "") -> dict[str, Any]:
+    def seo_citability_check(
+        url: str = "", text: str = "", content_area: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Score how citable a piece of content is for AI answers (GEO/AEO): 0-100 across
         four dimensions (25 each) — Answer Blocks (self-contained 20-200 word paragraphs),
         Self-Containment (no context-dependent phrases like 'as mentioned above'),
         Statistical Density (numbers/percentages/dates + evidence markers per 100 words),
-        and Structure Quality (headings/lists/TL;DR). Pass text to score a fragment, or url
-        to fetch and score the page's visible text."""
-        return handlers.citability_check(url=url or None, text=text or None)
+        and Structure Quality (headings/lists/TL;DR). Pass text to score a fragment exactly
+        as given, or url to fetch the page and score it: fetching scores the resolved
+        content area's Markdown (navigation and footer excluded, headings/lists/paragraph
+        breaks preserved), not the raw whole-document text, since a flat text blob has no
+        structure for the scorer to find. content_area configures that region — see
+        seo_markdown_extract / seo_parse's content_area option for its keys."""
+        return handlers.citability_check(
+            url=url or None, text=text or None, content_area=content_area
+        )
+
+    @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_markdown_extract(
+        url: str = "", html: str = "", content_area: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Render a page as Markdown in two scopes. content_markdown strips navigation
+        and footer (boilerplate) while keeping headings, lists, and links -- the
+        representation worth diffing between crawls, feeding to content scoring
+        (seo_citability_check, seo_duplicate_check), or handing to a model. full_markdown
+        keeps header/nav/footer too; it is the input seo_boilerplate_report hashes to check
+        whether boilerplate is actually the same across a crawl. content_area_strategy
+        records how the region was resolved for this page. Pass html to render offline,
+        or url to fetch it first. content_area configures the region (root/include CSS
+        selectors, tag/selector exclusions); defaults exclude <nav> and <footer>."""
+        return handlers.markdown_extract(
+            url=url or None, html=html or None, content_area=content_area
+        )
+
+    @mcp.tool(annotations=pure, structured_output=True)
+    def seo_boilerplate_report(pages: list[dict]) -> dict[str, Any]:
+        """Answer "is the boilerplate actually the same everywhere?" across a crawled
+        corpus. Hashes each page's header/nav/footer markup (structure kept, not just
+        text, so a link dropped from a menu still changes the hash), groups pages by
+        that hash, and reports every group that is not the dominant one -- with its
+        fraction of the corpus and a sample URL. Catches a nav block that lost links on
+        one template, a footer never migrated on old pages, or a menu that renders
+        differently under one language branch. Each page is {"url", "html"}, or
+        {"url", "hash"} when the hash was already computed upstream."""
+        return handlers.boilerplate_report(pages=pages)
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_social_meta_check(

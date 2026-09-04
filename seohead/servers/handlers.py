@@ -112,6 +112,7 @@ def crawl_site(
     max_urls: int | None = None,
     max_depth: int | None = None,
     min_delay: float | None = None,
+    concurrency: int | None = None,
     robots: str | None = None,
     out_dir: str | None = None,
     sitemap: str | None = None,
@@ -156,6 +157,7 @@ def crawl_site(
             "limits.max_urls": max_urls,
             "limits.max_depth": max_depth,
             "speed.min_delay_seconds": min_delay,
+            "speed.concurrency": concurrency,
             "robots.policy": robots,
             "output.dir": out_dir,
         },
@@ -191,6 +193,7 @@ def crawl_site(
             # crawl with no out_dir has nothing to resume into anyway.
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
+            concurrency=settings["speed"]["concurrency"],
         )
         discovery = {
             "mode": "spider",
@@ -201,6 +204,7 @@ def crawl_site(
             "robots_blocked": len(result.robots_blocked),
             "crawl_delay_applied": result.crawl_delay_applied,
             "effective_delay_seconds": round(result.effective_delay, 3),
+            "effective_concurrency": result.effective_concurrency,
             "resume_note": result.resume_note,
             "sitemap_url": sitemap_seed["sitemap_url"],
             "sitemap_seeded": len(result.seed_urls),
@@ -552,32 +556,89 @@ def llms_txt_check(url: str | None = None, brand: str | None = None) -> dict[str
     return llms_core.check_llms_txt(url, brand=brand)
 
 
-def citability_check(url: str | None = None, text: str | None = None) -> dict[str, Any]:
-    """Score whether content is self-contained and evidence-rich enough to support a cited AI answer."""
+def _require_fetched_html(url: str) -> dict[str, Any]:
+    """Fetch ``url`` and tighten ``fetch_html``'s transport-only ``ok`` to a 2xx status.
+
+    Matches the success contract every other URL-fetching handler here already
+    uses (``parse_url``'s ``ok``): a transport failure or a non-2xx response
+    both come back as ``ok: False``, so a caller can check one flag either way.
+    """
+    fetched = parser.fetch_html(url)
+    if fetched["ok"]:
+        fetched["ok"] = 200 <= fetched["status_code"] < 300
+    return fetched
+
+
+def citability_check(
+    url: str | None = None, text: str | None = None, content_area: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Score whether content is self-contained and evidence-rich enough to support a cited AI answer.
+
+    Scored over the resolved content area when fetched from a ``url``: nav and
+    footer boilerplate would otherwise dilute statistical density, and — more
+    importantly — the parser's whole-document ``text`` field has no paragraph
+    or heading breaks at all (it is a single collapsed line), which silently
+    zeroes the Answer-Blocks and Structure-Quality dimensions for every live
+    page. ``markdown_extract``'s content-area Markdown keeps both the
+    boilerplate exclusion and the structure the scorer depends on. Passing
+    ``text`` directly is unaffected: the caller chose exactly what to score.
+    """
     if not url and not text:
         raise ValueError("url or text required")
     from seohead.tools import citability as cit_core
 
     if text is not None:
         return cit_core.score_citability(text)
-    # Fetch only visible text through the shared parser; other extraction fields are unnecessary.
-    from seohead.tools import parser as _parser
+    fetched = _require_fetched_html(url)
+    if not fetched["ok"]:
+        return {"ok": False, "url": url, "error": fetched.get("error", "fetch failed")}
+    from seohead.tools import markdown_extract as md_core
 
-    page = _parser.parse_url(
-        url,
-        {
-            "meta": False,
-            "canonical": False,
-            "og": False,
-            "headings": False,
-            "jsonld": False,
-            "links": False,
-            "text": True,
-        },
-    )
-    if not page.get("ok"):
-        return {"ok": False, "url": url, "error": page.get("error", "parse failed")}
-    return {"url": url, **cit_core.score_citability(page.get("text") or "")}
+    content_markdown = md_core.extract_markdown(fetched["html"], content_area)["content_markdown"]
+    return {"url": url, **cit_core.score_citability(content_markdown)}
+
+
+def markdown_extract(
+    url: str | None = None, html: str | None = None, content_area: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Render a page as Markdown in two scopes: content-area only, and full document.
+
+    Pass ``html`` to render offline, or ``url`` to fetch it first. The
+    content-area rendering is what is worth diffing between crawls, scoring,
+    or handing to a model; the full-document rendering (header and footer
+    included) is what ``boilerplate_report`` hashes to check whether
+    boilerplate is actually consistent across a crawl.
+    """
+    if not url and not html:
+        raise ValueError("url or html required")
+    from seohead.tools import markdown_extract as md_core
+
+    if html is not None:
+        return {"ok": True, **md_core.extract_markdown(html, content_area)}
+    fetched = _require_fetched_html(url)
+    if not fetched["ok"]:
+        return {"ok": False, "url": url, "error": fetched.get("error", "fetch failed")}
+    return {
+        "ok": True,
+        "url": url,
+        "final_url": fetched["final_url"],
+        "status_code": fetched["status_code"],
+        **md_core.extract_markdown(fetched["html"], content_area),
+    }
+
+
+def boilerplate_report(pages: list[dict] | None = None) -> dict[str, Any]:
+    """Group a crawled corpus by header/nav/footer hash and report minority template groups.
+
+    Each page is ``{"url": str, "html": str}`` or, when the hash was already
+    computed upstream (``boilerplate_report.boilerplate_hash``), ``{"url": str,
+    "hash": str}``.
+    """
+    if not pages:
+        raise ValueError("pages[] required (list of {url, html} or {url, hash})")
+    from seohead.tools import boilerplate_report as bp_core
+
+    return bp_core.boilerplate_consistency_report(pages)
 
 
 def social_meta_check(
@@ -1001,6 +1062,8 @@ _RAW_HANDLERS = {
     "mirror_check": mirror_check,
     "llms_txt_check": llms_txt_check,
     "citability_check": citability_check,
+    "markdown_extract": markdown_extract,
+    "boilerplate_report": boilerplate_report,
     "social_meta_check": social_meta_check,
     "soft404_check": soft404_check,
     "log_analyze": log_analyze,

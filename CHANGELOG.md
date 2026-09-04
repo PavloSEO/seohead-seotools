@@ -50,6 +50,23 @@ All notable public changes are documented here.
   header/nav/footer per page and flags minority template groups.
 - Add dependency-free Markdown extraction (`markdown_extract.py`): a
   content-area-only rendering and a full-document one.
+- Wire `markdown_extract` and `boilerplate_report` into the CLI and MCP surface as
+  `markdown-extract`/`seo_markdown_extract` and `boilerplate-report`/`seo_boilerplate_report`
+  (47 core tools, up from 45), and add the `only_indexable` flag `duplicate_check` already had
+  at the handler layer to `seo_duplicate_check`'s MCP signature, where it had been missed.
+  Rescope `citability-check`'s URL path from the parser's whole-document `text` field (a single
+  collapsed line with no paragraph or heading breaks at all) to `markdown_extract`'s content-area
+  Markdown, fixing both the boilerplate dilution the issue raised and a latent bug where the flat
+  text silently zeroed the Answer-Blocks and Structure-Quality dimensions for every live URL.
+  Left unscoped, deliberately: the parser's `text` field itself, still whole-document, because
+  `page_facts.py`'s schema-evidence extraction (`sameAs` social links, breadcrumbs, price/rating
+  regexes) depends on facts that legitimately live in header/footer widgets the content area
+  excludes; and the Screaming-Frog-driven `THIN_CONTENT`/`LOW_TEXT_RATIO` checks in
+  `sf/core/rules.py`, whose `word_count`/`text_ratio` come from Screaming Frog's own export
+  columns — third-party data the toolkit has no raw HTML to rescope without re-fetching every
+  page, defeating the zero-request offline-corpus design of the SF audit path. The toolkit's own
+  crawler (`crawl-site`) already inherits the content-area scoping for free, since its word count
+  reads straight from `parser.parse_html`.
 - Write down a naming convention (`docs/NAMING.md`) and resolve the module-basename collisions
   and process-named test files it found; no CLI command, handler, or MCP tool name changed.
 - Add community, citation, and no-key agent onboarding files.
