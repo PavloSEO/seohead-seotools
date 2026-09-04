@@ -14,6 +14,20 @@ All notable public changes are documented here.
   request and on every redirect hop, keeping the hostname only for the `Host` header and
   TLS SNI — so the fix is structural rather than a discipline every caller had to remember.
   `SEOHEAD_ALLOW_PRIVATE_NETWORKS`/`SEOHEAD_ALLOW_PRIVATE_HOSTS` are unchanged.
+- Fix the CLI/MCP exit-code contract for a handler's own-reported failure, and complete
+  `SOURCE_FLAGS` (#155, #156). A handler returning `{"ok": false, ...}` — the tool layer's
+  documented way of reporting a fetch, parse, or provider failure without raising — used to
+  print that JSON and exit 0 on the CLI and return a normal (non-`isError`) result over MCP,
+  so a pipeline gating on `$?` or a client checking `isError` alone could not detect it.
+  `cli.py` now exits 1 for that case (`log-scan`'s own exit 2 for a self-contradicting run
+  stays a separate, documented signal — see `docs/USAGE.md`), and `mcp_server.py` raises
+  `ToolError` from a shared `_checked()` wrapper so a client sees `isError` instead. Both call
+  a single `handlers.handler_failed()` so the two interfaces cannot drift on what counts as a
+  failure. Separately, `SOURCE_FLAGS` gained `--phrase`, `--keywords`, `--query`/`--queries`,
+  `--seed`, `--counter`, and `--before`/`--after` — each already identifies a command's whole
+  input the way `--url` does, but was missing, so a per-line loop over any of them silently
+  processed only its first line. The set is now built by `_source_flag()` at the point each
+  flag is declared instead of hand-listed separately, so it cannot drift out of sync again.
 - Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
   arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
   taste: each declares the catalogued issues it resolves, and

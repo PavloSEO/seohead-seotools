@@ -7,7 +7,7 @@ Usage:
 
 Primary input is --input '<json>' (an object mapped onto the handler kwargs) or
 piped stdin JSON; a few convenience flags are also accepted. Output is pretty JSON
-to stdout; errors go to stderr with a non-zero exit.
+to stdout. Exit codes are documented in one place: docs/USAGE.md's "Input conventions".
 """
 
 from __future__ import annotations
@@ -124,18 +124,22 @@ def _stdin_has_data() -> bool:
 # `while read u; do seohead parse --url "$u"; done < urls.txt` loses the remainder of the file on
 # its first iteration: regular-file stdin is always reported as ready, so the command consumes every
 # unread URL and the loop processes only one.
-SOURCE_FLAGS = (
-    "url",
-    "run",
-    "urls",
-    "files",
-    "path",
-    "domain",
-    "target",
-    "audit",
-    "donors",
-    "donors_file",
-)
+#
+# Populated by _source_flag() below rather than hand-listed here: a hand-kept copy of "which
+# flags count" drifted out of sync with the parser once already (#156 — --phrase, --keywords,
+# --query/--queries, --seed, --counter, and --before/--after were all missing), silently
+# truncating any per-line loop over one of them to a single iteration.
+SOURCE_FLAGS: set[str] = set()
+
+
+def _source_flag(sub: argparse.ArgumentParser, *args: str, **kwargs: Any) -> argparse.Action:
+    """Add a flag whose value alone supplies a command's complete input (a URL, a file path, a
+    search phrase, a counter ID, ...) and register it in SOURCE_FLAGS in the same place it is
+    defined, so the set cannot drift from the parser the way the old hand-maintained tuple did.
+    """
+    action = sub.add_argument(*args, **kwargs)
+    SOURCE_FLAGS.add(action.dest)
+    return action
 
 
 def _has_source_flag(args: argparse.Namespace) -> bool:
@@ -454,11 +458,11 @@ def _read_donors(path: str) -> list[str]:
 def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
     sub.add_argument("--input", help="JSON object mapped onto the handler arguments")
     if cmd in URL_COMMANDS:
-        sub.add_argument("--url", help="target URL")
+        _source_flag(sub, "--url", help="target URL")
     if cmd == "links-check":
         sub.add_argument("--internal-only", action="store_true", help="check internal links only")
     if cmd == "log-analyze":
-        sub.add_argument("--path", help="web server access-log file (Apache, Nginx, or IIS)")
+        _source_flag(sub, "--path", help="web server access-log file (Apache, Nginx, or IIS)")
         sub.add_argument(
             "--verify-bots",
             action="store_true",
@@ -491,8 +495,9 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         sub.add_argument("--max-depth", type=int, help=argparse.SUPPRESS)
         sub.add_argument("--min-delay", type=float, help=argparse.SUPPRESS)
     if cmd == "site-audit":
-        sub.add_argument("--url", help="site home page")
-        sub.add_argument(
+        _source_flag(sub, "--url", help="site home page")
+        _source_flag(
+            sub,
             "--urls",
             help="explicit comma-separated page list (otherwise discovered from the sitemap)",
         )
@@ -511,11 +516,11 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         )
         sub.add_argument("--out", help="report output path")
     if cmd == "keywords-expand":
-        sub.add_argument("--phrase", help="seed phrase")
+        _source_flag(sub, "--phrase", help="seed phrase")
         sub.add_argument("--limit", type=int, help="maximum refinements to return (default 300)")
         sub.add_argument("--regions", help="comma-separated Yandex region IDs (225 is Russia)")
     if cmd == "keywords-seasonality":
-        sub.add_argument("--phrase", help="query phrase")
+        _source_flag(sub, "--phrase", help="query phrase")
         sub.add_argument(
             "--from-date",
             dest="from_date",
@@ -525,7 +530,7 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         sub.add_argument("--period", help="PERIOD_MONTHLY | PERIOD_WEEKLY | PERIOD_DAILY")
         sub.add_argument("--regions", help="comma-separated Yandex region IDs")
     if cmd == "keywords-exact":
-        sub.add_argument("--keywords", help="comma-separated phrases")
+        _source_flag(sub, "--keywords", help="comma-separated phrases")
         sub.add_argument("--region", type=int, help="Yandex region ID (default 225)")
         sub.add_argument(
             "--no-wait",
@@ -533,13 +538,13 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             help="create the paid task and exit; retrieve its result later by task_id",
         )
     if cmd == "serp-fetch":
-        sub.add_argument("--query", help="single search query")
-        sub.add_argument("--queries", help="comma-separated batch of search queries")
+        _source_flag(sub, "--query", help="single search query")
+        _source_flag(sub, "--queries", help="comma-separated batch of search queries")
         sub.add_argument("--region", help="Yandex region ID (default 225)")
         sub.add_argument("--top", type=int, help="number of result positions (default 10)")
     if cmd == "google-keywords":
-        sub.add_argument("--keywords", help="comma-separated phrases for search-volume lookup")
-        sub.add_argument("--seed", help="seed phrase for keyword expansion")
+        _source_flag(sub, "--keywords", help="comma-separated phrases for search-volume lookup")
+        _source_flag(sub, "--seed", help="seed phrase for keyword expansion")
         sub.add_argument(
             "--location-code",
             dest="location_code",
@@ -558,7 +563,7 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             help="return keyword difficulty instead of search volume",
         )
     if cmd == "google-serp":
-        sub.add_argument("--query", help="search query")
+        _source_flag(sub, "--query", help="search query")
         sub.add_argument(
             "--location-code",
             dest="location_code",
@@ -569,9 +574,9 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         sub.add_argument("--depth", type=int, help="number of result positions (default 10)")
         sub.add_argument("--country", help="country used by the provider coverage guard")
     if cmd == "metrika-setup":
-        sub.add_argument("--counter", help="Yandex Metrika counter ID")
+        _source_flag(sub, "--counter", help="Yandex Metrika counter ID")
     if cmd == "metrika-report":
-        sub.add_argument("--counter", help="Yandex Metrika counter ID")
+        _source_flag(sub, "--counter", help="Yandex Metrika counter ID")
         sub.add_argument(
             "--metrics", help="comma-separated API metrics, e.g. ym:s:visits,ym:s:users"
         )
@@ -589,7 +594,7 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
     if cmd == "spend-report":
         sub.add_argument("--since", help="include charges on or after YYYY-MM-DD")
     if cmd == "report-build":
-        sub.add_argument("--audit", help="path to an audit JSON document")
+        _source_flag(sub, "--audit", help="path to an audit JSON document")
         sub.add_argument(
             "--format",
             choices=("xlsx", "docx", "csv", "md", "json"),
@@ -597,8 +602,8 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         )
         sub.add_argument("--out", help="output file path")
     if cmd == "log-scan":
-        sub.add_argument(
-            "--run", required=True, help="directory holding audit.json and/or pages.jsonl"
+        _source_flag(
+            sub, "--run", required=True, help="directory holding audit.json and/or pages.jsonl"
         )
         sub.add_argument(
             "--images-dir",
@@ -606,10 +611,10 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "against the file on disk",
         )
     if cmd == "compare-crawls":
-        sub.add_argument("--before", required=True, help="path to the earlier audit.json")
-        sub.add_argument("--after", required=True, help="path to the later audit.json")
+        _source_flag(sub, "--before", required=True, help="path to the earlier audit.json")
+        _source_flag(sub, "--after", required=True, help="path to the later audit.json")
     if cmd == "regions-check":
-        sub.add_argument("--url", help="any site page, usually the home page")
+        _source_flag(sub, "--url", help="any site page, usually the home page")
         sub.add_argument(
             "--extra",
             help="comma-separated additional regional URLs; "
@@ -634,7 +639,7 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "occur on sites with persistent connections)",
         )
     if cmd == "domain-profile":
-        sub.add_argument("--domain", help="domain name or URL")
+        _source_flag(sub, "--domain", help="domain name or URL")
         sub.add_argument("--no-tls", action="store_true", help="skip TLS certificate inspection")
     if cmd == "security-check":
         sub.add_argument(
@@ -649,12 +654,12 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "when the classifier has low confidence",
         )
     if cmd == "backlinks-check":
-        sub.add_argument("--target", help="target domain or exact URL")
-        sub.add_argument("--donors", help="comma-separated donor-page URLs")
-        sub.add_argument("--donors-file", help="file containing one donor URL per line")
+        _source_flag(sub, "--target", help="target domain or exact URL")
+        _source_flag(sub, "--donors", help="comma-separated donor-page URLs")
+        _source_flag(sub, "--donors-file", help="file containing one donor URL per line")
         sub.add_argument("--concurrency", type=int, help="maximum concurrent requests (default 3)")
     if cmd in ("parse", "images-download"):
-        sub.add_argument("--urls", help="comma-separated URL list")
+        _source_flag(sub, "--urls", help="comma-separated URL list")
     if cmd == "redirects-generate":
         sub.add_argument("--format", help="apache-rewrite-rule|apache-redirect|nginx|custom")
     if cmd == "sitemap-crawl":
@@ -662,7 +667,7 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
     if cmd == "images-download":
         sub.add_argument("--output-dir", help="download target directory")
     if cmd == "images-optimize":
-        sub.add_argument("--files", help="comma-separated image paths/dirs")
+        _source_flag(sub, "--files", help="comma-separated image paths/dirs")
         sub.add_argument("--output-dir", help="safe output directory (recommended)")
         sub.add_argument(
             "--in-place",
@@ -764,6 +769,12 @@ def main(argv: list[str] | None = None) -> int:
         # disagree with each other should stop rather than publish them. 2, not 1, so a
         # caller can tell "the run contradicts itself" from "the command failed".
         return 2
+    if handlers.handler_failed(result):
+        # The handler could not complete its check (bad input, an unreachable host, a
+        # missing dependency) and said so in the JSON rather than raising. A pipeline
+        # gating on `$?` needs that reflected in the exit code too, or `ok: false` is
+        # indistinguishable from success to anything reading only the exit status.
+        return 1
     return 0
 
 

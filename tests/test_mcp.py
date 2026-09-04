@@ -55,6 +55,32 @@ def test_all_mcp_tools_have_structured_schemas_and_safety_annotations():
     assert crawl.openWorldHint is True
 
 
+async def _call_over_stdio(tool: str, arguments: dict) -> object:
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "seohead.servers.mcp_server"], cwd=ROOT
+    )
+    async with (
+        stdio_client(params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        return await session.call_tool(tool, arguments)
+
+
+def test_a_handler_reported_failure_sets_iserror():
+    """A tool whose handler returns ``ok: false`` (issue #155) must be distinguishable from
+    success without the client having to inspect the payload — the same distinction the CLI
+    makes with a non-zero exit (docs/USAGE.md)."""
+    result = asyncio.run(_call_over_stdio("seo_ai_bots_check", {"url": "not a url"}))
+    assert result.isError is True
+    assert "could not be resolved" in result.content[0].text
+
+
+def test_a_clean_result_does_not_set_iserror():
+    result = asyncio.run(_call_over_stdio("seo_spend_report", {}))
+    assert result.isError is False
+
+
 def _payload(r):
     sc = getattr(r, "structuredContent", None)
     if isinstance(sc, dict):

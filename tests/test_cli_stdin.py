@@ -8,6 +8,8 @@ entire input file during the first iteration.
 import io
 import json
 
+import pytest
+
 from seohead import cli
 from seohead.servers import handlers
 
@@ -60,3 +62,46 @@ def test_duplicate_check_fingerprints_flag(monkeypatch, capsys):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["echo"]["with_fingerprints"] is True
+
+
+# Issue #156: these flags each identify a command's whole input just as --url does, but were
+# missing from SOURCE_FLAGS, so a per-line loop over any one of them silently stopped after its
+# first iteration (the exact failure the comment above SOURCE_FLAGS warns about).
+FORMERLY_MISSING_SOURCE_FLAGS = [
+    ("keywords-expand", ["--phrase", "floor heating"]),
+    ("keywords-seasonality", ["--phrase", "floor heating"]),
+    ("keywords-exact", ["--keywords", "floor heating"]),
+    ("serp-fetch", ["--query", "floor heating"]),
+    ("serp-fetch", ["--queries", "floor heating,floor screed"]),
+    ("google-keywords", ["--keywords", "floor heating"]),
+    ("google-keywords", ["--seed", "floor heating"]),
+    ("google-serp", ["--query", "floor heating"]),
+    ("metrika-setup", ["--counter", "12345678"]),
+    ("metrika-report", ["--counter", "12345678"]),
+    ("compare-crawls", ["--before", "before.json", "--after", "after.json"]),
+]
+
+
+@pytest.mark.parametrize("command,flag_args", FORMERLY_MISSING_SOURCE_FLAGS)
+def test_formerly_missing_source_flags_are_recognized(command, flag_args):
+    """``_has_source_flag`` must return True from the flag alone — derived from the parser
+    (``_source_flag``), not from a hand-kept list that can silently omit a new flag again."""
+    args = cli.build_parser().parse_args([command, *flag_args])
+    assert cli._has_source_flag(args)
+
+
+def test_a_loop_over_a_formerly_missing_flag_runs_every_line(monkeypatch, capsys):
+    """Reproduces the exact bug report: ``while read p; do seohead keywords-expand --phrase
+    "$p"; done < phrases.txt`` used to process only the first of three lines because
+    ``--phrase`` was absent from SOURCE_FLAGS and the CLI blocked on/consumed stdin."""
+    monkeypatch.setitem(handlers.HANDLERS, "keywords_expand", lambda **kw: {"ok": True, "echo": kw})
+    phrases = ["floor heating", "underfloor heating", "floor screed"]
+    seen = []
+    for phrase in phrases:
+        # A fresh guard per line stands in for the shared, still-open file descriptor a real
+        # shell loop reads from: the CLI must not touch it once --phrase already supplies input.
+        monkeypatch.setattr(cli.sys, "stdin", _NeverReadStdin("leftover\n" * 100))
+        rc = cli.main(["keywords-expand", "--phrase", phrase])
+        assert rc == 0
+        seen.append(json.loads(capsys.readouterr().out)["echo"]["phrase"])
+    assert seen == phrases
