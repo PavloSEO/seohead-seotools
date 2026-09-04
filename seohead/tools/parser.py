@@ -267,7 +267,7 @@ def _hreflang_tags(soup: BeautifulSoup) -> list[Any]:
         hreflang = tag.get("hreflang")
         if not hreflang:
             continue
-        rel_attr = tag.get("rel") or []
+        rel_attr: str | list[str] = tag.get("rel") or []
         rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
         if any(isinstance(t, str) and t.lower() == "alternate" for t in rel_tokens):
             out.append(tag)
@@ -425,7 +425,7 @@ def _head_not_first(html_tag: Any, head_count: int) -> bool:
     if html_tag is None or head_count == 0:
         return False
     for child in html_tag.children:
-        name = getattr(child, "name", None)
+        name: str | None = getattr(child, "name", None)
         if name is None:  # text/comment/doctype between the tags
             continue
         return name != "head"
