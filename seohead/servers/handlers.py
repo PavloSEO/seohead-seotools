@@ -330,7 +330,7 @@ def security_check(url: str | None = None, probe_paths: bool = False) -> dict[st
 def schema_check(url: str | None = None, html: str | None = None) -> dict[str, Any]:
     if not url and not html:
         raise ValueError("url or html required")
-    from seohead.tools import schema as schema_core
+    from seohead.tools import schema_org as schema_core
 
     return schema_core.check_schema(url=url, html=html)
 

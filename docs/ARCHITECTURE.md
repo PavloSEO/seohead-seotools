@@ -20,7 +20,7 @@ seohead/
     tasks.py          audit.json -> prioritized backlog (tasks.json + tasks.md)
   tools/              LIVE URL TOOLS (22 modules): parser, robots, headers,
                       links, hreflang, redirects, sitemap, downloader,
-                      optimizer, clusterer, schema + schema_build +
+                      optimizer, clusterer, schema_org + schema_build +
                       page_facts + page_type, duplicate, logs, social_meta,
                       soft404, render, llms_txt, citability, excel
   recon/              DOMAIN & INFRASTRUCTURE RECON (10 modules): domain,
@@ -56,7 +56,7 @@ something else" code appears, and the two faces drift apart. While the core
 returns the same dict to everyone, CLI and MCP cannot diverge in meaning.
 
 Cross-imports **inside** the core are allowed and used: `recon/regions.py`
-takes simhash from `tools/duplicate.py`; `tools/schema.py` takes the network
+takes simhash from `tools/duplicate.py`; `tools/schema_org.py` takes the network
 client from `recon/net.py`.
 
 ![The SEOHEAD CLI and local MCP server call the same tested Python core](../.github/assets/cli-mcp.png)
