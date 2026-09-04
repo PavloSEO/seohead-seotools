@@ -54,13 +54,17 @@ def test_inheritance_author_on_article_is_not_error():
 def test_unknown_type_is_error():
     html = _ld('{"@type":"BogusType","name":"x"}')
     r = schema.check_schema(html=html)
-    assert any("BogusType" in e and "Schema.org" in e for e in r["entities"][0]["errors"])
+    assert r["entities"][0]["errors"] == [
+        "Type BogusType is not present in the Schema.org vocabulary"
+    ]
 
 
 def test_unknown_property_is_error():
     html = _ld('{"@type":"Article","totallyMadeUp":"x","headline":"t"}')
     r = schema.check_schema(html=html)
-    assert any("totallyMadeUp" in e and "Schema.org" in e for e in r["entities"][0]["errors"])
+    assert r["entities"][0]["errors"] == [
+        "Property totallyMadeUp is not present in the Schema.org vocabulary"
+    ]
 
 
 def test_deprecated_type_is_warning_not_silence():
@@ -194,9 +198,9 @@ def test_unsupported_vocab_skips_schema_validation():
     # Schema.org validation is skipped, so Foo must not produce an unknown-type error.
     assert foo["errors"] == [], f"No errors are expected for the skipped node: {foo['errors']}"
     # The node must instead carry an explicit unsupported-vocabulary warning.
-    assert any(
-        "example.org/x" in w.lower() and "schema.org" in w.lower() for w in foo["warnings"]
-    ), f"Expected an unsupported-vocabulary warning: {foo['warnings']}"
+    assert foo["warnings"] == [
+        "Node uses unsupported vocabulary https://example.org/x; Schema.org validation was skipped"
+    ], f"Expected an unsupported-vocabulary warning: {foo['warnings']}"
 
     # The Schema.org Article must still validate independently.
     article = next(e for e in r["entities"] if "Article" in e["types"])
@@ -206,7 +210,8 @@ def test_unsupported_vocab_skips_schema_validation():
 
     # vocabularies must expose both contexts with the correct support flags.
     by_ctx = {v["context"]: v for v in r["vocabularies"]}
-    assert "https://schema.org" in by_ctx and by_ctx["https://schema.org"]["supported"] is True
-    assert "https://example.org/x" in by_ctx
+    # Indexed rather than tested with "in": a missing key raises here, which
+    # says which context is absent instead of only that one of them is.
+    assert by_ctx["https://schema.org"]["supported"] is True
     assert by_ctx["https://example.org/x"]["supported"] is False
     assert by_ctx["https://example.org/x"]["blocks"] == 1
