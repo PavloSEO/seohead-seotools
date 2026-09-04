@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from seohead.tools.render import (
-    _empty_shell,
     _jsonld_types,
     _links,
     _snapshot,
     _words,
     compare,
+    detect_empty_shell,
     render_check,
 )
 
@@ -61,11 +61,11 @@ def test_broken_jsonld_is_skipped_not_fatal():
 
 def test_empty_spa_shell_is_detected():
     for shell in ("root", "app", "__next", "__nuxt"):
-        assert _empty_shell(f'<body><div id="{shell}"></div></body>') == shell
+        assert detect_empty_shell(f'<body><div id="{shell}"></div></body>') == shell
 
 
 def test_shell_with_content_is_not_an_empty_shell():
-    assert _empty_shell('<body><div id="root"><h1>Already rendered</h1></div></body>') is None
+    assert detect_empty_shell('<body><div id="root"><h1>Already rendered</h1></div></body>') is None
 
 
 def test_snapshot_is_computed_the_same_way_for_both_sides():
@@ -186,3 +186,154 @@ def test_background_images_js_reads_computed_style_not_html_text():
     assert "getComputedStyle" in _BACKGROUND_IMAGES_JS
     assert "backgroundImage" in _BACKGROUND_IMAGES_JS
     assert "data:" in _BACKGROUND_IMAGES_JS  # data URIs are skipped, matching the parser
+
+
+# ── Viewport presets (#18) ───────────────────────────────────────────────────
+
+
+def test_viewport_presets_cover_desktop_and_mobile():
+    from seohead.tools.render import VIEWPORT_PRESETS
+
+    assert VIEWPORT_PRESETS["desktop"] == {"width": 1366, "height": 768}
+    assert VIEWPORT_PRESETS["mobile"] == {"width": 390, "height": 844}
+
+
+# ── Legacy _escaped_fragment_ scheme (#18) ──────────────────────────────────
+
+
+def test_a_hash_bang_url_produces_its_escaped_fragment_url():
+    from seohead.tools.render import legacy_fragment_target
+
+    target = legacy_fragment_target("https://example.com/app#!/product/1", "")
+    assert target == "https://example.com/app?_escaped_fragment_=%2Fproduct%2F1"
+
+
+def test_a_page_wide_fragment_meta_tag_is_honoured_even_without_a_hash_bang():
+    from seohead.tools.render import legacy_fragment_target
+
+    html = '<meta name="fragment" content="!">'
+    target = legacy_fragment_target("https://example.com/app", html)
+    assert target == "https://example.com/app?_escaped_fragment_="
+
+
+def test_a_page_with_neither_signal_has_no_legacy_fragment_target():
+    from seohead.tools.render import legacy_fragment_target
+
+    assert legacy_fragment_target("https://example.com/app", "<html></html>") is None
+
+
+def test_an_existing_query_string_is_preserved_alongside_the_escaped_fragment():
+    from seohead.tools.render import legacy_fragment_target
+
+    target = legacy_fragment_target("https://example.com/app?lang=en#!/x", "")
+    assert "lang=en" in target
+    assert "_escaped_fragment_=%2Fx" in target
+
+
+# ── Security preconditions (#18) ─────────────────────────────────────────────
+
+
+class _FakeRequest:
+    def __init__(self, url):
+        self.url = url
+
+
+class _FakeRoute:
+    def __init__(self, url):
+        self.request = _FakeRequest(url)
+        self.continued = False
+        self.aborted_with = None
+
+    def continue_(self):
+        self.continued = True
+
+    def abort(self, reason):
+        self.aborted_with = reason
+
+
+def test_a_request_to_a_private_address_is_aborted():
+    from seohead.tools.render import _guard_browser_route
+
+    route = _FakeRoute("http://127.0.0.1:9222/internal")
+    _guard_browser_route(route)
+    assert route.aborted_with == "blockedbyclient"
+    assert route.continued is False
+
+
+def test_a_request_to_a_public_address_continues():
+    from seohead.tools.render import _guard_browser_route
+
+    route = _FakeRoute("https://example.com/style.css")
+    _guard_browser_route(route)
+    assert route.continued is True
+    assert route.aborted_with is None
+
+
+def test_about_blob_and_data_urls_always_continue():
+    from seohead.tools.render import _guard_browser_route
+
+    for scheme_url in ("about:blank", "blob:https://example.com/x", "data:text/plain;base64,aGk="):
+        route = _FakeRoute(scheme_url)
+        _guard_browser_route(route)
+        assert route.continued is True
+
+
+def test_root_is_refused_rather_than_unsandboxed(monkeypatch):
+    import os
+
+    from seohead.tools.render import _refuse_if_root
+
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    try:
+        _refuse_if_root()
+        raise AssertionError("root must be refused")
+    except RuntimeError as exc:
+        assert "sandbox" in str(exc)
+
+
+def test_a_non_root_user_is_not_refused(monkeypatch):
+    import os
+
+    from seohead.tools.render import _refuse_if_root
+
+    monkeypatch.setattr(os, "geteuid", lambda: 501, raising=False)
+    _refuse_if_root()  # must not raise
+
+
+class _FakeWebSocketRoute:
+    def __init__(self, url):
+        self.url = url
+        self.closed = False
+        self.connected = False
+
+    def close(self):
+        self.closed = True
+
+    def connect_to_server(self):
+        self.connected = True
+
+
+def test_a_websocket_to_a_private_address_is_closed_not_connected():
+    from seohead.tools.render import _guard_websocket_route
+
+    route = _FakeWebSocketRoute("ws://127.0.0.1:9222/socket")
+    _guard_websocket_route(route)
+    assert route.closed is True
+    assert route.connected is False
+
+
+def test_a_websocket_to_a_public_address_is_connected():
+    from seohead.tools.render import _guard_websocket_route
+
+    route = _FakeWebSocketRoute("wss://example.com/socket")
+    _guard_websocket_route(route)
+    assert route.connected is True
+    assert route.closed is False
+
+
+def test_a_websocket_with_an_unsupported_scheme_is_closed():
+    from seohead.tools.render import _guard_websocket_route
+
+    route = _FakeWebSocketRoute("file:///etc/passwd")
+    _guard_websocket_route(route)
+    assert route.closed is True

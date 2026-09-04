@@ -120,6 +120,11 @@ def _row(record: Any) -> dict[str, Any]:
         "Redirect URL": record.redirect_url,
         "Crawl Depth": record.crawl_depth,
         "Structured Data": record.jsonld_blocks_found,
+        # Not an SF column; seohead.sf.core.normalize resolves it only for
+        # this collector's own frames (#18). "static" unless selective
+        # rendering escalation re-fetched this page under a fuller
+        # representation -- see seohead.crawl.render_escalation.
+        "Representation": record.representation,
     }
 
 
