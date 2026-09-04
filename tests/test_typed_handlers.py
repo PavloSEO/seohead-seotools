@@ -15,6 +15,7 @@ This covers the two shapes this issue's first slice typed -- see the other
 
 from __future__ import annotations
 
+import types
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from seohead.models import ParsedPage, ParsedRobots, RobotsGroup
@@ -38,9 +39,16 @@ _SAMPLE_ROBOTS_TXT = (
 )
 
 
+# A PEP 604 union (``A | B``) reports types.UnionType as its origin, while
+# typing.Union[A, B] reports typing.Union. Python 3.14 unified the two; every
+# version this package supports below that does not, so both must be accepted
+# or this helper silently treats a union as a single type.
+_UNION_ORIGINS = (Union, types.UnionType)
+
+
 def _variants(annotation: Any) -> list[Any]:
     """Flatten ``A | B`` into ``[A, B]``; a bare TypedDict into ``[A]``."""
-    if get_origin(annotation) is Union:
+    if get_origin(annotation) in _UNION_ORIGINS:
         return list(get_args(annotation))
     return [annotation]
 
