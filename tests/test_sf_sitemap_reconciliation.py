@@ -10,7 +10,7 @@ import csv
 from seohead.sf.config import load_config
 from seohead.sf.core.context import AuditContext
 from seohead.sf.core.loader import load_exports
-from seohead.sf.core.sitemap import run_sitemap
+from seohead.sf.core.sitemap_coverage import run_sitemap
 
 
 def _write_csv(path, header, rows):
