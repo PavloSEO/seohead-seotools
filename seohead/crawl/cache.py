@@ -70,7 +70,10 @@ from pathlib import Path
 
 from seohead.crawl.state import ensure_safe_dir
 
-SCHEMA_VERSION = "http_cache.v1"
+# v2 added size_bytes. A v1 entry cannot supply it, and defaulting it to 0 would make a
+# replayed page report a size it never had, so v1 entries are simply not read: the URL is
+# fetched again once and stored in the new shape.
+SCHEMA_VERSION = "http_cache.v2"
 DEFAULT_DIR = "~/.cache/seohead/http_cache"
 
 # Stats counters, each incremented at exactly the moment its outcome is final. Total network
@@ -147,6 +150,10 @@ class CacheEntry:
     status_code: int = 200
     headers: dict[str, str] = field(default_factory=dict)
     body: str = ""
+    # Bytes on the wire, after transfer decoding — not len(body). The two differ for anything
+    # that is not valid UTF-8 (see issue #99), and a replayed page must report the size the
+    # live fetch reported, not a size derived from its decoded text.
+    size_bytes: int = 0
     stored_at: float = 0.0
     max_age: float = 0.0
 
@@ -229,6 +236,7 @@ class ResponseCache:
                 status_code=int(raw.get("status_code", 200)),
                 headers={str(k): str(v) for k, v in (raw.get("headers") or {}).items()},
                 body=str(raw.get("body", "")),
+                size_bytes=int(raw.get("size_bytes", 0)),
                 stored_at=float(raw.get("stored_at", 0.0)),
                 max_age=float(raw.get("max_age", 0.0)),
             )
@@ -295,6 +303,7 @@ class ResponseCache:
         status_code: int,
         response_headers: dict[str, str],
         body: str,
+        size_bytes: int = 0,
     ) -> None:
         """Record a fresh response, or explain in stats why it was not recorded."""
         if self._disabled:
@@ -319,6 +328,7 @@ class ResponseCache:
             status_code=status_code,
             headers=headers,
             body=body,
+            size_bytes=size_bytes,
             stored_at=time.time(),
             max_age=max_age,
         )

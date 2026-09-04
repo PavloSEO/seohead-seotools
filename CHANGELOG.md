@@ -4,6 +4,14 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix `size_bytes`: it is now the response body as it arrived on the wire, measured before
+  the body is decoded (#99). It was measured from the decoded string, so every byte that is
+  not valid UTF-8 became U+FFFD and re-encoded to three — a 739 KB WebP from a real crawl
+  was recorded as 1.27 MB, and the inflation factor differs per file. Images, PDFs, fonts
+  and HTML served in a legacy charset (windows-1251) were all over-counted, and so was the
+  text ratio computed against that denominator. The HTTP cache stores the wire size with
+  the entry, so a replayed page reports what the live fetch reported; its schema moves to
+  `http_cache.v2` and v1 entries are re-fetched once rather than replayed without a size.
 - Add `docs/TOOL_REFERENCE.md`, generated from the MCP tool definitions
   (`seohead/servers/tool_reference.py`, `scripts/generate_tool_reference.py`): every
   `seo_*`/`sf_*` tool's arguments with type and default, its cost (network/writes/
