@@ -453,7 +453,15 @@ def crawl(url: str, concurrency: int = 3) -> dict:
                         seen_locs.add(norm_loc)
                         all_urls.append(
                             {
-                                "loc": norm_loc,
+                                # The address the sitemap published, not the normalised key.
+                                # Normalisation is right for deciding whether two entries are
+                                # the same URL and wrong for deciding what to request: a
+                                # sitemap declaring /a/ must not cause a fetch of /a, which on
+                                # most CMSes is a 301 the crawler invented for itself (#115).
+                                "loc": entry["loc"],
+                                # Kept beside it so every consumer that was comparing on the
+                                # normalised form still can, without re-deriving it.
+                                "loc_normalized": norm_loc,
                                 "lastmod": entry.get("lastmod"),
                                 "changefreq": entry.get("changefreq"),
                                 "priority": entry.get("priority"),

@@ -4,6 +4,13 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- The sitemap seeder requests the address the sitemap published, not its normalised form
+  (#115). `sitemap.crawl()` returned only the normalised `loc`, so a sitemap declaring
+  `/a/` caused a fetch of `/a` — on most CMSes a 301 the crawler invented and then
+  reported as a fact about the site, and a 404 wherever the slashless form is not routed
+  at all. Each entry now carries `loc` as published alongside `loc_normalized` for the
+  consumers that compare on it. Redirect statistics from earlier sitemap-seeded crawls
+  are suspect for this reason.
 - Restructure the operator skill into a controller directory (#111). `.claude/skills/`
   now has two tiers: 21 method skills, each covering one thing well, and `control/`,
   which decides which of them to run on a site nobody has looked at yet. The controller

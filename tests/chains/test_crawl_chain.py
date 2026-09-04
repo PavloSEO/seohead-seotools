@@ -229,12 +229,6 @@ def test_the_sitemap_comparison_stays_inside_the_pages_it_describes(crawled_with
         assert "/private/" not in reported, reported
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#115: the sitemap seeder normalises the trailing slash away, so the crawl "
-    "fetches /orphan instead of the declared /orphan/ and the orphan is named in a form "
-    "the site never published. Remove this marker when #115 lands.",
-)
 def test_a_declared_url_nothing_links_to_is_still_reported_as_an_orphan(site, crawled_with_sitemap):
     """Narrowing the comparable side must not cost the mirror-image finding."""
     _result, _out, _ = crawled_with_sitemap
@@ -262,3 +256,33 @@ def test_a_canonical_pointing_at_the_slashless_twin_is_not_called_a_redirect(
         if issue.get("check") == "CANONICAL_TO_REDIRECT"
     ]
     assert offenders == [], offenders
+
+
+def test_the_crawl_fetches_the_urls_the_sitemap_declared(site, crawled_with_sitemap):
+    """The seeder must request the address the sitemap published (#115).
+
+    Normalising the trailing slash away before fetching turned every declared URL into the
+    slashless form, which on most CMSes is a 301 — a redirect the crawler invented and then
+    reported as a fact about the site. On one live blog that was 1448 of 3387 URLs.
+    """
+    _result, _out, pages = crawled_with_sitemap
+    urls = _by_url(pages)
+    assert urls[f"{site}/a/"]["status_code"] == 200
+    assert urls[f"{site}/orphan/"]["status_code"] == 200
+    # The slashless form is here only because the home page links to it, not because the
+    # seeder rewrote a declared URL — and it is still the 301 the site actually serves.
+    assert urls[f"{site}/a"]["status_code"] == 301
+    assert f"{site}/orphan" not in urls, "the seeder must not invent an address"
+
+
+def test_a_url_both_declared_and_linked_is_still_fetched_once(crawled_with_sitemap):
+    """The seeder and the link graph must not each request the same address.
+
+    Deduplication does not collapse /a and /a/ — they are different URLs and a site may serve
+    different things at them, and the 301 between them is evidence worth keeping — so the
+    guarantee here is exact-address, which is the one that stops a seeded URL being fetched
+    again the moment a page links to it.
+    """
+    _result, _out, pages = crawled_with_sitemap
+    urls = [p["url"] for p in pages]
+    assert len(urls) == len(set(urls)), sorted(u for u in urls if urls.count(u) > 1)
