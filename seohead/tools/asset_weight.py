@@ -12,6 +12,11 @@ static markup — no rendering required:
 * compression (``Content-Encoding``) and cache lifetime (``Cache-Control``)
 * ``@font-face`` blocks missing ``font-display: swap`` (or an equivalent value)
 * legacy transpiled/polyfilled JS shipped unconditionally (a heuristic)
+* source maps whose target actually resolves (fetched, not just referenced)
+* debug code (``console.log``/``debug``, ``debugger``, ``alert(``) left in a
+  file that is otherwise minified
+* ``document.write`` calls
+* ``@import`` chains in CSS, followed one level to report their depth
 
 Two checks from the issue this module answers are deliberately NOT attempted
 here and are reported under ``skipped`` rather than silently passing:
@@ -21,6 +26,12 @@ here and are reported under ``skipped`` rather than silently passing:
 * **per-site bundle-size outliers** — needs more than one page. Once a caller
   has run :func:`analyze_page_asset_weight` over several pages, feed the
   resulting ``total_bytes`` values to :func:`flag_outlier_pages`.
+
+Two more from the same issue are out of scope for this module entirely (see
+issue #78): known-vulnerable library versions need an advisory database, not
+just the fingerprinting `seohead/recon/tech.py` already does; inline
+``<style>``/``<script>`` bulk needs a crawl-wide, multi-page pass to tell a
+repeated block from a one-off.
 
 Public API:
     analyze_page_asset_weight(url, **options) -> dict
@@ -56,6 +67,12 @@ DEFAULT_CONCURRENCY = 6
 # page, so a short TTL here is a missed easy win rather than a correctness bug.
 LONG_CACHE_SECONDS = 7 * 24 * 3600
 
+# A CSS file importing more than this many other stylesheets is almost always
+# a build mistake, not a deliberate chain worth reporting one round trip at a
+# time — bounds the follow-up fetches the same way MAX_RESOURCES bounds the
+# initial discovery.
+MAX_IMPORTS_PER_FILE = 10
+
 _COMPRESSED_ENCODINGS = {"gzip", "br", "deflate", "zstd"}
 _MAX_AGE_RE = re.compile(r"max-age\s*=\s*(\d+)", re.IGNORECASE)
 _FONT_FACE_RE = re.compile(r"@font-face\s*\{([^}]*)\}", re.IGNORECASE | re.DOTALL)
@@ -67,6 +84,17 @@ _LEGACY_JS_RE = re.compile(
     r"core-js|regeneratorRuntime|_babelPolyfill|@babel/runtime|Object\.assign\s*=\s*function"
 )
 _WHITESPACE_RE = re.compile(r"\s+")
+# Matches both the JS (`//# sourceMappingURL=...`) and CSS
+# (`/*# sourceMappingURL=... */`) comment forms: stopping at whitespace or `*`
+# excludes the CSS block comment's closing `*/` from the captured target.
+_SOURCE_MAP_RE = re.compile(r"sourceMappingURL=([^\s*]+)")
+# console.log/debug and alert( are legitimate in hand-authored source; the
+# minification gate below is what turns their presence into a real finding.
+_DEBUG_CODE_RE = re.compile(r"\bconsole\.(?:log|debug)\s*\(|\bdebugger\b|\balert\s*\(")
+_DOCUMENT_WRITE_RE = re.compile(r"\bdocument\.write\s*\(")
+# Covers `@import "x.css"`, `@import url(x.css)` and `@import url("x.css")`,
+# with or without a trailing media query, which the capture group ignores.
+_CSS_IMPORT_RE = re.compile(r"""@import\s+(?:url\(\s*)?['"]?([^'"()\s;]+)['"]?\)?""", re.IGNORECASE)
 
 
 # ── pure checks (no network) ────────────────────────────────────────────────
@@ -185,6 +213,53 @@ def looks_legacy_transpiled(js_text: str) -> bool:
     return bool(_LEGACY_JS_RE.search(js_text or ""))
 
 
+def find_source_map_comment(text: str) -> str | None:
+    """The ``sourceMappingURL`` target referenced by ``text``, or ``None``.
+
+    Only the comment is read here — whether the target is actually fetchable
+    is a network question the caller answers separately. A ``data:`` URI is
+    an inline map with nothing served over the network, so it is not
+    "exposed" and is excluded. When a file carries more than one such
+    comment (rebuilt without stripping the old one), the last one wins, since
+    that is the one a real browser would act on.
+    """
+    matches = _SOURCE_MAP_RE.findall(text or "")
+    if not matches:
+        return None
+    target = matches[-1]
+    return None if target.lower().startswith("data:") else target
+
+
+def find_debug_code(js_text: str) -> list[str]:
+    """Debug markers (``console.log``/``debug``, ``debugger``, ``alert(``) in ``js_text``.
+
+    Meaningful only in a file that is otherwise minified: a ``debugger``
+    statement halts execution for anyone with devtools open, and a
+    ``console`` call in a hot path costs real main-thread time — but the same
+    calls in hand-authored source are just normal development noise, so an
+    unminified file is never flagged here.
+    """
+    if not looks_minified(js_text):
+        return []
+    return sorted(set(_DEBUG_CODE_RE.findall(js_text or "")))
+
+
+def has_document_write(js_text: str) -> bool:
+    """Whether ``js_text`` calls ``document.write``.
+
+    ``document.write`` blocks the HTML parser while it runs, and Chrome
+    ignores it outright for scripts injected into a page loaded over a slow
+    connection — so the call either stalls rendering or silently does
+    nothing.
+    """
+    return bool(_DOCUMENT_WRITE_RE.search(js_text or ""))
+
+
+def find_css_imports(css_text: str) -> list[str]:
+    """Raw ``@import`` targets referenced by ``css_text``, in source order."""
+    return _CSS_IMPORT_RE.findall(css_text or "")[:MAX_IMPORTS_PER_FILE]
+
+
 def check_cache_lifetime(cache_control: str | None) -> dict[str, Any]:
     """Whether a static asset's ``Cache-Control`` is long-lived."""
     value = cache_control or ""
@@ -294,6 +369,41 @@ def analyze_page_asset_weight(
             "content_encoding": headers.get("content-encoding"),
         }
 
+    def probe_url(target_url: str) -> bool:
+        """Whether ``target_url`` resolves — a HEAD, falling back to GET.
+
+        Only a status code is needed here, unlike ``fetch_one``: a source map
+        is only a real exposure once its target is confirmed fetchable, and
+        confirming that never requires downloading the map itself.
+        """
+        try:
+            if fetcher:
+                resp = fetcher(target_url)
+            else:
+                resp = client.head(target_url)
+                if resp.status_code >= 400 or resp.status_code == 405:
+                    resp = client.get(target_url)  # some hosts reject HEAD
+        except Exception:
+            return False
+        return resp.status_code < 400
+
+    def fetch_text(target_url: str) -> str | None:
+        """Body text of ``target_url``, or ``None`` on any failure.
+
+        Used for one-level ``@import`` follow-up, where (unlike a source-map
+        probe) the imported file's own content must be inspected.
+        """
+        try:
+            resp = fetcher(target_url) if fetcher else client.get(target_url)
+        except Exception:
+            return None
+        if resp.status_code >= 400:
+            return None
+        content = getattr(resp, "content", None)
+        if hasattr(resp, "text"):
+            return resp.text
+        return (content or b"").decode("utf-8", "ignore")
+
     with client:
         try:
             page_resp = fetcher(url) if fetcher else client.get(url)
@@ -322,6 +432,37 @@ def analyze_page_asset_weight(
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 resources = list(pool.map(fetch_one, targets))
 
+        # A source map is only a real exposure once its target is confirmed
+        # fetchable — the comment alone proves nothing about production.
+        exposed_source_maps = []
+        for res in resources:
+            if not res.get("ok"):
+                continue
+            comment = find_source_map_comment(res["text"])
+            if not comment:
+                continue
+            map_url = urljoin(res["url"], comment)
+            if probe_url(map_url):
+                exposed_source_maps.append({"source": res["url"], "map_url": map_url})
+
+        # One level of @import follow-up: fetch what the stylesheet imports,
+        # and check only that file (not its own imports) for further chaining.
+        import_chains = []
+        for res in resources:
+            if not res.get("ok") or res["kind"] != "css":
+                continue
+            for target in find_css_imports(res["text"]):
+                if target.lower().startswith("data:"):
+                    continue
+                import_url = urljoin(res["url"], target)
+                imported_text = fetch_text(import_url)
+                depth = 1
+                if imported_text is not None and find_css_imports(imported_text):
+                    depth = 2
+                import_chains.append(
+                    {"source": res["url"], "import_url": import_url, "depth": depth}
+                )
+
     oversized = [
         {"url": r["url"], "bytes": r["bytes"], "threshold": file_size_threshold}
         for r in resources
@@ -329,13 +470,15 @@ def analyze_page_asset_weight(
     ]
     duplicates = find_duplicate_libraries(resources)
 
-    unminified, missing_font_display, legacy_js, cache_findings, compression_findings = (
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
+    (
+        unminified,
+        missing_font_display,
+        legacy_js,
+        cache_findings,
+        compression_findings,
+        debug_code,
+        document_write,
+    ) = ([], [], [], [], [], [], [])
     for res in resources:
         if not res.get("ok"):
             continue
@@ -345,8 +488,14 @@ def analyze_page_asset_weight(
             missing_font_display += [
                 {"source": res["url"], **f} for f in find_missing_font_display(res["text"])
             ]
-        elif looks_legacy_transpiled(res["text"]):
-            legacy_js.append(res["url"])
+        else:
+            if looks_legacy_transpiled(res["text"]):
+                legacy_js.append(res["url"])
+            markers = find_debug_code(res["text"])
+            if markers:
+                debug_code.append({"url": res["url"], "markers": markers})
+            if has_document_write(res["text"]):
+                document_write.append(res["url"])
         cache = check_cache_lifetime(res.get("cache_control"))
         if not cache["ok"]:
             cache_findings.append({"url": res["url"], **cache})
@@ -379,6 +528,29 @@ def analyze_page_asset_weight(
         findings.append(f"{len(cache_findings)} resource(s) without a long-lived Cache-Control")
     if compression_findings:
         findings.append(f"{len(compression_findings)} resource(s) served uncompressed")
+    if exposed_source_maps:
+        findings.append(
+            f"{len(exposed_source_maps)} source map(s) fetchable in production, "
+            "exposing original source, internal paths, and sometimes API endpoints"
+        )
+    if debug_code:
+        findings.append(
+            f"{len(debug_code)} minified file(s) still ship debug code "
+            "(console/debugger/alert) that costs main-thread time or halts "
+            "execution for anyone with devtools open"
+        )
+    if document_write:
+        findings.append(
+            f"{len(document_write)} script(s) call document.write, which blocks the "
+            "parser and is ignored outright by Chrome on a slow connection"
+        )
+    if import_chains:
+        chained = sum(1 for c in import_chains if c["depth"] > 1)
+        detail = f", {chained} at least two levels deep" if chained else ""
+        findings.append(
+            f"{len(import_chains)} @import chain(s) each serializing a round trip "
+            f"before styles apply{detail}"
+        )
 
     return {
         "ok": True,
@@ -395,6 +567,10 @@ def analyze_page_asset_weight(
         "legacy_js": legacy_js,
         "cache_findings": cache_findings,
         "compression_findings": compression_findings,
+        "exposed_source_maps": exposed_source_maps,
+        "debug_code": debug_code,
+        "document_write": document_write,
+        "css_import_chains": import_chains,
         "findings": findings,
         "skipped": [
             {
