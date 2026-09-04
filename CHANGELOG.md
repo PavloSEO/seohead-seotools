@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `log-scan` (CLI) and `seo_log_scan` (MCP): read a finished run's own artifacts and
+  report claims that cannot all be true at once (#109). Eight rules, each written from a
+  defect that shipped past the whole test suite — a recorded size that disagrees with the
+  file on disk, a text ratio over 100%, a check firing more often than there are pages to
+  fire on, a finding about a URL the run never fetched, a canonical called a redirect while
+  that URL answered 2xx in the same run, a summary that disagrees with its own rows, words
+  counted on a zero-byte page, and pages measured two ways where only some say which. Each
+  anomaly names both values and where each was read from. The CLI exits 2 when a run
+  contradicts itself, so a pipeline stops instead of publishing the numbers.
 - The cross-worker pacing test no longer measures the wall clock (#107). `_DispatchGate`
   now reads the crawl's injected clock instead of `time.monotonic()` directly, so the test
   drives it with a virtual clock that advances only when something sleeps: the dispatch

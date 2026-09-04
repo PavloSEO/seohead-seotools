@@ -10,7 +10,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 |---|---|
 | Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
-| Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 53 |
+| Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 54 |
 | Looking for a tool's exact arguments, types, defaults, or cost | [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — generated from the MCP tool definitions |
 | Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 118, generated from the registry |
 | Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 22 skills |

@@ -109,6 +109,20 @@ def build_server():  # -> FastMCP
         an agent can discover the configuration surface without a filesystem."""
         return handlers.crawl_describe_settings()
 
+    @mcp.tool(annotations=pure, structured_output=True)
+    def seo_log_scan(
+        run: str, images_dir: str | None = None, max_per_rule: int = 20
+    ) -> dict[str, Any]:
+        """Report claims a finished run makes that cannot all be true at once: a recorded
+        size that disagrees with the file, a check firing more often than there are pages
+        to fire on, a finding about a URL the run never fetched, a summary that disagrees
+        with its own rows. Not a second audit and not a threshold — only contradictions,
+        each naming both values and where each came from, so a surprising number can be
+        traced instead of trusted. ``run`` is a directory holding audit.json and/or
+        pages.jsonl; ``images_dir`` is an images-download directory whose manifest lets a
+        recorded size be checked against the bytes on disk."""
+        return handlers.log_scan(run=run, images_dir=images_dir, max_per_rule=max_per_rule)
+
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_sitemap_crawl(url: str, concurrency: int = 3) -> dict[str, Any]:
         """Recursively parse a sitemap (index/urlset, gzip supported) into a URL tree,

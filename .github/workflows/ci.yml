@@ -89,8 +89,8 @@ jobs:
 
           tools = asyncio.run(build_server().list_tools())
           names = {tool.name for tool in tools}
-          assert len(COMMANDS) == len(HANDLERS) == 48
-          assert len(names) == 53, sorted(names)
+          assert len(COMMANDS) == len(HANDLERS) == 49
+          assert len(names) == 54, sorted(names)
           assert {"seo_parse", "seo_site_audit", "sf_audit_run"} <= names
           print("registered MCP tools", len(names))
           PY
@@ -136,7 +136,7 @@ jobs:
           import asyncio
           from seohead.servers.mcp_server import build_server
           tools = asyncio.run(build_server().list_tools())
-          assert len(tools) == 53, f'expected 53 MCP tools, got {len(tools)}'
+          assert len(tools) == 54, f'expected 54 MCP tools, got {len(tools)}'
           print(f'MCP tools available in the slim image: {len(tools)}')
           "
       - uses: docker/build-push-action@v7
