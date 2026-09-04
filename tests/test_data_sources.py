@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -388,6 +390,54 @@ def test_geo_guard_lets_supported_geo_through(country):
     assert geo_guard(country) is None
 
 
+@pytest.mark.parametrize("location_code,iso", [(2643, "RU"), (2112, "BY")])
+def test_geo_guard_blocks_location_code_even_without_country(location_code, iso):
+    """``location_code`` is the field actually sent on the wire; it must be checked on its own."""
+    from seohead.data_sources.dataforseo import geo_guard
+
+    blocked = geo_guard(None, location_code)
+    assert blocked is not None
+    assert blocked["ok"] is False
+    assert blocked["unsupported_geo"] == iso
+
+
+def test_geo_guard_lets_supported_location_code_through():
+    from seohead.data_sources.dataforseo import geo_guard
+
+    assert geo_guard(None, 2840) is None  # United States
+
+
+@pytest.mark.parametrize("location_code", [2643, 2112])
+@pytest.mark.parametrize(
+    "func_name,args",
+    [
+        ("search_volume", (["buy apartment"],)),
+        ("keyword_ideas", ("buy apartment",)),
+        ("keyword_difficulty", (["buy apartment"],)),
+        ("serp", ("buy apartment",)),
+    ],
+)
+def test_blocked_location_code_never_reaches_the_network(
+    monkeypatch, location_code, func_name, args
+):
+    """A Russia/Belarus ``location_code`` must be rejected before any provider function posts.
+
+    Reproduces the issue exactly: ``country`` is never supplied, only the numeric geo-target
+    that DataForSEO actually bills on.
+    """
+    from seohead.data_sources import dataforseo
+
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("must not reach the network for a blocked geo target")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail_urlopen)
+
+    func = getattr(dataforseo, func_name)
+    result = func(*args, location_code=location_code, country=None, env="prod")
+    assert result["ok"] is False
+    assert result["unsupported_geo"] in {"RU", "BY"}
+
+
 def test_default_environment_is_sandbox_so_nothing_is_charged_by_accident(monkeypatch):
     monkeypatch.delenv("DATAFORSEO_ENV", raising=False)
     from seohead.data_sources.dataforseo import SANDBOX_BASE, DataForSEOClient
@@ -456,6 +506,167 @@ def test_error_message_comes_from_the_api_not_from_us():
     assert _message('{"status_message": "Payment Required."}') == "Payment Required."
     assert _message('{"tasks":[{"status_message":"Invalid Field"}]}') == "Invalid Field"
     assert _message("") == "empty response"
+
+
+# --- Network-loss during a billed call must not retry blindly --------------
+#
+# Each fake ``urlopen`` would SUCCEED on a second attempt (see the ``len(calls)`` branch below),
+# so a passing test proves the client stops after the lost response instead of getting lucky on
+# a retry it never should have made.
+
+
+def test_dataforseo_network_error_does_not_retry_and_logs_the_lost_attempt(monkeypatch, journal):
+    monkeypatch.setenv("DATAFORSEO_LOGIN", "test-login")
+    monkeypatch.setenv("DATAFORSEO_PASSWORD", "test-password")
+    from seohead.data_sources import dataforseo
+
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request)
+        raise urllib.error.URLError("simulated network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = dataforseo.search_volume(
+        ["buy apartment"], location_code=2840, country=None, env="prod"
+    )
+
+    assert result["ok"] is False
+    assert len(calls) == 1  # The identical payload is never resent to the live endpoint.
+    rows = spend.read_all()
+    assert len(rows) == 1  # The lost attempt is recorded, not silently dropped.
+    assert rows[0]["source"] == "dataforseo"
+    assert rows[0]["cost"] == 0.0
+    assert rows[0]["extra"]["attempt_failed"] == "network_error"
+
+
+def test_arsenkin_set_task_network_error_does_not_retry_and_logs_the_lost_attempt(
+    monkeypatch, journal
+):
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request)
+        raise urllib.error.URLError("simulated network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = arsenkin.ArsenkinClient(
+        token="test-token", limiter=arsenkin.RateLimiter(max_calls=100)
+    )
+    with pytest.raises(arsenkin.ArsenkinError):
+        client.set_task("keywords_frequency", {"keywords": ["alpha", "beta"]})
+
+    assert len(calls) == 1  # /set is never resent once its response is lost.
+    rows = spend.read_all()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "arsenkin"
+    assert rows[0]["cost"] == 0.0
+    assert rows[0]["extra"]["attempt_failed"] == "network_error"
+
+
+def test_arsenkin_read_only_endpoint_still_retries_on_network_error(monkeypatch):
+    """Only ``/set`` is billed; ``/check`` is a read and stays safe to retry."""
+    monkeypatch.setattr(arsenkin.time, "sleep", lambda _seconds: None)
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request)
+        raise urllib.error.URLError("still failing, just proving a retry was attempted")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = arsenkin.ArsenkinClient(
+        token="test-token", limiter=arsenkin.RateLimiter(max_calls=100)
+    )
+    with pytest.raises(arsenkin.ArsenkinError):
+        client.check(123)
+
+    assert len(calls) >= 2  # Idempotent reads keep retrying past one lost response.
+
+
+def test_yandex_cloud_wordstat_top_network_error_does_not_retry_and_logs_the_lost_attempt(
+    monkeypatch, journal
+):
+    calls = []
+
+    def fake_urlopen(request, timeout=None, context=None):
+        calls.append(request)
+        raise urllib.error.URLError("simulated network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = yandex_cloud.Wordstat(api_key="test-key", folder_id="test-folder")
+    with pytest.raises(yandex_cloud.NetworkAmbiguousError):
+        client.top("buy apartment")
+
+    assert len(calls) == 1  # topRequests is never resent once its response is lost.
+    rows = spend.read_all()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "yandex_cloud"
+    assert rows[0]["extra"]["attempt_failed"] == "network_error"
+
+
+def test_yandex_cloud_websearch_submit_network_error_does_not_retry_and_logs_the_lost_attempt(
+    monkeypatch, journal
+):
+    calls = []
+
+    def fake_urlopen(request, timeout=None, context=None):
+        calls.append(request)
+        raise urllib.error.URLError("simulated network failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = yandex_cloud.WebSearch(api_key="test-key", folder_id="test-folder")
+    with pytest.raises(yandex_cloud.NetworkAmbiguousError):
+        client.search("buy apartment")
+
+    assert len(calls) == 1  # searchAsync is never resent once its response is lost.
+    rows = spend.read_all()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "yandex_cloud"
+
+
+def test_yandex_cloud_search_batch_isolates_a_lost_response_from_the_rest_of_the_batch(
+    monkeypatch, journal
+):
+    """One query's lost response must not abort queries already queued in the same batch."""
+    calls = []
+
+    def fake_urlopen(request, timeout=None, context=None):
+        calls.append(request)
+        if len(calls) == 2:  # The second query's submission loses its response.
+            raise urllib.error.URLError("simulated network failure")
+        return _FakeSearchAsyncResponse(f"op-{len(calls)}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = yandex_cloud.WebSearch(api_key="test-key", folder_id="test-folder")
+    results = client.search_batch(["alpha", "beta", "gamma"], timeout=0)
+
+    assert "beta" in results and "error" in results["beta"]  # Logged, not silently dropped.
+    rows = spend.read_all()
+    assert any(r.get("extra", {}).get("attempt_failed") == "network_error" for r in rows)
+
+
+class _FakeSearchAsyncResponse:
+    """Minimal context-manager double for a successful ``searchAsync`` submission."""
+
+    status = 200
+
+    def __init__(self, operation_id: str):
+        self._body = json.dumps({"id": operation_id}).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self):
+        return self._body
 
 
 # --- CLI list parsing ------------------------------------------------------

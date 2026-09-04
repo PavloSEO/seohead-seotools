@@ -54,6 +54,13 @@ COUNTRY_ALIASES = {
     "belarus": "BY",
     "рб": "BY",  # noqa: RUF001 - Functional Russian abbreviation for Belarus.
 }
+# ``location_code`` is the field DataForSEO actually bills on; ``country`` is only advisory text
+# a caller may never fill in. These are the country-level Google Ads geo-target IDs for Russia
+# and Belarus (the two markets DataForSEO excludes).
+UNSUPPORTED_LOCATION_CODES: dict[int, str] = {
+    2643: "RU",
+    2112: "BY",
+}
 FALLBACK_TOOLS = [
     "Yandex Wordstat via Yandex Cloud for volume and expansion (keywords-expand)",
     "Arsenkin for exact !W volume and SERP clustering (keywords-exact)",
@@ -76,23 +83,36 @@ class DataForSEOError(RuntimeError):
         self.message = message
 
 
-def geo_guard(country: str | None) -> dict | None:
-    """Return a rejection for unsupported geographies, or ``None`` when a call is allowed.
-
-    This is a cost guard, not defensive overreach. Without it, a Russian request can reach the
-    paid API, incur a charge, and return an empty list.
-    """
-    if not country:
-        return None
-    iso = COUNTRY_ALIASES.get(country.strip().lower(), country.strip().upper())
-    if iso not in UNSUPPORTED:
-        return None
+def _rejection(iso: str) -> dict:
     return {
         "ok": False,
         "unsupported_geo": iso,
         "error": f"DataForSEO does not cover {iso}: {UNSUPPORTED[iso]}",
         "use_instead": FALLBACK_TOOLS,
     }
+
+
+def geo_guard(country: str | None, location_code: int | None = None) -> dict | None:
+    """Return a rejection for unsupported geographies, or ``None`` when a call is allowed.
+
+    This is a cost guard, not defensive overreach. Without it, a Russian request can reach the
+    paid API, incur a charge, and return an empty list. ``location_code`` is checked first
+    because it is the field actually transmitted in the request body; ``country`` is only an
+    advisory string that a caller can supply a numeric geo-target without ever filling in.
+    """
+    if location_code is not None:
+        try:
+            code = int(location_code)
+        except (TypeError, ValueError):
+            code = None
+        if code in UNSUPPORTED_LOCATION_CODES:
+            return _rejection(UNSUPPORTED_LOCATION_CODES[code])
+    if not country:
+        return None
+    iso = COUNTRY_ALIASES.get(country.strip().lower(), country.strip().upper())
+    if iso not in UNSUPPORTED:
+        return None
+    return _rejection(iso)
 
 
 class DataForSEOClient:
@@ -112,10 +132,18 @@ class DataForSEOClient:
         password = self._password or dataforseo_password()
         return "Basic " + base64.b64encode(f"{login}:{password}".encode()).decode()
 
-    def post(self, endpoint: str, payload: list[dict]) -> dict:
-        """POST to an endpoint; DataForSEO always expects a task list, even for one task."""
+    def post(self, endpoint: str, payload: list[dict], *, operation: str | None = None) -> dict:
+        """POST to an endpoint; DataForSEO always expects a task list, even for one task.
+
+        An HTTP error response (429/5xx) means the provider replied, so retrying it is the
+        ordinary safe case and is unchanged. A network-level exception means the response was
+        lost, not that the request never arrived: with no idempotency key on this endpoint, the
+        provider may already have created and billed the task, so it is not retried. The attempt
+        is logged before the exception is raised, so a lost response is not an untracked charge.
+        """
         url = self.base + endpoint.lstrip("/")
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        label = operation or endpoint
         attempt = 0
         while True:
             attempt += 1
@@ -136,10 +164,16 @@ class DataForSEOClient:
                     continue
                 raise DataForSEOError(exc.code, _message(text)) from None
             except (urllib.error.URLError, TimeoutError) as exc:
-                if attempt <= RETRIES:
-                    time.sleep(2**attempt)
-                    continue
-                raise DataForSEOError(0, f"network: {exc}") from None
+                spend.record(
+                    SOURCE,
+                    label,
+                    cost=0.0,
+                    unit="usd",
+                    extra={"attempt_failed": "network_error", "detail": str(exc)},
+                )
+                raise DataForSEOError(
+                    0, f"network error, response lost; task may already be billed: {exc}"
+                ) from None
 
     def balance(self) -> dict:
         """Return account balance; the sandbox value is synthetic by design."""
@@ -202,7 +236,7 @@ def task_errors(body: dict) -> list[str]:
 def _run(
     client: DataForSEOClient, kind: str, payload: list[dict], items_count: int
 ) -> tuple[list[dict], list[str], float]:
-    body = client.post(ENDPOINTS[kind], payload)
+    body = client.post(ENDPOINTS[kind], payload, operation=f"{kind}.{client.env}")
     cost = float(body.get("cost") or 0)
     spend.record(
         SOURCE,
@@ -227,7 +261,7 @@ def search_volume(
     env: str | None = None,
 ) -> dict:
     """Return Google search volume for keywords; ``location_code`` 2840 is the United States."""
-    blocked = geo_guard(country)
+    blocked = geo_guard(country, location_code)
     if blocked:
         return blocked
     try:
@@ -275,7 +309,7 @@ def keyword_ideas(
     env: str | None = None,
 ) -> dict:
     """Expand a seed phrase, analogous to Wordstat's left column but for Google."""
-    blocked = geo_guard(country)
+    blocked = geo_guard(country, location_code)
     if blocked:
         return blocked
     try:
@@ -324,7 +358,7 @@ def keyword_difficulty(
     env: str | None = None,
 ) -> dict:
     """Return bulk keyword difficulty: the estimated effort required to reach top results."""
-    blocked = geo_guard(country)
+    blocked = geo_guard(country, location_code)
     if blocked:
         return blocked
     try:
@@ -366,7 +400,7 @@ def serp(
     env: str | None = None,
 ) -> dict:
     """Return the live Google organic results that currently rank for a query."""
-    blocked = geo_guard(country)
+    blocked = geo_guard(country, location_code)
     if blocked:
         return blocked
     try:

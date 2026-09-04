@@ -4,6 +4,22 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Close two money-safety gaps in `seohead/data_sources/` (#157, #159). `geo_guard` checked only
+  the advisory `country` string, so `search_volume`/`keyword_ideas`/`keyword_difficulty`/`serp`
+  could still reach DataForSEO's live endpoint for `location_code=2643` (Russia) or `2112`
+  (Belarus) whenever a caller supplied the numeric geo-target without also filling in `country`;
+  the guard now checks `location_code` first, since that is the field actually billed on. Separately,
+  a network-level exception (`URLError`/`TimeoutError`/`SSLError`) during a billed call — DataForSEO's
+  `post`, Arsenkin's `/set`, and Yandex Cloud's `wordstat.topRequests`/`wordstat.dynamics`/
+  `web.searchAsync` — used to retry the identical payload with no idempotency key and log only the
+  attempt that finally returned a response. None of the three providers offers an idempotency
+  mechanism for these endpoints, so a lost response is no longer retried: the attempt is recorded
+  in the spend ledger (cost unknown, flagged `attempt_failed: network_error`) and the call fails
+  outright instead of risking a second charge. Idempotent reads (Arsenkin `/check`/`/get`, Yandex
+  Cloud operation polling) are unaffected and keep retrying. `yandex_cloud.WebSearch.search_batch`
+  isolates a lost submission to its own query instead of aborting the batch. `metrika.py` retries
+  network errors the same way but is not billed money and was left unchanged; flagged for a
+  follow-up if its Logs API export creation should get the same treatment for quota reasons.
 - Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
   arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
   taste: each declares the catalogued issues it resolves, and
