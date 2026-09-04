@@ -28,6 +28,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from seohead.tools.parser import collapse_whitespace, document_base_url, parse_html
+from seohead.tools.price import parse_amount, parse_price
 
 # Hosts suitable for an organization's ``sameAs`` references.
 _SOCIAL_HOSTS = (
@@ -47,11 +48,6 @@ _SOCIAL_HOSTS = (
     "threads.net",
 )
 
-_PRICE_RE = re.compile(
-    r"(?:USD|EUR|GBP|RUB|BYN|₽|\$|€|£)\s?\d+(?:[.,]\d{1,2})?|"
-    r"\d+(?:[.,]\d{1,2})?\s?(?:руб|р\.|у\.е\.|USD|EUR)",  # noqa: RUF001 - localized prices
-    re.IGNORECASE,
-)
 _RATING_RE = re.compile(r"(\d(?:[.,]\d{1,2})?)\s*(?:/|из|из\s*)\s*5", re.IGNORECASE)
 
 
@@ -255,21 +251,103 @@ def _organization(soup: BeautifulSoup, og: dict[str, str]) -> dict[str, Any]:
     }
 
 
+# Text carried by these elements is markup, not something a visitor reads.
+_NON_PROSE = ("script", "style", "template", "noscript")
+
+
 def _price(soup: BeautifulSoup, text: str) -> dict[str, Any] | None:
     """Extract a price from microdata, then heuristically from visible text."""
-    val = _microdata_prop(soup, "price")
+    declared = _microdata_prop(soup, "price")
     currency = _microdata_prop(soup, "priceCurrency")
-    if val:
+    if declared:
+        # Microdata states the currency in its own property, so the value is
+        # usually a bare number: parse the amount when no marker accompanies it.
+        parsed = parse_price(declared) or {}
+        value = parsed.get("value")
+        if value is None:
+            value = parse_amount(declared.strip())
         return {
-            "value": val,
-            "currency": currency or None,
+            # A declared price is a fact, so the string stands even when it
+            # does not parse; the number is offered alongside it when it does.
+            "value": declared if value is None else value,
+            "raw": declared,
+            "currency": currency or parsed.get("currency"),
             "heuristic": False,
             "source": "microdata",
         }
-    match = _PRICE_RE.search(text or "")
-    if match:
-        return {"value": match.group(0), "currency": None, "heuristic": True, "source": "text"}
+    # One text node at a time. Searching the page's joined text let a match
+    # begin in one price and end in the next, which on a listing of 19 900 and
+    # 23 000 returned a number that was on the page nowhere.
+    for node in soup.find_all(string=True):
+        if node.parent is not None and node.parent.name in _NON_PROSE:
+            continue
+        found = parse_price(collapse_whitespace(node))
+        if found:
+            return {**found, "heuristic": True, "source": "text"}
     return None
+
+
+# Words that mean "you can buy this here". The English and Russian sets both
+# matter: a catalogue with no structured data and no Latin slugs is exactly the
+# page this classifier used to give up on.
+_COMMERCE_ACTIONS = (
+    "add to cart",
+    "add to basket",
+    "buy now",
+    "order now",
+    "в корзину",
+    "в козину",
+    "купить",
+    "заказать",
+    "под заказ",
+    "добавить в корзину",
+    "оформить заказ",
+)
+
+# How far above a price to look for the link that makes it an item in a list
+# rather than the price of this page's own subject.
+_CARD_DEPTH = 5
+
+
+def _structure(soup: BeautifulSoup, breadcrumbs: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Shape signals: what the page is built like, independent of its language.
+
+    Classification used to rest on the URL slug and a single price, so a
+    catalogue with Cyrillic slugs and no markup had nothing to offer and came
+    back as a bare WebPage. What a page is built out of — a grid of linked,
+    priced cards, a gallery beside a spec table, a buy button — says what it is
+    without depending on anyone writing the words in English.
+    """
+    priced_items = 0
+    for node in soup.find_all(string=True):
+        if node.parent is not None and node.parent.name in _NON_PROSE:
+            continue
+        if not parse_price(collapse_whitespace(node)):
+            continue
+        ancestor = node.parent
+        for _ in range(_CARD_DEPTH):
+            if ancestor is None:
+                break
+            if ancestor.name == "a" and ancestor.get("href"):
+                priced_items += 1
+                break
+            if ancestor.find("a", href=True) is not None:
+                priced_items += 1
+                break
+            ancestor = ancestor.parent
+
+    actions = set()
+    for tag in soup.find_all(["a", "button", "input"]):
+        label = collapse_whitespace(tag.get_text(" ") or tag.get("value") or "").lower()
+        actions.update(phrase for phrase in _COMMERCE_ACTIONS if phrase in label)
+
+    return {
+        "priced_items": priced_items,
+        "commerce_actions": sorted(actions),
+        "images": len(soup.find_all("img")),
+        "spec_rows": len(soup.find_all("tr")) + len(soup.find_all("dt")),
+        "breadcrumb_depth": len(breadcrumbs or []),
+    }
 
 
 def _rating(soup: BeautifulSoup, text: str) -> dict[str, Any] | None:
@@ -321,6 +399,7 @@ def extract(html: str, url: str) -> dict[str, Any]:
     doc_base = document_base_url(soup, url)
     h1_list = base["headings"].get("h1") or []
     text = base["text"] or ""
+    crumbs = _breadcrumbs(soup, doc_base)
 
     return {
         "url": url,
@@ -334,10 +413,11 @@ def extract(html: str, url: str) -> dict[str, Any]:
         "published_time": _article_time(soup),
         "modified_time": _article_time(soup, "article:modified_time"),
         "author_rel": _rel_author(soup),
-        "breadcrumbs": _breadcrumbs(soup, doc_base),
+        "breadcrumbs": crumbs,
         "same_as": _same_as(soup, doc_base),
         "organization": _organization(soup, base["og"]),
         "price": _price(soup, text),
+        "structure": _structure(soup, crumbs),
         "rating": _rating(soup, text),
         "existing_jsonld": base["jsonld"],
         "existing_types": _types_from_jsonld(base["jsonld"]),

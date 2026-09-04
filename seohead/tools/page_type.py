@@ -158,6 +158,30 @@ def classify(url: str, facts: dict[str, Any]) -> dict[str, Any]:
     elif pub:
         add("Article", 1.0, "Publication date is present")
 
+    # 5. Shape signals. These carry no language, which is the point: a catalogue
+    # with Cyrillic slugs and no markup had nothing else to offer.
+    structure = facts.get("structure") or {}
+    items = structure.get("priced_items") or 0
+    if items >= 6:
+        add("CollectionPage", 4.0, f"{items} linked, priced items — a listing, not one thing")
+    elif items >= 3:
+        add("CollectionPage", 3.0, f"{items} linked, priced items — a listing, not one thing")
+
+    actions = structure.get("commerce_actions") or []
+    if actions and items < 3:
+        # A buy button on a page that is not a grid is a buy button for this page.
+        add("Product", 2.0, f"The page offers to sell what it is about ({actions[0]})")
+
+    if (structure.get("images") or 0) >= 4 and (structure.get("spec_rows") or 0) >= 3:
+        add("Product", 2.0, "A gallery beside a specification table")
+
+    depth = structure.get("breadcrumb_depth") or 0
+    if depth >= 3:
+        add("Product", 1.0, f"Breadcrumb depth {depth} — a leaf, not a section")
+        add("Article", 1.0, f"Breadcrumb depth {depth} — a leaf, not a section")
+    elif depth == 2:
+        add("CollectionPage", 1.0, f"Breadcrumb depth {depth} — a section, not a leaf")
+
     h1 = (facts.get("h1") or "").lower()
     # Preserve Russian service inflections; a trailing word boundary is unreliable
     # after variants ending in either a Cyrillic letter or inflection suffix.
