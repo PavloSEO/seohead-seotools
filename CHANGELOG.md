@@ -4,6 +4,19 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `tests/chains/`: a fixture site built out of the shapes that actually break chains —
+  both slash forms of one URL, a body that is not valid UTF-8, a windows-1251 page, a
+  masthead outside `<main>`, an off-host link, a robots-disallowed path — crawled over
+  loopback, with seventeen assertions about the run as a whole rather than about any one
+  module (#112). Four properties: conservation (a number does not change meaning as it
+  travels), population (a finding is about a member of the set it describes),
+  determinism (two crawls, two concurrency levels, one answer) and representation (a page
+  says how it was measured). The population rules are `logscan`'s own, so a contradiction
+  the scanner can name is a chain test that asserts it.
+- `reconcile_sitemap` reports each URL as it was written rather than as it was normalised.
+  Comparison still happens on the normalised key, but a finding that named a normalised
+  form named a URL appearing nowhere in the crawl — unactionable for a reader, and
+  indistinguishable to the anomaly scanner from a finding about a page never fetched.
 - Add `docs/scenarios/`: ten end-to-end chains, each with the real commands in order, the
   artifact that comes out, what it costs, and what that chain cannot answer (#110). The
   rest of the documentation lists what the toolkit has; this describes what it does. Linked
