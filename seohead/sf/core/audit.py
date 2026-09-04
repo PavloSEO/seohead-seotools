@@ -150,6 +150,10 @@ def run_audit(
         "profile": cfg.get("profile"),
         "exports_used": exports.found,
         "exports_missing": exports.missing,
+        # A cp1251 export decodes with no exception (#160) -- the codec is the
+        # only place left for a reviewer to spot a mojibake'd title instead of
+        # trusting that a successful run read the bytes correctly.
+        "exports_encodings": exports.encodings,
     }
     result = aggregate(ctx, run_meta, size_stats, sitemap_summary)
     log(

@@ -66,7 +66,13 @@ EXPORT_MATCHERS: dict[str, dict[str, list[str]]] = {
     "structured_data_missing": {"all": ["structured", "missing"]},
 }
 
-READ_ENCODINGS = ("utf-8-sig", "utf-16", "utf-8", "latin-1")
+# Unambiguous codecs only. ``latin-1`` used to close this tuple, but it is a
+# single-byte codec with a mapping for every byte 0x00-0xFF, so it can never
+# raise ``UnicodeDecodeError`` -- it isn't a fallback that can fail like the
+# other three, it's a silent catch-all that "succeeds" on any input, including
+# a cp1251 (Windows Cyrillic) export, remapping each byte to the wrong letter
+# (#160). Anything these three reject goes to ``_sniff_encoding`` instead.
+READ_ENCODINGS = ("utf-8-sig", "utf-16", "utf-8")
 
 
 @dataclass
@@ -75,6 +81,9 @@ class LoadedExports:
 
     frames: dict[str, pd.DataFrame] = field(default_factory=dict)
     files: dict[str, str] = field(default_factory=dict)  # key -> path
+    # key -> codec that actually decoded it, so a report can tell a reviewer
+    # where to look when text reads as mojibake despite the run "succeeding".
+    encodings: dict[str, str] = field(default_factory=dict)
     found: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
 
@@ -85,19 +94,57 @@ class LoadedExports:
         return key in self.frames
 
 
+def _sniff_encoding(path: str) -> str | None:
+    """Guess a codec for bytes none of ``READ_ENCODINGS`` could decode.
+
+    ``charset_normalizer`` scores candidates by script and byte-frequency
+    consistency rather than merely checking "is this a legal byte sequence" --
+    the check every single-byte codec, ``latin-1`` included, always passes.
+    It returns ``None`` when nothing clears its own bar (verified against
+    random high-byte data), so a genuinely undecodable file still falls
+    through to the caller's ``raise`` instead of being silently accepted.
+    """
+    from charset_normalizer import from_path
+
+    best = from_path(path).best()
+    return best.encoding if best is not None else None
+
+
 def read_table(path: str) -> pd.DataFrame:
-    """Read a CSV/XLSX export, trying encodings SF is known to emit."""
+    """Read a CSV/XLSX export, trying encodings SF is known to emit.
+
+    The codec that actually decoded the file is recorded on the returned
+    DataFrame's ``.attrs["encoding"]`` so ``load_exports`` can surface it;
+    before #160, nothing recorded which of the fallback encodings matched, so
+    a cp1251 export silently mojibake'd with no signal downstream.
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xlsx", ".xls"):
-        return pd.read_excel(path)
+        df = pd.read_excel(path)
+        df.attrs["encoding"] = "xlsx"
+        return df
     last_err: Exception | None = None
     for enc in READ_ENCODINGS:
         try:
-            return pd.read_csv(path, encoding=enc, low_memory=False)
+            df = pd.read_csv(path, encoding=enc, low_memory=False)
         except (UnicodeDecodeError, UnicodeError) as err:
             last_err = err
+            continue
         except pd.errors.ParserError as err:
             # Wrong encoding can masquerade as a parser error (UTF-16 read as UTF-8).
+            last_err = err
+            continue
+        df.attrs["encoding"] = enc
+        return df
+    detected = _sniff_encoding(path)
+    if detected is not None:
+        try:
+            df = pd.read_csv(path, encoding=detected, low_memory=False)
+            df.attrs["encoding"] = detected
+            return df
+        except (UnicodeDecodeError, UnicodeError, LookupError) as err:
+            last_err = err
+        except pd.errors.ParserError as err:
             last_err = err
     raise ValueError(f"Could not decode export {path!r}: {last_err}")
 
@@ -139,8 +186,10 @@ def load_exports(exports_dir: str, required: tuple[str, ...] = ("internal_all",)
     result = LoadedExports()
     for key, path in paths.items():
         try:
-            result.frames[key] = read_table(path)
+            frame = read_table(path)
+            result.frames[key] = frame
             result.files[key] = path
+            result.encodings[key] = frame.attrs.get("encoding", "")
             result.found.append(key)
         except Exception as err:
             result.missing.append(f"{key} (read error: {err})")

@@ -28,6 +28,7 @@
         "generated_at": {"type": "string"},
         "profile": {"type": ["string", "null"]},
         "exports_used": {"type": "array", "items": {"type": "string"}},
+        "exports_encodings": {"type": "object"},
         "crawl_valid": {"type": "boolean"},
         "crawl_invalid_reason": {"type": ["string", "null"]},
         "crawl_partial": {"type": "boolean"},
