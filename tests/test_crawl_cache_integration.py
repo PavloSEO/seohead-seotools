@@ -116,6 +116,43 @@ def test_a_stale_entry_with_an_etag_revalidates_with_a_conditional_request(monke
     }
 
 
+def test_a_second_user_agent_never_replays_the_first_ones_body(monkeypatch, tmp_path):
+    """#131: a run configured with one User-Agent must never hand back the body a prior run
+    fetched under a different one, even though the origin here never sends Vary at all — the
+    ordinary case, not the exception. The second client has no response queued at all, so any
+    "hit" here could only be a wrongly-replayed body, and popping an empty list would raise."""
+    _patched(monkeypatch)
+    cache = ResponseCache(tmp_path)
+    desktop_client = FakeClient(
+        [
+            FakeResponse(
+                "<html><head><title>DESKTOP</title></head><body></body></html>",
+                headers={"content-type": "text/html", "cache-control": "max-age=3600"},
+            )
+        ]
+    )
+    first, _ = fetch_one(
+        "https://example.com/", client=desktop_client, cache=cache, user_agent="desktop-ua"
+    )
+    assert first.cache_status == "miss"
+    assert first.title == "DESKTOP"
+
+    # Zero queued responses: FakeClient.get() records the request before it pops, so a
+    # genuine attempt to reach it is visible even though the call then has nothing to return.
+    # A wrongly-served cache hit, by contrast, would never call .get() at all — the client
+    # would stay untouched and second.title would come back "DESKTOP".
+    googlebot_client = FakeClient([])
+    second, _ = fetch_one(
+        "https://example.com/",
+        client=googlebot_client,
+        cache=cache,
+        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    )
+    assert len(googlebot_client.requests) == 1, "a different identity must reach the real client"
+    assert second.cache_status != "hit", "must never replay the first identity's stored body"
+    assert second.title != "DESKTOP"
+
+
 def test_a_credentialed_request_never_touches_the_cache(monkeypatch, tmp_path):
     _patched(monkeypatch)
     cache = ResponseCache(tmp_path)
