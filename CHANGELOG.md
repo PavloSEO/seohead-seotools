@@ -4,6 +4,21 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add custom search (`tools/custom_search.py`) and custom extraction
+  (`tools/custom_extract.py`) over an already-crawled corpus: presence/absence filters
+  (raw source, visible text, a named CSS element, or an XPath node) and CSS/XPath/regex
+  extractors, both reporting which representation (static markup vs. rendered DOM) they ran
+  against. Absence is counted honestly: a page whose fetch failed is excluded from both the
+  numerator and the denominator rather than counted as missing. Extraction runs each
+  (document, extractor) pair under a wall-clock budget (`SIGALRM` on POSIX): a pathological
+  expression aborts only that document, and the run still finishes.
+- Add link position classification (`tools/link_position.py`): nav/header/sidebar/footer/content,
+  by ordered rule over a link's ancestor path, reusing `content_area.py`'s notion of content
+  rather than inventing a second one. Wired into `crawl/spider.py`'s link recording behind
+  `link_position.classify` (default off — a position per link costs memory on a large crawl) and
+  aggregated site-wide by `crawl/linkgraph.py`'s `inlink_composition`, which now feeds a new
+  `INLINK_BOILERPLATE_ONLY` audit finding for pages linked only from boilerplate. Registry grows
+  from 104 to 105 checks.
 - Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
   verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
   missing x-default, duplicate entries, non-canonical targets), two robots directives

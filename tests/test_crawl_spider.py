@@ -165,6 +165,29 @@ def test_the_link_graph_is_collected():
     assert ("https://example.com/a", "https://example.com/c") in edges
 
 
+def test_links_carry_no_position_by_default():
+    result = _crawl()
+    assert all(edge.position == "" for edge in result.links)
+
+
+def test_classify_links_wires_position_into_the_link_graph():
+    """Issue #20 part 3: link position classification is wired into the
+    spider's own link recording, at no extra requests."""
+    site = dict(SITE)
+    site["https://example.com/"] = FakeResponse(
+        "<html><body>"
+        '<nav><a href="/a">A</a></nav>'
+        '<footer><a href="/b">B</a></footer>'
+        '<p>Body copy <a href="https://other.com/x">X</a></p>'
+        "</body></html>"
+    )
+    result = _crawl(site, classify_links=True)
+    by_dest = {edge.destination: edge.position for edge in result.links}
+    assert by_dest["https://example.com/a"] == "nav"
+    assert by_dest["https://example.com/b"] == "footer"
+    assert by_dest["https://other.com/x"] == "content"
+
+
 @pytest.mark.parametrize("bad", ["", "not a url", "ftp:/"])
 def test_a_non_crawlable_start_url_is_refused(bad):
     with pytest.raises(ValueError):

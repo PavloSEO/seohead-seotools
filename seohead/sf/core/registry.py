@@ -661,6 +661,19 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "Image is missing width and height attributes",
         "fix": "Declare intrinsic width and height values to reserve layout space and reduce CLS.",
     },
+    # 9.A — link position (native crawl only; SF exports carry their own Link
+    # Position column, handled separately in sf.core.inlinks). Computed the
+    # same way SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP are: from evidence a
+    # native crawl produces that an SF export cannot, added directly by the
+    # handler layer rather than through a registered export requirement.
+    "INLINK_BOILERPLATE_ONLY": {
+        "severity": "warning",
+        "source": "crawl:link_position",
+        "message": "Page is linked only from navigation, header, sidebar, or footer, never "
+        "from body content",
+        "fix": "Add a contextual link to the page from relevant body copy; a page reachable "
+        "only through boilerplate is not linked the way a page in the content graph is.",
+    },
 }
 
 

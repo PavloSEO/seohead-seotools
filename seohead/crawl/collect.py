@@ -143,6 +143,7 @@ def fetch_one(
     fetcher: Callable[[str], Any] | None = None,
     throttle: Throttle | None = None,
     extra_headers: dict[str, str] | None = None,
+    parse_options: dict[str, Any] | None = None,
 ) -> tuple[PageRecord, dict[str, Any] | None]:
     """Fetch and parse one URL. Returns the record and the parsed document.
 
@@ -152,6 +153,10 @@ def fetch_one(
     ``extra_headers`` is resolved by the caller for this URL's own host, so it
     never survives a redirect to a different host: the next hop is a fresh
     call with headers resolved for the new host, not these carried forward.
+
+    ``parse_options`` is forwarded to ``parse_html`` untouched (e.g.
+    ``{"classify_links": True, "link_position_rules": [...]}``); ``None``
+    keeps every parser default, including link classification being off.
     """
     record = PageRecord(url=url)
     if fetcher is None:
@@ -211,7 +216,7 @@ def fetch_one(
         # Too large to parse, but a 200 is still a 200: not "unreachable".
         record.error = "response too large to parse"
     elif record.is_html and body:
-        parsed = parse_html(body, url)
+        parsed = parse_html(body, url, parse_options)
         for key, value in _record_from_parsed(parsed).items():
             setattr(record, key, value)
         found, parsed_count = _jsonld_counts(body, parsed)
@@ -255,12 +260,16 @@ def collect_urls(
     sleeper: Callable[[float], None] = time.sleep,
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    parse_options: dict[str, Any] | None = None,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
     ``out_path`` receives one JSON object per line as each URL completes, so an
     interrupted run still leaves usable evidence behind. ``max_seconds`` is a
     wall-clock budget for the whole call; 0 means none.
+
+    ``parse_options`` is forwarded to every ``parse_html`` call unchanged; see
+    ``fetch_one``.
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
@@ -307,7 +316,12 @@ def collect_urls(
                 resolve_credential_headers(credential_headers, host) if credential_headers else None
             )
             record, _ = fetch_one(
-                url, client=client, fetcher=fetcher, throttle=throttle, extra_headers=extra_headers
+                url,
+                client=client,
+                fetcher=fetcher,
+                throttle=throttle,
+                extra_headers=extra_headers,
+                parse_options=parse_options,
             )
             result.pages.append(record)
             _write(handle, record)

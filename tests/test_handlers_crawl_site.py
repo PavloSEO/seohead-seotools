@@ -3,8 +3,10 @@ the audit — this is where a checkpoint path, a duration budget, and a finish
 reason actually reach the crawler and the report. No network: the crawler
 itself is replaced with a fake."""
 
+import json
+
 import seohead.crawl.spider as spider_mod
-from seohead.crawl.spider import SpiderResult
+from seohead.crawl.spider import LinkEdge, SpiderResult
 from seohead.servers import handlers
 
 
@@ -49,3 +51,48 @@ def test_finish_reason_and_resumed_reach_the_handler_output(monkeypatch):
     assert out["finish_reason"] == "url_limit"
     assert out["resumed"] is True
     assert out["partial"] is True
+
+
+def test_link_position_classify_defaults_off_and_is_not_computed(monkeypatch):
+    captured = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        result = SpiderResult()
+        result.links = [LinkEdge("https://example.com/", "https://example.com/a", "", False, "nav")]
+        return result
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+    out = handlers.crawl_site(url="https://example.com/")
+    assert captured["classify_links"] is False
+    assert out["link_position"] == {}
+
+
+def test_link_position_classify_config_reaches_the_spider_and_the_output(tmp_path, monkeypatch):
+    """Issue #20 part 3: link position classification, wired end to end
+    through the handler that meets the collector and the audit."""
+    config = tmp_path / "crawl.json"
+    config.write_text(json.dumps({"link_position": {"classify": True}}))
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        result = SpiderResult()
+        result.links = [
+            LinkEdge("https://example.com/", "https://example.com/orphan", "", False, "nav"),
+            LinkEdge("https://example.com/x", "https://example.com/orphan", "", False, "footer"),
+            LinkEdge(
+                "https://example.com/blog", "https://example.com/linked", "", False, "content"
+            ),
+        ]
+        return result
+
+    captured = {}
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+
+    out = handlers.crawl_site(url="https://example.com/", config=str(config))
+
+    assert captured["classify_links"] is True
+    boilerplate_only = out["link_position"]["pages_boilerplate_only"]
+    assert boilerplate_only == ["https://example.com/orphan"]
+    # The same fact also reaches the audit as a registered finding.
+    assert out["summary"]["by_check"].get("INLINK_BOILERPLATE_ONLY") == 1

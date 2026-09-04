@@ -48,14 +48,15 @@ def _strip(root: Tag, exclude_tags: Any, exclude_selectors: Any) -> None:
             el.decompose()
 
 
-def resolve_content_area(
-    soup: BeautifulSoup, config: dict[str, Any] | None = None
-) -> tuple[Tag, str]:
-    """Return ``(content_root, strategy)`` for the configured content area.
+def find_content_root(soup: BeautifulSoup, config: dict[str, Any] | None = None) -> tuple[Tag, str]:
+    """Return ``(root, strategy)`` for the configured content area, on the live tree.
 
-    ``content_root`` is a detached copy: it can be decomposed freely without
-    disturbing the tree used for link discovery, which never passes through
-    this function.
+    This is the selection half of :func:`resolve_content_area`, split out so a
+    caller that needs to test descendant membership (link position
+    classification: "is this link inside the content area?") can do so by
+    identity against the actual document, rather than against the detached,
+    stripped copy that word-count and duplicate-detection extraction need.
+    Nothing here mutates ``soup``.
 
     ``strategy`` records how the region was picked so a wrong or missing
     selector is visible per page rather than silently falling back:
@@ -69,30 +70,41 @@ def resolve_content_area(
     config = config or {}
     include_selector = config.get("include_selector")
     root_selector = config.get("root_selector")
-    exclude_tags = config.get("exclude_tags", DEFAULT_EXCLUDE_TAGS)
-    exclude_selectors = config.get("exclude_selectors")
 
     requested_but_missing = False
 
     if include_selector:
         match = soup.select_one(include_selector)
         if match is not None:
-            root = copy(match)
-            _strip(root, exclude_tags, exclude_selectors)
-            return root, "include_selector"
+            return match, "include_selector"
         requested_but_missing = True
 
     if root_selector:
         match = soup.select_one(root_selector)
         if match is not None:
-            root = copy(match)
-            _strip(root, exclude_tags, exclude_selectors)
-            return root, "root_selector"
+            return match, "root_selector"
         requested_but_missing = True
 
-    root = copy(soup.body or soup)
-    _strip(root, exclude_tags, exclude_selectors)
     strategy = "fallback_default_body" if requested_but_missing else "default_body"
+    return soup.body or soup, strategy
+
+
+def resolve_content_area(
+    soup: BeautifulSoup, config: dict[str, Any] | None = None
+) -> tuple[Tag, str]:
+    """Return ``(content_root, strategy)`` for the configured content area.
+
+    ``content_root`` is a detached copy: it can be decomposed freely without
+    disturbing the tree used for link discovery, which never passes through
+    this function.
+    """
+    config = config or {}
+    exclude_tags = config.get("exclude_tags", DEFAULT_EXCLUDE_TAGS)
+    exclude_selectors = config.get("exclude_selectors")
+
+    live_root, strategy = find_content_root(soup, config)
+    root = copy(live_root)
+    _strip(root, exclude_tags, exclude_selectors)
     return root, strategy
 
 
