@@ -11,8 +11,8 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 | Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
 | Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 49 |
-| Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 104, generated from the registry |
-| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 21 skills |
+| Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 114, generated from the registry |
+| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 22 skills |
 | Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
 | About to change code | [ARCHITECTURE.md](ARCHITECTURE.md) — layers and invariants |
 | Naming a new module or test file | [NAMING.md](NAMING.md) — what a name must say, and what is deliberately left alone |
@@ -28,7 +28,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[TOOLS.md](TOOLS.md)** — what every tool does, which of them touch the
   network, which have side effects, where the boundaries are. Grouped by layer:
   recon, live tools, bounded site audit, own-crawl, external data sources, SF crawl audit.
-- **[CHECKS.md](CHECKS.md)** — the 104 checks the SF crawl audit runs: what each fires
+- **[CHECKS.md](CHECKS.md)** — the 114 checks the SF crawl audit runs: what each fires
   on, what evidence it needs, and the fix that ships with the finding. Generated
   from `seohead/sf/core/registry.py` (`scripts/generate_checks_reference.py`);
   `tests/test_docs_drift.py` fails the build if it drifts from the registry.
@@ -59,7 +59,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
   category by category against an external ~320-item technical-SEO
   checklist, with each claim marked verified or unverified and evidence
   quoted from the registry.
-- **[SKILLS.md](SKILLS.md)** — the 21 technical workflow skills: when to apply each,
+- **[SKILLS.md](SKILLS.md)** — the 22 technical workflow skills: when to apply each,
   which tools it drives, which tools deliberately have no skill.
 - **[RECIPES.md](RECIPES.md)** — three agent workflows that use existing exports, bounded
   public evidence, or a user-authorized browser without pretending that provider credentials exist.

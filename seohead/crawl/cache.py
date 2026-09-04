@@ -1,0 +1,375 @@
+"""HTTP response cache with a freshness policy that is stated, not assumed.
+
+Fetching the same URL twice in a session is routine — a link check, then a parse, then a
+render. Across sessions it is close to universal: a crawl gets re-run after a fix and most of
+the corpus never changed. The hazard, stated in the issue that asked for this module, is that
+the obvious default — cache everything, never revalidate, replay the last run — turns "fresh
+audit" into a silent report of last week's site. This module refuses that default.
+
+**The freshness policy, stated in full.**
+
+- ``Cache-Control: no-store`` on the response -> never stored at all.
+- ``Cache-Control: no-cache`` -> stored, but treated as already stale, so it is always
+  revalidated before use (equivalent to ``max-age=0``).
+- Otherwise the freshness lifetime is ``max-age`` when present, else computed from
+  ``Expires`` against the response's own ``Date`` (or treated as already stale if ``Date`` is
+  missing, since ``Expires`` cannot be anchored without it).
+- No freshness information at all -> stored, but immediately stale. This is the conservative
+  reading of "unstated": a page that never says how long it is good for gets treated as good
+  for zero seconds, not as good forever.
+- Once stale, a stored ``ETag`` or ``Last-Modified`` triggers a conditional GET
+  (``If-None-Match`` / ``If-Modified-Since``) instead of a full re-fetch. A ``304`` confirms the
+  stored body is still current and is recorded as a *revalidation*, never as a fresh fetch. No
+  validator at all means an ordinary, unconditional re-fetch: this cache can only ever save a
+  round trip, never manufacture an answer that a plain uncached crawl would not also have made.
+- ``Vary`` is honoured: a response naming request headers in ``Vary`` is stored as its own
+  variant, keyed on the values of exactly those headers, so a locale- or UA-adaptive URL never
+  answers from the wrong representation. ``Vary: *`` means "not safely reusable" and is treated
+  like ``no-store``.
+- Credentialed requests (per-host credential headers — see ``seohead.crawl.settings``) bypass
+  the cache in both directions, deliberately more conservative than ``Vary`` discipline alone:
+  this is a private, single-operator, local cache rather than a shared proxy, but a cache that
+  can ever hand authenticated content to an unauthenticated lookup (or vice versa) is a
+  correctness and safety failure worth ruling out by construction.
+- ``mode="replay"`` is a separate, explicitly named mode for debugging: it serves whatever is on
+  disk for a URL that already has an entry, at any age, without ever touching the network for
+  it — a URL with no entry yet is still fetched live, so replay never fabricates an answer for
+  something it has genuinely never seen. Every page served this way is stamped
+  (``PageRecord.cache_status == "hit"``) and the run as a whole carries ``cache.mode: replay``
+  in its manifest, because "the site is fine" and "the site was fine last time we looked" are
+  different claims and a report must not blur them.
+- ``invalidate=True`` is the explicit-invalidation escape hatch: every lookup is forced to miss
+  (a genuine live measurement happens) while stores still happen, refreshing the cache for next
+  time. This is a deliberate hard refresh, distinct from ``mode="off"``, which disables the
+  cache outright — reads and writes both.
+
+**Storage and concurrency.** Entries are plain JSON, one file per (URL, Vary-selected header
+values) pair, written to a temp file and then ``os.replace``'d into place — a reader never
+observes a half-written entry, and two threads or processes racing on the same key simply have
+the later write win, which is the correct outcome for a cache rather than a bug to guard
+against with a lock. The one thing guarded by a lock is the in-memory statistics counters,
+which several worker threads increment concurrently in a level-batched crawl. A cache directory
+that cannot be created, or is world-writable, disables the cache rather than trusting it (the
+same posture as ``seohead.crawl.state.ensure_safe_dir``, reused here directly) — unlike a
+corrupted crawl checkpoint, a cache miss is always a safe, correct fallback, so a broken cache
+degrades to "no cache" instead of aborting the run.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import tempfile
+import threading
+import time
+from dataclasses import asdict, dataclass, field
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+from seohead.crawl.state import ensure_safe_dir
+
+SCHEMA_VERSION = "http_cache.v1"
+DEFAULT_DIR = "~/.cache/seohead/http_cache"
+
+# Stats counters, each incremented at exactly the moment its outcome is final. Total network
+# round trips saved by the cache is ``hits + revalidations`` (a revalidation still costs one
+# small request, but never re-transfers the body).
+_STAT_KEYS = ("hits", "revalidations", "stores", "bypassed", "invalidated")
+
+
+def resolve_dir() -> Path | None:
+    """Where cache entries live, or ``None`` when disabled by environment.
+
+    Mirrors ``seohead.runlog.log_path``: a well-known default, overridable with
+    ``SEOHEAD_HTTP_CACHE_DIR``, set to ``off``/``0``/``none``/``false`` to disable outright.
+    """
+    override = os.environ.get("SEOHEAD_HTTP_CACHE_DIR")
+    try:
+        if override:
+            if override.strip().lower() in ("off", "0", "none", "false"):
+                return None
+            return Path(override).expanduser()
+        return Path(DEFAULT_DIR).expanduser()
+    except (OSError, ValueError):
+        return None
+
+
+def _parse_cache_control(value: str) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for part in (value or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            name, _, raw = part.partition("=")
+            out[name.strip().lower()] = raw.strip().strip('"')
+        else:
+            out[part.lower()] = None
+    return out
+
+
+def freshness_lifetime(headers: dict[str, str]) -> tuple[float, bool]:
+    """Seconds this response stays fresh, and whether it must never be stored at all.
+
+    ``headers`` must already be lower-cased. Returns ``(0.0, True)`` for ``no-store``.
+    Everything else that carries no usable freshness signal returns ``(0.0, False)``: store it
+    (a validator may still save a round trip) but treat it as already stale — see the module
+    docstring for why "unstated" is not read as "forever".
+    """
+    directives = _parse_cache_control(headers.get("cache-control", ""))
+    if "no-store" in directives:
+        return 0.0, True
+    if "no-cache" in directives:
+        return 0.0, False
+    if directives.get("max-age") is not None:
+        with contextlib.suppress(ValueError):
+            return max(0.0, float(directives["max-age"])), False  # type: ignore[arg-type]
+    expires = headers.get("expires")
+    date_hdr = headers.get("date")
+    if expires and date_hdr:
+        with contextlib.suppress(ValueError, TypeError):
+            expires_dt = parsedate_to_datetime(expires)
+            base_dt = parsedate_to_datetime(date_hdr)
+            if expires_dt is not None and base_dt is not None:
+                return max(0.0, (expires_dt - base_dt).total_seconds()), False
+    return 0.0, False
+
+
+@dataclass
+class CacheEntry:
+    """One stored representation of one URL."""
+
+    url: str
+    vary_headers: list[str] = field(default_factory=list)
+    request_header_values: dict[str, str] = field(default_factory=dict)
+    status_code: int = 200
+    headers: dict[str, str] = field(default_factory=dict)
+    body: str = ""
+    stored_at: float = 0.0
+    max_age: float = 0.0
+
+    @property
+    def etag(self) -> str:
+        return self.headers.get("etag", "")
+
+    @property
+    def last_modified(self) -> str:
+        return self.headers.get("last-modified", "")
+
+    def is_fresh(self, now: float) -> bool:
+        return (now - self.stored_at) < self.max_age
+
+
+@dataclass
+class CacheOutcome:
+    """What a lookup decided to do, and what a revalidation request needs to send."""
+
+    status: str  # "hit" | "revalidate" | "miss" | "bypass"
+    entry: CacheEntry | None = None
+    conditional_headers: dict[str, str] = field(default_factory=dict)
+
+
+class ResponseCache:
+    """A disk-backed HTTP cache for one crawl or collector run, safe under concurrency."""
+
+    def __init__(
+        self, directory: str | os.PathLike[str], *, mode: str = "live", invalidate: bool = False
+    ) -> None:
+        self.directory = Path(directory)
+        self.mode = mode
+        self.invalidate = invalidate
+        self.stats: dict[str, int] = dict.fromkeys(_STAT_KEYS, 0)
+        self._lock = threading.Lock()
+        self._disabled = mode == "off"
+        if not self._disabled:
+            try:
+                ensure_safe_dir(str(self.directory))
+            except (PermissionError, OSError):
+                # A cache that cannot be trusted degrades to "no cache", not to a crashed run:
+                # every code path downstream already tolerates a plain miss.
+                self._disabled = True
+
+    def _bump(self, key: str) -> None:
+        with self._lock:
+            self.stats[key] = self.stats.get(key, 0) + 1
+
+    def _family_dir(self, url: str) -> Path:
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        return self.directory / digest[:2] / digest
+
+    def _variants(self, url: str) -> list[CacheEntry]:
+        out: list[CacheEntry] = []
+        try:
+            names = sorted(os.listdir(self._family_dir(url)))
+        except OSError:
+            return out
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            entry = self._read(self._family_dir(url) / name)
+            if entry is not None:
+                out.append(entry)
+        return out
+
+    def _read(self, path: Path) -> CacheEntry | None:
+        """Load one entry file. Never raises: a corrupt or hostile file is just a miss."""
+        try:
+            with open(path, encoding="utf-8") as handle:
+                raw = json.load(handle)
+            if not isinstance(raw, dict) or raw.get("schema_version") != SCHEMA_VERSION:
+                return None
+            return CacheEntry(
+                url=str(raw["url"]),
+                vary_headers=[str(h) for h in raw.get("vary_headers") or []],
+                request_header_values={
+                    str(k): str(v) for k, v in (raw.get("request_header_values") or {}).items()
+                },
+                status_code=int(raw.get("status_code", 200)),
+                headers={str(k): str(v) for k, v in (raw.get("headers") or {}).items()},
+                body=str(raw.get("body", "")),
+                stored_at=float(raw.get("stored_at", 0.0)),
+                max_age=float(raw.get("max_age", 0.0)),
+            )
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _match(self, url: str, request_headers: dict[str, str]) -> CacheEntry | None:
+        lowered = {k.lower(): v for k, v in request_headers.items()}
+        for entry in self._variants(url):
+            if all(
+                lowered.get(h.lower(), "") == entry.request_header_values.get(h.lower(), "")
+                for h in entry.vary_headers
+            ):
+                return entry
+        return None
+
+    def decide(self, url: str, request_headers: dict[str, str]) -> CacheOutcome:
+        """Look up ``url`` and say what to do: serve it, revalidate it, or fetch it live."""
+        if self._disabled:
+            return CacheOutcome("bypass")
+        entry = self._match(url, request_headers)
+        if entry is None:
+            return CacheOutcome("miss")
+        if self.mode == "replay":
+            self._bump("hits")
+            return CacheOutcome("hit", entry)
+        if self.invalidate:
+            self._bump("invalidated")
+            return CacheOutcome("miss")
+        if entry.is_fresh(time.time()):
+            self._bump("hits")
+            return CacheOutcome("hit", entry)
+        conditional: dict[str, str] = {}
+        if entry.etag:
+            conditional["If-None-Match"] = entry.etag
+        if entry.last_modified:
+            conditional["If-Modified-Since"] = entry.last_modified
+        if conditional:
+            return CacheOutcome("revalidate", entry, conditional)
+        return CacheOutcome("miss")
+
+    def refresh(self, entry: CacheEntry, response_headers: dict[str, str]) -> None:
+        """A 304 confirmed the stored body is still current: reset its freshness clock."""
+        if self._disabled:
+            return
+        max_age, no_store = freshness_lifetime(response_headers)
+        if no_store:
+            self._forget(entry)
+            self._bump("bypassed")
+            return
+        entry.stored_at = time.time()
+        entry.max_age = max_age
+        # A 304 may carry a renewed validator even when the body itself is unchanged.
+        for name in ("etag", "last-modified"):
+            if response_headers.get(name):
+                entry.headers[name] = response_headers[name]
+        self._write(entry)
+        self._bump("revalidations")
+
+    def store(
+        self,
+        url: str,
+        request_headers: dict[str, str],
+        status_code: int,
+        response_headers: dict[str, str],
+        body: str,
+    ) -> None:
+        """Record a fresh response, or explain in stats why it was not recorded."""
+        if self._disabled:
+            return
+        headers = {k.lower(): v for k, v in response_headers.items()}
+        if headers.get("vary", "").strip() == "*" or status_code >= 500:
+            # Vary: * means "not safely reusable at all"; a 5xx is not a page worth replaying.
+            self._bump("bypassed")
+            return
+        max_age, no_store = freshness_lifetime(headers)
+        if no_store:
+            self._bump("bypassed")
+            return
+        vary_headers = [h.strip() for h in headers.get("vary", "").split(",") if h.strip()]
+        lowered_request = {k.lower(): v for k, v in request_headers.items()}
+        entry = CacheEntry(
+            url=url,
+            vary_headers=vary_headers,
+            request_header_values={
+                h.lower(): lowered_request.get(h.lower(), "") for h in vary_headers
+            },
+            status_code=status_code,
+            headers=headers,
+            body=body,
+            stored_at=time.time(),
+            max_age=max_age,
+        )
+        self._write(entry)
+        self._bump("stores")
+
+    def _entry_path(self, entry: CacheEntry) -> Path:
+        variant_key = hashlib.sha256(
+            json.dumps(sorted(entry.request_header_values.items()), sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        return self._family_dir(entry.url) / f"{variant_key}.json"
+
+    def _write(self, entry: CacheEntry) -> None:
+        """Write one entry, safe against another thread or process writing the same key.
+
+        ``tempfile.mkstemp`` hands back a name no other caller can also receive, so two writers
+        racing on the same variant never share one temp file (an earlier, shared-name ".tmp"
+        scheme let a second writer's ``open(..., "w")`` truncate the first writer's still-open
+        file underneath it — the concurrency bug this test file exists to catch). Whichever
+        writer's ``os.replace`` lands second simply wins; the cache never observes a partial file.
+        """
+        path = self._entry_path(entry)
+        payload = {"schema_version": SCHEMA_VERSION, **asdict(entry)}
+        tmp_path: str | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+            os.replace(tmp_path, path)
+            tmp_path = None
+        except OSError:
+            pass  # a cache that cannot write must not break the run it is trying to speed up
+        finally:
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_path)
+
+    def _forget(self, entry: CacheEntry) -> None:
+        with contextlib.suppress(OSError):
+            os.remove(self._entry_path(entry))
+
+
+def build(
+    directory: str | os.PathLike[str] | None, *, mode: str = "live", invalidate: bool = False
+) -> ResponseCache | None:
+    """Construct a cache, or ``None`` when there is nowhere for it to live.
+
+    A missing directory (environment override set to ``off``, or none resolvable) means "no
+    cache", identically to ``mode="off"`` — the caller does not need to tell the two apart.
+    """
+    if directory is None or mode == "off":
+        return None
+    return ResponseCache(directory, mode=mode, invalidate=invalidate)

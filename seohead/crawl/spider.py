@@ -31,18 +31,15 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
+from seohead.crawl.cache import ResponseCache
 from seohead.crawl.collect import CrawlResult, PageRecord, _is_timeout, _write, fetch_one
 from seohead.crawl.settings import resolve_credential_headers
-from seohead.crawl.throttle import Throttle
+from seohead.crawl.throttle import MAX_CONCURRENCY_CEILING, Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
 
 MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
-# A ceiling on the *configured* value, not on what the adaptive throttle will
-# actually use — Throttle.concurrency starts low and earns its way up to
-# whichever of this or the caller's request is smaller.
-MAX_CONCURRENCY_CEILING = 16
 ROBOTS_TOKEN = "SEOHEAD-Tools"
 EMPTY_ROBOTS = {"allow": [], "disallow": [], "groups": [], "crawl_delay": None}
 # Matches Throttle.should_stop / host_is_failing's own default limit — kept as
@@ -119,6 +116,13 @@ class SpiderResult(CrawlResult):
     # auditable: which URLs were fetched only because they were seeded, versus
     # discovered by following a link.
     seed_urls: list[str] = field(default_factory=list)
+    # The start page's raw HTML and outlink counts, captured once as a
+    # by-product of the ordinary fetch (never an extra request). This is what
+    # lets seohead.crawl.render_escalation's pre-flight gate (#18) check for
+    # an empty SPA shell or a link-less start page even in "raw" mode, which
+    # has no render to fall back on. Empty when the start page was not
+    # (re-)fetched in this call, e.g. a resumed run that starts past depth 0.
+    start_page_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def _canonical_key(url: str) -> str:
@@ -279,9 +283,12 @@ def crawl_site(
     classify_links: bool = False,
     link_position_rules: list[dict[str, Any]] | None = None,
     content_area_config: dict[str, Any] | None = None,
+    cache: ResponseCache | None = None,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
+    ``cache``, when given, is consulted for every fetch before any delay or dispatch-gate wait
+    is applied, so a cache hit costs neither a request nor a throttle slot — see ``fetch_one``.
     ``max_seconds`` is a wall-clock budget for the whole call; 0 means none.
     ``state_path``, when given, checkpoints the frontier there so a later call
     with the same path and start URL resumes instead of restarting —
@@ -498,6 +505,23 @@ def crawl_site(
             result.pages.append(record)
             _write(handle, record)
 
+            if (
+                depth == 0
+                and url == start
+                and not result.start_page_evidence
+                and parsed is not None
+            ):
+                # Captured once, straight from the ordinary fetch -- no extra
+                # request. Used only by the pre-flight rendering gate (#18):
+                # an empty SPA shell or a link-less start page must withhold
+                # the health score, and both checks are static, so they must
+                # not wait for a render that a raw-mode run will never perform.
+                result.start_page_evidence = {
+                    "html": parsed.get("_raw_html", ""),
+                    "outlinks": record.outlinks,
+                    "external_outlinks": record.external_outlinks,
+                }
+
             consecutive_timeouts, consecutive_server_errors = _fold_failure_streaks(
                 record, consecutive_timeouts, consecutive_server_errors
             )
@@ -542,8 +566,6 @@ def crawl_site(
                     continue
 
                 try:
-                    if throttle.delay:
-                        sleeper(throttle.delay)
                     record, parsed = fetch_one(
                         url,
                         client=client,
@@ -551,6 +573,8 @@ def crawl_site(
                         throttle=throttle,
                         extra_headers=_extra_headers_for(url),
                         parse_options=parse_options,
+                        cache=cache,
+                        wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
                     )
                 except KeyboardInterrupt:
                     # Not processed: put it back so a resume retries it rather
@@ -566,7 +590,9 @@ def crawl_site(
 
             def dispatch(item: tuple[str, int]) -> tuple[str, int, PageRecord, dict | None]:
                 url, depth = item
-                gate.wait_turn()
+                # gate.wait_turn is passed as ``wait`` rather than called here directly, so a
+                # cache hit — decided inside fetch_one — never claims a dispatch turn it did not
+                # need. A hit costs no request, so it must not cost a pacing slot either.
                 record, parsed = fetch_one(
                     url,
                     client=client,
@@ -574,6 +600,8 @@ def crawl_site(
                     throttle=throttle,
                     extra_headers=_extra_headers_for(url),
                     parse_options=parse_options,
+                    cache=cache,
+                    wait=gate.wait_turn,
                 )
                 return url, depth, record, parsed
 
@@ -678,6 +706,9 @@ def crawl_site(
     result.excluded = excluded
     result.effective_delay = throttle.delay
     result.effective_concurrency = throttle.concurrency
+    if cache is not None:
+        result.cache_stats = dict(cache.stats)
+        result.cache_replay = cache.mode == "replay"
     result.limitations = [
         f"scope {rules.internal}: links outside it are recorded, never fetched",
         "static HTML only: no JavaScript rendering",
