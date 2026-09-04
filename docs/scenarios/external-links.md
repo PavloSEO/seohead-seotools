@@ -11,6 +11,7 @@ the page that carries a dead reference is a page that reads as unmaintained.
 ## Covers
 
 - **Response Codes** — External No Response · External Client Error (4XX) · External Server Error (5XX) · External Blocked Resource
+- **Links** — Outlinks To Localhost
 
 ## The chain
 
@@ -57,6 +58,11 @@ seohead links-check --url https://example.com --internal-only
 **4. Read the crawl's own external finding.** `BROKEN_EXTERNAL_LINK` covers both 4xx and 5xx
 destinations, because from the reader's side the distinction between "gone" and "failing" is
 the same broken reference. The pages that carry it are in the finding's locations.
+
+`OUTLINK_TO_LOCALHOST` comes from the same crawl, free: any recorded destination resolving to a
+loopback address (`localhost`, `127.0.0.1`, `::1`) — a dev or staging link that survived into
+production markup, not something a status-code check would ever flag, since it usually just
+times out or connects to whatever the reader's own machine happens to be running.
 
 **5. Report the ones worth editing.**
 

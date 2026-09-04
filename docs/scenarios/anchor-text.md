@@ -11,7 +11,7 @@ This chain measures the composition rather than the count.
 
 ## Covers
 
-- **Links** — Non-Descriptive Anchor Text In Internal Outlinks · Internal Outlinks With No Anchor Text · Internal Nofollow Inlinks Only · Non-Indexable Page Inlinks Only · Internal Nofollow Outlinks
+- **Links** — Non-Descriptive Anchor Text In Internal Outlinks · Internal Outlinks With No Anchor Text · Internal Nofollow Inlinks Only · Non-Indexable Page Inlinks Only · Internal Nofollow Outlinks · Follow & Nofollow Internal Inlinks To Page
 
 ## The chain
 
@@ -34,6 +34,12 @@ That single setting produces `INLINK_BOILERPLATE_ONLY`: a page linked only from 
 header, sidebar or footer, and never from body copy. A page reachable only through boilerplate
 is not linked the way a page in the content graph is linked, and no inlink count will tell you
 that.
+
+The same crawl also produces `FOLLOW_AND_NOFOLLOW_INLINKS` — a page reached one way from some
+source and the other way from another — without needing `link_position.classify` at all: it
+reads only each edge's destination and `nofollow`, which every crawl already records (issue
+#125). A page inconsistently signalled that way is not a settled editorial choice; it is
+usually two people, or two eras of a template, disagreeing about the same URL.
 
 **2. Run the audit over the full edge list for the anchor-level findings.**
 
@@ -99,6 +105,18 @@ and, from the crawl in step 1, the composition itself:
 Twelve inlinks, zero of them editorial. That is the sentence a client understands, and it is
 not derivable from a count.
 
+And, needing neither classification nor the export:
+
+```json
+{
+  "check": "FOLLOW_AND_NOFOLLOW_INLINKS",
+  "severity": "notice",
+  "target_url": "https://example.com/pricing"
+}
+```
+
+One URL, two contradictory signals about whether it should be crawled and ranked.
+
 ## What it costs
 
 - One crawl, with classification adding memory rather than requests.
@@ -114,8 +132,6 @@ not derivable from a count.
 - **Which pages emit `nofollow` outlinks.** `rel="nofollow"` is recorded per edge and gates
   whether the crawl follows it (`discovery.follow_nofollow` overrides that). There is no
   page-level finding for a page *having* them, only for a page whose every inlink is one.
-- **A page linked both ways.** A destination reached by a followed link from one page and a
-  `nofollow` link from another is not called out.
 - **Whether the anchor text is good.** "Industrial pumps" is descriptive and may still be the
   wrong description. Every check here is structural; wording is a person's judgement.
 - **Anchors written by JavaScript.** The edge list is built from served HTML. See

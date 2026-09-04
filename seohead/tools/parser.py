@@ -4,7 +4,8 @@ Fetches a URL with browser-compatible request headers (httpx follows redirects a
 transparently decodes gzip/deflate/br), then extracts the on-page SEO
 signals a specialist cares about: title, meta description, canonical,
 robots, Open Graph / Twitter tags, the H1..H6 heading outline, JSON-LD
-blocks, links (with rel / nofollow / external flags), and the collapsed
+blocks, links (with raw and resolved href, rel / target / nofollow / external),
+forms (method, action, whether a password field is present), and the collapsed
 visible body text with a word count. Word count is scoped to a configurable
 content area (see ``content_area.py``) so navigation and footer boilerplate
 does not inflate it; link discovery always covers the whole document.
@@ -28,7 +29,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.models import LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
+from seohead.models import FormInfo, LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
 from seohead.recon.net import http_client
 from seohead.tools.content_area import extract_area_text, resolve_content_area
 
@@ -65,6 +66,7 @@ _OPTION_KEYS = (
     "headings",
     "jsonld",
     "links",
+    "forms",
     "text",
     "url_sources",
     "classify_links",
@@ -373,8 +375,10 @@ def _extract_links(
 
     Skips empty hrefs and ``javascript:`` / ``mailto:`` / ``tel:`` /
     pure-fragment (``#...``) links. Each entry carries the resolved absolute
-    href, anchor text, rel tokens, a ``nofollow`` flag, and an ``external``
-    flag.
+    href, the href exactly as written (``raw_href`` — the only place a
+    protocol-relative ``//host/path`` form is still visible once resolution has
+    run), anchor text, rel tokens, the ``target`` attribute, a ``nofollow``
+    flag, and an ``external`` flag.
 
     ``classify_links`` additionally resolves each link's ``position`` (nav,
     header, sidebar, footer, content, other; see ``link_position.py``). It is
@@ -415,8 +419,10 @@ def _extract_links(
         rel_tokens = [t.lower() for t in rel_tokens]
         entry: LinkInfo = {
             "href": abs_href,
+            "raw_href": href_raw,
             "text": collapse_whitespace(tag.get_text(" ")),
             "rel": " ".join(rel_tokens),
+            "target": (cast("str | None", tag.get("target")) or "").strip(),
             "nofollow": "nofollow" in rel_tokens,
             "external": is_external(abs_href, final_url),
         }
@@ -424,6 +430,28 @@ def _extract_links(
             entry["position"] = classify_link(tag, content_root, rules=rules)
         links.append(entry)
     return links
+
+
+def _extract_forms(soup: BeautifulSoup, base_url: str, final_url: str) -> list[FormInfo]:
+    """Collect ``<form>`` elements: method, resolved action, and whether a password field
+    is present (issue #125 — a form is otherwise invisible to every check downstream).
+
+    An absent or empty ``action`` submits to the document's own URL per the HTML standard,
+    so it resolves to ``final_url`` rather than being left blank or wrongly following
+    ``base_url`` (a ``<base>`` tag changes where a *relative* action points, not what an
+    omitted one means).
+    """
+    forms: list[FormInfo] = []
+    for tag in soup.find_all("form"):
+        method = (cast("str | None", tag.get("method")) or "get").strip().lower()
+        action_raw = (cast("str | None", tag.get("action")) or "").strip()
+        try:
+            action = urljoin(base_url, action_raw) if action_raw else final_url
+        except ValueError:
+            action = final_url
+        has_password = tag.find("input", attrs={"type": _ci("password")}) is not None
+        forms.append({"method": method, "action": action, "has_password": has_password})
+    return forms
 
 
 def _extract_text(soup: BeautifulSoup) -> str:
@@ -651,6 +679,9 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         )
     else:
         result["links"] = []
+    # Cheap regardless of site size: forms are rare compared to links, so — unlike
+    # classify_links — there is no per-crawl memory concern that would justify an opt-out.
+    result["forms"] = _extract_forms(soup, base_url, final_url) if opts["forms"] else []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.
     if opts["url_sources"]:
@@ -748,7 +779,7 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """Fetch ``url`` and return its extracted SEO data.
 
     ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
-    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True), plus
+    ``headings``, ``jsonld``, ``links``, ``forms`` and ``text`` (all default True), plus
     ``url_sources`` and ``classify_links`` (both default False). A ``timeout``
     (seconds) may also be provided, a ``content_area`` dict configures the
     region ``word_count`` is scoped to — see ``content_area.resolve_content_area``
@@ -759,7 +790,7 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     On success returns a dict with keys: ``url``, ``final_url``,
     ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
     ``robots``, ``charset``, ``doctype``, ``viewport``, ``og``, ``twitter``,
-    ``headings``, ``jsonld``, ``links``, ``text``, ``content_text``,
+    ``headings``, ``jsonld``, ``links``, ``forms``, ``text``, ``content_text``,
     ``content_area_strategy`` and ``word_count``.
 
     On any fetch or parse error returns ``{"url", "ok": False, "error"}``
@@ -805,7 +836,11 @@ if __name__ == "__main__":
         <h2>Sub</h2>
         <a href="/internal">Internal</a>
         <a href="https://other.example.org/x" rel="nofollow noopener">External</a>
+        <a href="//cdn.example.org/y" target="_blank">Protocol-relative, new tab</a>
         <a href="mailto:a@b.com">Mail</a>
+        <form method="post" action="http://insecure.example.com/submit">
+          <input type="password" name="pw">
+        </form>
         <p>Hello   world  from the body.</p>
         <script>ignore()</script>
       </body>
@@ -828,7 +863,19 @@ if __name__ == "__main__":
     assert not hrefs["https://example.com/internal"]["external"]
     assert hrefs["https://other.example.org/x"]["external"]
     assert hrefs["https://other.example.org/x"]["nofollow"]
+    assert hrefs["https://example.com/internal"]["raw_href"] == "/internal"
     assert all("mailto" not in h for h in hrefs)  # mailto skipped
+
+    blank_link = hrefs["https://cdn.example.org/y"]
+    assert blank_link["raw_href"] == "//cdn.example.org/y"  # protocol-relative, pre-resolution
+    assert blank_link["target"] == "_blank"
+    assert hrefs["https://example.com/internal"]["target"] == ""
+
+    assert len(parsed["forms"]) == 1
+    form = parsed["forms"][0]
+    assert form["method"] == "post"
+    assert form["action"] == "http://insecure.example.com/submit"
+    assert form["has_password"] is True
 
     assert "Hello world from the body." in parsed["text"]
     assert "ignore" not in parsed["text"]  # script stripped
