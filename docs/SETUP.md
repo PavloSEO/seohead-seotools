@@ -73,8 +73,11 @@ the run rather than pushing a failing origin. Rows land in `pages.jsonl` as they
 an interrupted crawl still leaves evidence behind.
 
 This is not Screaming Frog parity. Checks whose evidence a native crawl cannot produce —
-redirect chains, near-duplicates, readability, pixel widths, link score — are reported as
-**skipped**, never as clean, and `summary.check_coverage` states how much of the registry ran.
+near-duplicates, readability, pixel widths, link score — are reported as **skipped**, never
+as clean, and `summary.check_coverage` states how much of the registry ran. Redirect chain
+and loop detection are the exception: they are resolved from the crawl's own per-URL
+redirect targets, as a second pass over the finished crawl, with no Screaming Frog report
+required.
 
 `seohead sf doctor` prints environment diagnostics: where the SF CLI is (or
 is not), which optional dependencies are present, which base Screaming Frog

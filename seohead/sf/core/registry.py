@@ -632,13 +632,17 @@ def check_meta(check_id: str) -> dict[str, Any]:
 # Response-code checks are deliberately absent: they read status codes straight
 # from ``internal_all`` and need no separate frame, so declaring one would turn
 # an honest "no 5xx found" into a false "skipped".
+# REDIRECT_CHAIN and REDIRECT_LOOP are also absent: the native report is only
+# one of two ways they can be answered now that ``check_redirect_chains``
+# falls back to resolving ``internal_all``'s own Redirect URL column, so
+# declaring the report a hard requirement here would mark them skipped even
+# when the fallback just fired. They still skip by name, from inside the
+# check, when neither source has redirect data.
 # Only frames other than ``internal_all`` are listed: the master table is
 # required for a run at all, and checks derived from its columns guard
 # themselves per column. A check absent from this map and lacking its own skip
 # path is caught by ``test_every_check_can_be_skipped``.
 CHECK_REQUIRES: dict[str, tuple[str, ...]] = {
-    "REDIRECT_CHAIN": ("redirect_chains",),
-    "REDIRECT_LOOP": ("redirect_chains",),
     "IMG_MISSING_ALT": ("images_missing_alt",),
     "IMG_OVER_KB": ("images_over_kb",),
     "IMG_MISSING_DIMENSIONS": ("images_missing_size",),

@@ -10,6 +10,10 @@ All notable public changes are documented here.
 - Split technology fingerprinting into a fetch step and a pure `analyze_tech` step,
   capture analytics/tag-manager ids instead of only names, and add a `tag_coverage`
   report that groups presence by URL template and stamps how each page was measured.
+- Resolve redirect chains and loops as a second pass over a finished crawl's own
+  redirect targets, so `REDIRECT_CHAIN`/`REDIRECT_LOOP` no longer require the native
+  Screaming Frog Redirect Chains report — a light-profile export or a `crawl-site` run gets
+  the same findings for free.
 - Add community, citation, and no-key agent onboarding files.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
