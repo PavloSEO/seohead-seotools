@@ -125,6 +125,39 @@ def _resolve_options(options: dict[str, Any] | None) -> dict[str, bool]:
     return {key: bool(options.get(key, key != "url_sources")) for key in _OPTION_KEYS}
 
 
+# Lighthouse's `charset` audit only looks in the first 1024 bytes of the HTML
+# (or the Content-Type header, checked separately in rules.py from the
+# response we already have). See https://developer.chrome.com/docs/lighthouse/best-practices/charset/
+_CHARSET_WINDOW_CHARS = 1024
+_CHARSET_META_RE = re.compile(r"<meta[^>]+charset[^<]+>", re.IGNORECASE)
+_CHARSET_VALUE_RE = re.compile(r'charset\s*=\s*["\']?([a-zA-Z0-9_\-:.()]{2,})', re.IGNORECASE)
+# A doctype declaration is only meaningful at the top of the document; scanning
+# the whole body would risk matching an escaped/quoted example elsewhere.
+_DOCTYPE_WINDOW_CHARS = 2048
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE\b[^>]*>", re.IGNORECASE | re.DOTALL)
+
+
+def document_charset(html: str) -> str | None:
+    """The charset named by an early ``<meta charset>``/``http-equiv`` tag, if any.
+
+    Lighthouse's ``charset`` audit (see module docstring above) also accepts a
+    charset on the ``Content-Type`` response header; that half is checked
+    against the header seohead already captured, in
+    ``seohead.sf.core.rules.check_charset``, not here.
+    """
+    match = _CHARSET_META_RE.search(html[:_CHARSET_WINDOW_CHARS])
+    if not match:
+        return None
+    value = _CHARSET_VALUE_RE.search(match.group(0))
+    return value.group(1) if value else match.group(0)
+
+
+def document_doctype(html: str) -> str | None:
+    """The raw ``<!DOCTYPE ...>`` declaration text, if the document has one."""
+    match = _DOCTYPE_RE.search(html[:_DOCTYPE_WINDOW_CHARS])
+    return match.group(0).strip() if match else None
+
+
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     """Return the ``content`` of ``<meta name=...>`` (case-insensitive)."""
     tag = soup.find("meta", attrs={"name": _ci(name)})
@@ -515,11 +548,20 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         # Separate from "robots": that key keeps its literal meaning, this one
         # carries every crawler-addressed tag, which is what indexability needs.
         result["robots_meta"] = robots_meta_values(soup)
+        # Static Lighthouse audits (see seohead.sf.core.rules): charset/doctype
+        # read the raw markup directly (their rule is positional), viewport
+        # reuses the existing meta-content helper.
+        result["charset"] = document_charset(html)
+        result["doctype"] = document_doctype(html)
+        result["viewport"] = _meta_content(soup, name="viewport")
     else:
         result["title"] = None
         result["meta_description"] = None
         result["robots"] = None
         result["robots_meta"] = []
+        result["charset"] = None
+        result["doctype"] = None
+        result["viewport"] = None
 
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
@@ -616,8 +658,9 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
 
     On success returns a dict with keys: ``url``, ``final_url``,
     ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
-    ``robots``, ``og``, ``twitter``, ``headings``, ``jsonld``, ``links``,
-    ``text``, ``content_text``, ``content_area_strategy`` and ``word_count``.
+    ``robots``, ``charset``, ``doctype``, ``viewport``, ``og``, ``twitter``,
+    ``headings``, ``jsonld``, ``links``, ``text``, ``content_text``,
+    ``content_area_strategy`` and ``word_count``.
 
     On any fetch or parse error returns ``{"url", "ok": False, "error"}``
     rather than raising.

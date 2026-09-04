@@ -60,6 +60,13 @@ class PageRecord:
     word_count: int = 0
     text_ratio: float | None = None
     crawl_depth: int = 0
+    # Response-header/markup evidence for the static Lighthouse checks in
+    # seohead.sf.core.rules (charset/doctype/viewport/uses-text-compression) —
+    # see seohead/sf/core/lighthouse.py for the correspondence.
+    content_encoding: str = ""
+    charset: str = ""
+    doctype: str = ""
+    viewport: str = ""
     # Every link found on the page, and how many of them left the host. Note
     # that Screaming Frog's Outlinks column counts internal links only, so the
     # projection in evidence.py subtracts rather than passing this through.
@@ -116,6 +123,9 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "word_count": int(parsed.get("word_count") or 0),
         "outlinks": len(links),
         "external_outlinks": len([link for link in links if link.get("external")]),
+        "charset": _text_of(parsed.get("charset")),
+        "doctype": _text_of(parsed.get("doctype")),
+        "viewport": _text_of(parsed.get("viewport")),
     }
 
 
@@ -190,6 +200,9 @@ def fetch_one(
     headers = {k.lower(): v for k, v in dict(getattr(response, "headers", {})).items()}
     record.content_type = headers.get("content-type", "")
     record.x_robots = headers.get("x-robots-tag", "")
+    # httpx transparently decodes gzip/br/deflate, but the header itself still
+    # names the encoding that was actually on the wire (see check_compression).
+    record.content_encoding = headers.get("content-encoding", "")
     # Location may be relative ("/new"); resolve it so the destination is a
     # real URL rather than a fragment the scope check then rejects as off-host.
     location = headers.get("location", "")

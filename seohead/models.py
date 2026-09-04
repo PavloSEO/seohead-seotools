@@ -67,6 +67,11 @@ class ParsedPage(_ParsedPageOptional):
     robots: str | None
     robots_meta: list[str]
     canonical: str | None
+    # Static Lighthouse audits (issue #59) — see seohead.sf.core.rules and
+    # seohead.sf.core.lighthouse for the correspondence and doc links.
+    charset: str | None
+    doctype: str | None
+    viewport: str | None
     og: dict[str, str]
     twitter: dict[str, str]
     headings: dict[str, list[str]]

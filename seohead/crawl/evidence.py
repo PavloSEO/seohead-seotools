@@ -106,6 +106,13 @@ def _row(record: Any) -> dict[str, Any]:
         "Canonical Link Element 1": record.canonical,
         "Meta Robots 1": record.meta_robots,
         "X-Robots-Tag 1": record.x_robots,
+        # Evidence for the static Lighthouse checks (seohead/sf/core/lighthouse.py):
+        # a native Screaming Frog export carries none of these four by default,
+        # so they stay blank there and the checks skip honestly (see rules.py).
+        "Content-Encoding": record.content_encoding,
+        "Doctype": record.doctype,
+        "Viewport": record.viewport,
+        "Meta Charset": record.charset,
         "OG:Title": record.og_title,
         "OG:Description": record.og_description,
         "OG:Image": record.og_image,
