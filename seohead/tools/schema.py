@@ -503,6 +503,14 @@ def check_schema(
 
 def _findings(r: dict[str, Any]) -> list[str]:
     out: list[str] = []
+    status = r.get("status_code")
+    if status is not None and not 200 <= status < 300:
+        # Everything below describes the body that was actually served. Saying
+        # so first stops the report being read as a verdict on the requested URL.
+        out.append(
+            f"The page returned HTTP {status}: what follows describes the error page, "
+            "not the requested URL"
+        )
     out += r["parse_errors"]
 
     if not r["blocks"]:

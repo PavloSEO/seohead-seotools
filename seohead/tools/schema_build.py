@@ -465,7 +465,34 @@ def build_schema(
 
     page_html = target["html"]
     if page_html is None:
-        return {"ok": False, "url": target.get("url"), "error": "Page HTML could not be retrieved"}
+        # The cause is already known here. A read timeout means retry or slow
+        # down, a reset means you are being throttled, a DNS failure means the
+        # host is wrong — collapsing all three into one sentence throws away
+        # the only part an operator can act on.
+        cause = target.get("error")
+        return {
+            "ok": False,
+            "url": target.get("url"),
+            "error": f"Page HTML could not be retrieved: {cause}"
+            if cause
+            else ("Page HTML could not be retrieved"),
+            **({"cause": cause} if cause else {}),
+        }
+
+    status = target.get("status_code")
+    if status is not None and not 200 <= status < 300:
+        # The body of a 404 is an error page, and proposing a graph for it
+        # describes something other than the URL that was asked about.
+        return {
+            "ok": False,
+            "url": target.get("url"),
+            "final_url": target.get("final_url"),
+            "status_code": status,
+            "error": (
+                f"The page returned HTTP {status}, so its markup describes an error page "
+                "rather than the requested URL. Pass the HTML directly to analyse it anyway."
+            ),
+        }
 
     facts = page_facts.extract(page_html, target["url"])
     ptype = page_type.classify(target["url"], facts)
