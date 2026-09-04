@@ -4,6 +4,9 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `crawl-site --config-help`, generated from `seohead/crawl/config.py`, and hide `--max-depth`
+  and `--min-delay` from `--help` (still accepted) so the flag surface stops growing with every
+  crawler setting.
 - Add community, citation, and no-key agent onboarding files.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.

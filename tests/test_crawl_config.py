@@ -160,6 +160,32 @@ def test_the_manifest_is_json_serialisable():
     json.dumps(cfg.manifest(cfg.load()))
 
 
+# ── describe_settings (CLI --config-help / MCP #23 share this) ──────────────
+
+
+def test_every_setting_has_a_description():
+    """A config key without a reachable description is exactly what #27 forbids.
+
+    ``describe_settings`` looks up ``DESCRIPTIONS`` by the same paths as
+    ``DEFAULTS``; a missing entry would raise ``KeyError`` here.
+    """
+    described = {row["path"] for row in cfg.describe_settings()}
+    assert described == set(cfg._flatten(cfg.DEFAULTS))
+    for row in cfg.describe_settings():
+        assert row["description"], row["path"]
+
+
+def test_describe_settings_reports_type_default_and_results_affecting():
+    by_path = {row["path"]: row for row in cfg.describe_settings()}
+    max_urls = by_path["limits.max_urls"]
+    assert max_urls["type"] == "int"
+    assert max_urls["default"] == cfg.DEFAULTS["limits"]["max_urls"]
+    assert max_urls["results_affecting"] is True
+
+    out_dir = by_path["output.dir"]
+    assert out_dir["results_affecting"] is False
+
+
 # ── politeness ──────────────────────────────────────────────────────────────
 
 
