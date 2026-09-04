@@ -15,6 +15,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 | Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 21 skills |
 | Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
 | About to change code | [ARCHITECTURE.md](ARCHITECTURE.md) — layers and invariants |
+| Naming a new module or test file | [NAMING.md](NAMING.md) — what a name must say, and what is deliberately left alone |
 | Running or writing tests | [TESTING.md](TESTING.md) — how to run, what they cover |
 | Trying to avoid known traps | [GOTCHAS.md](GOTCHAS.md) — money, quotas, footguns |
 | Arguing with a past decision | [DECISIONS.md](DECISIONS.md) — why it was done that way |
@@ -39,6 +40,9 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — the package layout, the main
   invariant ("the core does not know who called it"), the data flow diagram,
   the four registration points of a new tool, test requirements.
+- **[NAMING.md](NAMING.md)** — what a module or test file name must say, when a
+  basename may legitimately repeat across packages, and what naming decisions
+  are deliberately left open.
 - **[TESTING.md](TESTING.md)** — how to run the suite, what the 672 tests
   cover, what they deliberately do not, and which missing tests to write first.
 - **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
