@@ -12,7 +12,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
 | Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 49 |
 | Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 113, generated from the registry |
-| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 21 skills |
+| Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 22 skills |
 | Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
 | About to change code | [ARCHITECTURE.md](ARCHITECTURE.md) — layers and invariants |
 | Naming a new module or test file | [NAMING.md](NAMING.md) — what a name must say, and what is deliberately left alone |
@@ -59,7 +59,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
   category by category against an external ~320-item technical-SEO
   checklist, with each claim marked verified or unverified and evidence
   quoted from the registry.
-- **[SKILLS.md](SKILLS.md)** — the 21 technical workflow skills: when to apply each,
+- **[SKILLS.md](SKILLS.md)** — the 22 technical workflow skills: when to apply each,
   which tools it drives, which tools deliberately have no skill.
 - **[RECIPES.md](RECIPES.md)** — three agent workflows that use existing exports, bounded
   public evidence, or a user-authorized browser without pretending that provider credentials exist.

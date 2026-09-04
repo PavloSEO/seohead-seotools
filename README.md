@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-52 callable tools · 113 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
+52 callable tools · 113 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -109,7 +109,7 @@ Two modes are intentionally supported:
 
 ### 28 agent workflow skills
 
-The repository ships 21 technical-audit playbooks in `.claude/skills/` and seven broader SEO
+The repository ships 22 technical-audit playbooks in `.claude/skills/` and seven broader SEO
 content/research playbooks in `seohead/skills/`. They teach an agent when to call tools, how to
 separate evidence from inference, and how to assemble outputs without pretending that an
 unmeasured signal is clean.
