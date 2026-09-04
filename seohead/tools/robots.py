@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import contextlib
 import re
+from typing import Any, cast
 from urllib.parse import urlparse, urlsplit
 
+from seohead.models import ParsedRobots, RobotsCheckResult, RobotsGroup
 from seohead.recon.net import http_client
 
 _UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
@@ -20,11 +22,11 @@ def _robots_url(url: str) -> str:
     return f"{p.scheme}://{p.netloc}/robots.txt"
 
 
-def parse_robots(text: str) -> dict:
+def parse_robots(text: str) -> ParsedRobots:
     """Pure parse of robots.txt content into groups + sitemaps (no network)."""
-    groups: list[dict] = []
+    groups: list[dict[str, Any]] = []
     sitemaps: list[str] = []
-    current: dict | None = None
+    current: dict[str, Any] | None = None
     # Crawl-delay was parsed by nobody, so a site asking to be crawled slowly was
     # crawled at whatever rate the operator chose.
     for raw in text.splitlines():
@@ -56,13 +58,15 @@ def parse_robots(text: str) -> dict:
             sitemaps.append(value)
     for g in groups:
         g.pop("_has_rules", None)
-    return {"groups": groups, "sitemaps": sitemaps}
+    # Built with a temporary "_has_rules" bookkeeping key above (popped by now),
+    # so a plain dict is the natural builder; cast once at the boundary.
+    return cast(ParsedRobots, {"groups": groups, "sitemaps": sitemaps})
 
 
-EMPTY_GROUP = {"allow": [], "disallow": [], "crawl_delay": None}
+EMPTY_GROUP: RobotsGroup = {"user_agents": [], "allow": [], "disallow": [], "crawl_delay": None}
 
 
-def _rules_for(parsed: dict, user_agent: str) -> dict:
+def _rules_for(parsed: ParsedRobots, user_agent: str) -> RobotsGroup:
     """The single group that applies, by longest matching product token.
 
     RFC 9309 selects the most specific match, and exactly one group applies.
@@ -71,9 +75,9 @@ def _rules_for(parsed: dict, user_agent: str) -> dict:
     agent whose string happened to contain it.
     """
     ua = user_agent.lower()
-    best: dict | None = None
+    best: RobotsGroup | None = None
     best_length = -1
-    star: dict | None = None
+    star: RobotsGroup | None = None
     for group in parsed["groups"]:
         for token in (u.lower().strip() for u in group["user_agents"]):
             if token == "*":
@@ -84,15 +88,15 @@ def _rules_for(parsed: dict, user_agent: str) -> dict:
             # applies to "Googlebot-Image", but not the other way round.
             if (ua == token or ua.startswith(token)) and len(token) > best_length:
                 best, best_length = group, len(token)
-    return best or star or dict(EMPTY_GROUP)
+    return best or star or cast(RobotsGroup, dict(EMPTY_GROUP))
 
 
-def crawl_delay(parsed: dict, user_agent: str = "*") -> float | None:
+def crawl_delay(parsed: ParsedRobots, user_agent: str = "*") -> float | None:
     """The delay the site asks this agent to keep, if it states one."""
     return _rules_for(parsed, user_agent).get("crawl_delay")
 
 
-def _pattern_to_regex(pattern: str) -> re.Pattern:
+def _pattern_to_regex(pattern: str) -> re.Pattern[str]:
     """Google robots pattern -> regex: ``*`` is any sequence, trailing ``$`` anchors end."""
     anchored = pattern.endswith("$")
     body = pattern[:-1] if anchored else pattern
@@ -110,16 +114,15 @@ def match_path(url: str) -> str:
     return (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
 
 
-def is_allowed(parsed: dict, path: str, user_agent: str = "*") -> bool:
+def is_allowed(parsed: ParsedRobots, path: str, user_agent: str = "*") -> bool:
     """Allow/Disallow decision (Google precedence: longest matching pattern wins;
     Allow wins ties). Handles ``*`` wildcards and the ``$`` end-anchor.
 
     ``path`` is the value ``match_path`` returns, query string included."""
     rules = _rules_for(parsed, user_agent)
     best_len, decision = -1, True
-    for kind in ("disallow", "allow"):
-        allow = kind == "allow"
-        for pattern in rules.get(kind, []):
+    for patterns, allow in ((rules["disallow"], False), (rules["allow"], True)):
+        for pattern in patterns:
             if pattern == "":
                 continue
             if _pattern_to_regex(pattern).match(path):
@@ -132,7 +135,7 @@ def is_allowed(parsed: dict, path: str, user_agent: str = "*") -> bool:
 
 def check_robots(
     url: str, user_agent: str = "*", paths: list[str] | None = None, timeout: float = 20.0
-) -> dict:
+) -> RobotsCheckResult:
     robots_url = _robots_url(url)
     try:
         client, _http2_capable = http_client(
@@ -153,7 +156,7 @@ def check_robots(
             "note": "no robots.txt (crawl allowed)",
         }
     parsed = parse_robots(resp.text)
-    result = {
+    result: dict[str, Any] = {
         "ok": True,
         "robots_url": robots_url,
         "status_code": resp.status_code,
@@ -165,7 +168,9 @@ def check_robots(
         result["path_checks"] = [
             {"path": p, "allowed": is_allowed(parsed, p, user_agent)} for p in paths
         ]
-    return result
+    # Built imperatively above (path_checks is added only when requested), so a
+    # plain dict is the natural builder; cast once at the boundary.
+    return cast(RobotsCheckResult, result)
 
 
 if __name__ == "__main__":

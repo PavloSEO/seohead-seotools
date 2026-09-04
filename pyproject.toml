@@ -49,6 +49,7 @@ reports = ["openpyxl>=3.1,<4", "python-docx>=1.1,<2"]
 cluster = ["scikit-learn>=1.4,<2", "numpy>=1.26,<3", "snowballstemmer>=2.2,<4"]
 dev = [
     "build>=1.2,<2",
+    "mypy>=1.13,<3",
     "pytest>=8.0,<10",
     "pytest-cov>=5.0,<8",
     "PyYAML>=6,<7",
@@ -97,3 +98,32 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
+
+# Type checking is being rolled out module by module (issue #31), not enabled
+# lax everywhere at once: `follow_imports = "silent"` means every module not
+# listed below is still used for inference but none of ITS errors can fail CI,
+# so adding a new untyped function elsewhere never breaks the build by surprise.
+# The overrides below are the enforced allowlist -- the only modules where a
+# type error already fails CI. Add a module here only once it is clean under
+# its target strictness; never relax coverage back on an already-covered module.
+[tool.mypy]
+python_version = "3.10"
+follow_imports = "silent"
+ignore_missing_imports = true
+
+# The new shared TypedDict models: nothing but type declarations, clean under
+# full strict from day one.
+[[tool.mypy.overrides]]
+module = ["seohead.models"]
+strict = true
+
+# The two modules whose return shapes now use those models (parser.parse_url /
+# parse_html, robots.check_robots). Not yet full `strict` -- BeautifulSoup's
+# stubs make a handful of strict-mode checks noisy well beyond this issue's
+# slice -- but every def is annotated and a function can no longer quietly
+# return `Any` where its signature promises something narrower.
+[[tool.mypy.overrides]]
+module = ["seohead.tools.parser", "seohead.tools.robots"]
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true

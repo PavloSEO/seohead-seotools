@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from seohead import runlog
+from seohead.models import ParseManyResult, RobotsCheckResult
 from seohead.servers import handlers
 
 
@@ -48,7 +49,7 @@ def build_server():  # -> FastMCP
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_parse(
         url: str = "", urls: list[str] | None = None, options: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    ) -> ParseManyResult:
         """Parse SEO data (title, meta description, canonical, OG/Twitter, H1-H6,
         JSON-LD, links, visible text, word count) from one URL or a list of URLs."""
         return handlers.parse(url=url or None, urls=urls, options=options)
@@ -132,7 +133,7 @@ def build_server():  # -> FastMCP
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_robots_check(
         url: str, user_agent: str = "*", paths: list[str] | None = None
-    ) -> dict[str, Any]:
+    ) -> RobotsCheckResult:
         """Fetch and analyze a site's robots.txt: user-agent groups, declared
         sitemaps, and whether given paths are crawlable."""
         return handlers.robots_check(url=url, user_agent=user_agent, paths=paths)
