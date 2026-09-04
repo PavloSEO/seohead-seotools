@@ -9,6 +9,10 @@ All notable public changes are documented here.
   missing x-default, duplicate entries, non-canonical targets), two robots directives
   (`notranslate`, `unavailable_after`), and canonical URLs containing a fragment. Registry grows
   from 96 to 104 checks. See `docs/CHECKLIST_AUDIT.md`.
+- Add `asset-weight-check`: fetches a page's linked CSS/JS and reports
+  render-blocking resources, oversized files, duplicate libraries (by content
+  hash), missing minification, missing `font-display`, legacy polyfilled JS,
+  and missing compression/long-lived caching.
 - Add `crawl-site --config-help`, generated from `seohead/crawl/config.py`, and hide `--max-depth`
   and `--min-delay` from `--help` (still accepted) so the flag surface stops growing with every
   crawler setting.

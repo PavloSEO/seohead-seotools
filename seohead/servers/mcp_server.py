@@ -148,6 +148,16 @@ def build_server():  # -> FastMCP
         return handlers.headers_check(url=url, method=method)
 
     @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_asset_weight_check(url: str, file_size_threshold: int | None = None) -> dict[str, Any]:
+        """Fetch a page's linked CSS/JS and report delivery problems: render-blocking
+        resources in <head>, oversized files, duplicate libraries bundled more than
+        once (by content hash), missing minification, missing font-display, legacy
+        polyfilled JS, and resources served without compression or a long-lived
+        Cache-Control. Unused-code and cross-page outlier detection need a rendered
+        DOM / a multi-page run and are reported under `skipped`, not silently clean."""
+        return handlers.asset_weight_check(url=url, file_size_threshold=file_size_threshold)
+
+    @mcp.tool(annotations=fetch, structured_output=True)
     def seo_links_check(url: str, internal_only: bool = False, limit: int = 200) -> dict[str, Any]:
         """Check a page's outbound links for broken (4xx/5xx) targets and links
         that point at redirects (wasted crawl hops)."""

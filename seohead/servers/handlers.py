@@ -10,6 +10,7 @@ from typing import Any
 
 from seohead import runlog
 from seohead.tools import (
+    asset_weight,
     clusterer,
     downloader,
     optimizer,
@@ -267,6 +268,17 @@ def headers_check(url: str | None = None, method: str = "GET") -> dict[str, Any]
     if not url:
         raise ValueError("url required")
     return headers_core.check_headers(url, method=method)
+
+
+def asset_weight_check(
+    url: str | None = None, file_size_threshold: int | None = None
+) -> dict[str, Any]:
+    if not url:
+        raise ValueError("url required")
+    kwargs: dict[str, Any] = {}
+    if file_size_threshold is not None:
+        kwargs["file_size_threshold"] = int(file_size_threshold)
+    return asset_weight.analyze_page_asset_weight(url, **kwargs)
 
 
 def links_check(
@@ -920,6 +932,7 @@ _RAW_HANDLERS = {
     "keywords_cluster": keywords_cluster,
     "robots_check": robots_check,
     "headers_check": headers_check,
+    "asset_weight_check": asset_weight_check,
     "links_check": links_check,
     "hreflang_check": hreflang_check,
     "domain_profile": domain_profile,
