@@ -43,6 +43,14 @@ OPERATIONS = "https://operation.api.cloud.yandex.net/operations"
 SOURCE = "yandex_cloud"
 
 
+class NetworkAmbiguousError(RuntimeError):
+    """A billed request's response was lost; the provider may already have accepted it.
+
+    Raised instead of silently resending the identical payload, since none of these endpoints
+    offers a client-side idempotency key.
+    """
+
+
 def normalize(phrase: str) -> str:
     """Canonicalize spacing and case, including the required Russian yo-to-ye fold."""
     return re.sub(r"\s+", " ", (phrase or "").strip().lower().replace("ё", "е"))  # noqa: RUF001
@@ -62,8 +70,24 @@ class _Base:
             self.context = ssl.create_default_context()
 
     def _request(
-        self, url: str, body: dict | None = None, method: str = "POST", retries: int = 5
+        self,
+        url: str,
+        body: dict | None = None,
+        method: str = "POST",
+        retries: int = 5,
+        *,
+        billed: bool = False,
+        operation: str | None = None,
     ) -> tuple[int, Any]:
+        """Send one request; ``billed`` marks a call that creates and charges server-side work.
+
+        An HTTP error response (429/500/503) means the provider replied, so retrying it is
+        unchanged. A network-level exception is different: the response was lost, not refused,
+        and none of these endpoints offers an idempotency key. For a billed call the attempt is
+        logged and the call fails outright instead of resending a payload that may already have
+        been accepted and charged; operation polling (``billed=False``) stays safe to retry
+        because it only reads existing state.
+        """
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Authorization": f"Api-Key {self.key}"}
         if data is not None:
@@ -90,6 +114,17 @@ class _Base:
                     continue
                 return exc.code, _maybe_json(raw)
             except (ssl.SSLError, urllib.error.URLError) as exc:
+                if billed:
+                    spend.record(
+                        SOURCE,
+                        operation or url,
+                        cost=0,
+                        unit="requests",
+                        extra={"attempt_failed": "network_error", "detail": str(exc)},
+                    )
+                    raise NetworkAmbiguousError(
+                        f"{operation or url}: response lost; request may already be billed: {exc}"
+                    ) from None
                 time.sleep(2**attempt + 1)
                 last = (0, f"network: {exc}")
                 continue
@@ -116,6 +151,8 @@ class Wordstat(_Base):
                 "regions": list(regions),
                 "devices": list(devices),
             },
+            billed=True,
+            operation="wordstat.topRequests",
         )
         spend.record(
             SOURCE,
@@ -150,6 +187,8 @@ class Wordstat(_Base):
                 "regions": list(regions),
                 "devices": list(devices),
             },
+            billed=True,
+            operation="wordstat.dynamics",
         )
         spend.record(
             SOURCE,
@@ -212,6 +251,8 @@ class WebSearch(_Base):
         status, operation = self._request(
             f"{HOST}/v2/web/searchAsync",
             _serp_body(query, region, search_type, groups, docs_in_group, family, self.folder),
+            billed=True,
+            operation="web.searchAsync",
         )
         spend.record(
             SOURCE,
@@ -257,11 +298,22 @@ class WebSearch(_Base):
         remains available in the spend ledger.
         """
         pending: dict[str, str] = {}
+        results: dict[str, dict] = {}
         for query in queries:
-            status, operation = self._request(
-                f"{HOST}/v2/web/searchAsync",
-                _serp_body(query, region, search_type, groups, docs_in_group, family, self.folder),
-            )
+            try:
+                status, operation = self._request(
+                    f"{HOST}/v2/web/searchAsync",
+                    _serp_body(
+                        query, region, search_type, groups, docs_in_group, family, self.folder
+                    ),
+                    billed=True,
+                    operation="web.searchAsync",
+                )
+            except NetworkAmbiguousError as exc:
+                # One query's lost response must not abort the rest of the batch, mirroring the
+                # per-task isolation that Arsenkin's BatchRunner already applies.
+                results[query] = {"error": str(exc), "docs": []}
+                continue
             if status == 200 and isinstance(operation, dict) and operation.get("id"):
                 pending[operation["id"]] = query
         spend.record(
@@ -273,7 +325,6 @@ class WebSearch(_Base):
             extra={"region": region, "batch": True},
         )
 
-        results: dict[str, dict] = {}
         deadline = time.monotonic() + timeout
         while pending and time.monotonic() < deadline:
             time.sleep(poll)
