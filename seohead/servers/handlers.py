@@ -147,6 +147,7 @@ def crawl_site(
             robots_policy=settings["robots"]["policy"],
             scope=settings["scope"],
             out_path=pages_path,
+            credential_headers=settings["http"]["credential_headers"],
         )
         discovery = {
             "mode": "spider",
@@ -165,6 +166,7 @@ def crawl_site(
             min_delay=settings["speed"]["min_delay_seconds"],
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
+            credential_headers=settings["http"]["credential_headers"],
         )
         discovery = {"mode": "list"}
 

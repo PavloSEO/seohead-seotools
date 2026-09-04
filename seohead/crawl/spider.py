@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl.collect import CrawlResult, _write, fetch_one
+from seohead.crawl.config import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
@@ -147,6 +148,7 @@ def crawl_site(
     out_path: str | None = None,
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    credential_headers: list[dict[str, Any]] | None = None,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``."""
     start = normalize_url(start_url)
@@ -219,7 +221,17 @@ def crawl_site(
             if throttle.delay:
                 sleeper(throttle.delay)
 
-            record, parsed = fetch_one(url, client=client, fetcher=fetcher, throttle=throttle)
+            # Resolved for this hop's own host, never carried over from the
+            # last one — that is what keeps a credential off a cross-host
+            # redirect target.
+            extra_headers = (
+                resolve_credential_headers(credential_headers, urlsplit(url).hostname or "")
+                if credential_headers
+                else None
+            )
+            record, parsed = fetch_one(
+                url, client=client, fetcher=fetcher, throttle=throttle, extra_headers=extra_headers
+            )
             record.crawl_depth = depth
             result.pages.append(record)
             _write(handle, record)

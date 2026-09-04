@@ -2,6 +2,7 @@
 
 import pytest
 
+from seohead.crawl.collect import collect_urls, fetch_one
 from seohead.crawl.spider import crawl_site
 from seohead.recon.net import _is_public_address
 from seohead.tools.robots import _rules_for, crawl_delay, parse_robots
@@ -263,3 +264,79 @@ def test_a_success_clears_the_refusal_streak():
         t.record_server_error(503)
     t.record_success()
     assert t.host_is_failing() is False
+
+
+# ── credential headers ──────────────────────────────────────────────────────
+
+
+def test_fetch_one_sends_credential_headers_through_the_real_client(monkeypatch):
+    """extra_headers must reach the request, not just be accepted and dropped."""
+    import seohead.crawl.collect as collect_mod
+
+    monkeypatch.setattr(collect_mod, "validate_url", lambda u: u)
+    monkeypatch.setattr(
+        collect_mod,
+        "pinned_target",
+        lambda u: (u, {"Host": "example.com"}, {"sni_hostname": "example.com"}),
+    )
+    captured = {}
+
+    class FakeClient:
+        def get(self, target, *, headers, extensions):
+            captured["headers"] = headers
+            return FakeResponse("<html><head><title>t</title></head><body></body></html>")
+
+    record, _ = fetch_one(
+        "https://example.com/",
+        client=FakeClient(),
+        extra_headers={"Authorization": "Bearer secret-token"},
+    )
+    assert captured["headers"]["Authorization"] == "Bearer secret-token"
+    assert record.status_code == 200
+
+
+def test_the_spider_resolves_credentials_per_hop_by_that_hops_own_host(monkeypatch):
+    """A stale host from an earlier hop must never decide a later request's headers."""
+    import seohead.crawl.spider as spider_mod
+
+    seen_hosts = []
+    monkeypatch.setattr(
+        spider_mod,
+        "resolve_credential_headers",
+        lambda entries, host: seen_hosts.append(host) or {},
+    )
+    site = {
+        "https://example.com/robots.txt": FakeResponse("User-agent: *\n", ct="text/plain"),
+        "https://example.com/": page("/a"),
+        "https://example.com/a": page(),
+    }
+    crawl_site(
+        "https://example.com/",
+        min_delay=0,
+        sleeper=lambda _s: None,
+        fetcher=lambda u: site.get(u) or FakeResponse("", 404),
+        credential_headers=[{"host": "example.com", "headers": {}}],
+    )
+    assert seen_hosts == ["example.com", "example.com"]
+
+
+def test_list_mode_never_resolves_one_hosts_credentials_for_another(monkeypatch):
+    """The direct shape of "dropped on cross-host redirect": a list crawl can name
+    URLs on several hosts, and a credential bound to one must not follow to another.
+    """
+    import seohead.crawl.collect as collect_mod
+
+    seen_hosts = []
+    monkeypatch.setattr(
+        collect_mod,
+        "resolve_credential_headers",
+        lambda entries, host: seen_hosts.append(host) or {},
+    )
+    collect_urls(
+        ["https://a.example.com/", "https://b.example.com/"],
+        min_delay=0,
+        sleeper=lambda _s: None,
+        fetcher=lambda _u: page(),
+        credential_headers=[{"host": "a.example.com", "headers": {}}],
+    )
+    assert seen_hosts == ["a.example.com", "b.example.com"]

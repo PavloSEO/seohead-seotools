@@ -60,6 +60,15 @@ DEFAULTS: dict[str, Any] = {
         "user_agent": "",  # empty = the toolkit's identifiable default
         "headers": {},
         "retry_on_timeout": 0,
+        # Each entry is {"host": "...", "headers": {"Authorization": "env:VAR"}}.
+        # Bound to one host and resolved from the environment — never a bare
+        # value in the file — so a credential cannot leak into a config export
+        # and cannot be sent to a host it was never meant for.
+        "credential_headers": [],
+        # Authenticated crawling clicks every link while logged in, including
+        # ones that log out, publish, or delete. Requiring this flag once
+        # credential_headers is non-empty makes that risk an explicit choice.
+        "credentials_acknowledged": False,
     },
     "robots": {
         # respect: obey. report_only: fetch, report what would be blocked, crawl
@@ -111,6 +120,9 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "http.user_agent",
         "http.headers",
         "http.retry_on_timeout",
+        # Which host gets sent extra access changes what the crawl can reach.
+        "http.credential_headers",
+        "http.credentials_acknowledged",
         "robots.policy",
         "robots.user_agent_token",
         "robots.unavailable_means_stop",
@@ -154,6 +166,11 @@ DESCRIPTIONS: dict[str, str] = {
     "http.user_agent": "Request User-Agent string; empty uses the toolkit's identifiable default.",
     "http.headers": "Extra request headers to send with every fetch.",
     "http.retry_on_timeout": "Number of retries after a request times out.",
+    "http.credential_headers": (
+        "Host-bound extra headers for authenticated crawling: "
+        "[{'host': ..., 'headers': {name: 'env:VAR_NAME'}}]."
+    ),
+    "http.credentials_acknowledged": "Must be true for http.credential_headers to take effect.",
     "robots.policy": (
         "'respect' (obey), 'report_only' (fetch, report what would be blocked, crawl "
         "anyway), or 'ignore' (do not fetch robots.txt)."
@@ -179,6 +196,19 @@ ENV_OVERRIDES: dict[str, str] = {
 
 ROBOTS_POLICIES = ("respect", "report_only", "ignore")
 INTERNAL_SCOPES = ("host", "registrable_domain")
+
+# A reference to an environment variable, never an inline secret. This is the
+# only value shape a credential header may carry in a config file.
+_ENV_REF_RE = re.compile(r"^env:([A-Za-z_][A-Za-z0-9_]*)$")
+
+# Applied automatically to the crawl scope once credential_headers is set. A
+# crawler clicks every link, and while logged in that includes links that log
+# out, publish, or delete — this is a default, not a guarantee, and a caller
+# who has audited the site can still widen scope.exclude_patterns.
+DESTRUCTIVE_PATH_PATTERNS: tuple[str, ...] = (
+    r"(?i)/(log[-_]?out|sign[-_]?out)(?:/|$|\?)",
+    r"(?i)/(delete|remove|destroy|unsubscribe)(?:/|$|\?)",
+)
 
 
 class ConfigError(ValueError):
@@ -266,6 +296,42 @@ def validate(config: dict[str, Any]) -> None:
             "a crawl needs at least one budget: max_urls, max_depth or max_crawl_seconds"
         )
 
+    _validate_credential_headers(config["http"])
+
+
+def _validate_credential_headers(http: dict[str, Any]) -> None:
+    entries = http["credential_headers"]
+    if not entries:
+        return
+    if not http["credentials_acknowledged"]:
+        raise ConfigError(
+            "http.credential_headers is set but http.credentials_acknowledged is not true; "
+            "a crawler clicks every link, including ones that log out, publish, or delete, "
+            "so authenticated crawling needs an explicit acknowledgement"
+        )
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("host"):
+            raise ConfigError(
+                "each http.credential_headers entry needs a host binding; an unbound "
+                "credential is sent on every request and the leak is silent"
+            )
+        host = entry["host"]
+        headers = entry.get("headers")
+        if not isinstance(headers, dict) or not headers:
+            raise ConfigError(f"http.credential_headers entry for {host!r} needs headers")
+        for name, value in headers.items():
+            match = _ENV_REF_RE.match(str(value))
+            if not match:
+                raise ConfigError(
+                    f"http.credential_headers header {name!r} for {host!r} must reference an "
+                    "environment variable as 'env:VAR_NAME', never an inline value"
+                )
+            if match.group(1) not in os.environ:
+                raise ConfigError(
+                    f"http.credential_headers for {host!r} references environment variable "
+                    f"{match.group(1)!r}, which is not set"
+                )
+
 
 def load(path: str | None = None, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """Resolve the configuration: defaults, then file, then environment, then arguments.
@@ -299,18 +365,64 @@ def load(path: str | None = None, overrides: dict[str, Any] | None = None) -> di
         if value is not None:
             _set_path(config, setting, value)
 
+    if config["http"]["credential_headers"]:
+        existing = config["scope"]["exclude_patterns"]
+        config["scope"]["exclude_patterns"] = existing + [
+            p for p in DESTRUCTIVE_PATH_PATTERNS if p not in existing
+        ]
+
     validate(config)
     return config
+
+
+def _redact_credential_headers(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Host and header names are what makes a run reproducible; values are not."""
+    return [
+        {
+            "host": entry.get("host", ""),
+            "headers": dict.fromkeys(entry.get("headers") or {}, "REDACTED"),
+        }
+        for entry in entries
+    ]
 
 
 def manifest(config: dict[str, Any]) -> dict[str, Any]:
     """The resolved values of every setting that can change what was found.
 
     Resolved values, not their sources: a report that says "the default was used"
-    is not reproducible once the default moves.
+    is not reproducible once the default moves. Credential values are the one
+    exception — the manifest is meant to be shared for review, not to carry
+    secrets, so only the host and header names survive here.
     """
     flat = _flatten(config)
-    return {path: flat[path] for path in sorted(RESULTS_AFFECTING) if path in flat}
+    out = {}
+    for path in sorted(RESULTS_AFFECTING):
+        if path not in flat:
+            continue
+        value = flat[path]
+        if path == "http.credential_headers":
+            value = _redact_credential_headers(value)
+        out[path] = value
+    return out
+
+
+def resolve_credential_headers(entries: list[dict[str, Any]], host: str) -> dict[str, str]:
+    """Headers bound to ``host``, with their environment references resolved.
+
+    Resolved fresh for each request rather than carried from a previous one:
+    a redirect to a different host asks this again and gets nothing back,
+    which is what keeps a credential from crossing a cross-host redirect.
+    """
+    host = (host or "").lower()
+    resolved: dict[str, str] = {}
+    for entry in entries or ():
+        if (entry.get("host") or "").lower() != host:
+            continue
+        for name, ref in (entry.get("headers") or {}).items():
+            match = _ENV_REF_RE.match(str(ref))
+            if match:
+                resolved[name] = os.environ.get(match.group(1), "")
+    return resolved
 
 
 def describe_settings() -> list[dict[str, Any]]:
