@@ -228,6 +228,7 @@ def crawl_site(
     import os
     from datetime import datetime, timezone
 
+    from seohead.crawl import cache as http_cache
     from seohead.crawl import settings as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
@@ -263,6 +264,15 @@ def crawl_site(
         else None
     )
     max_seconds = settings["limits"]["max_crawl_seconds"]
+    # One cache per run, shared by every worker thread a concurrent crawl starts — see
+    # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
+    # cache.invalidate. A directory this session cannot trust (missing, world-writable) degrades
+    # to no cache rather than failing the run.
+    cache = http_cache.build(
+        http_cache.resolve_dir(),
+        mode=settings["cache"]["mode"],
+        invalidate=settings["cache"]["invalidate"],
+    )
 
     sitemap_seed = {"sitemap_url": None, "declared": []}
     if url and (sitemap or settings["sitemaps"]["auto_discover"]):
@@ -286,6 +296,7 @@ def crawl_site(
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
             concurrency=settings["speed"]["concurrency"],
+            cache=cache,
         )
         discovery = {
             "mode": "spider",
@@ -310,6 +321,7 @@ def crawl_site(
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
+            cache=cache,
         )
         discovery = {"mode": "list"}
 
@@ -395,6 +407,11 @@ def crawl_site(
             # Without these two reports on the same site are not comparable.
             "crawl_config": crawl_config.manifest(settings),
             "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
+            # "The site is fine" and "the site was fine when we last looked" are different
+            # claims — cache_replay says which one this report can support, and cache_stats
+            # says how much of the corpus was measured now versus remembered.
+            "cache_replay": result.cache_replay,
+            "cache_stats": result.cache_stats,
             # Whether this run is a false-green that must not reach a health
             # score (#18), and the escalation that ran (if any) to check.
             "requires_rendering": requires_rendering,
@@ -420,6 +437,11 @@ def crawl_site(
         "summary": audit["summary"],
         "checks_skipped": len(audit["run"].get("checks_skipped", [])),
         "out_dir": out_dir,
+        # See the matching keys in audit["run"] for why these are surfaced twice: a caller
+        # reading only this dict (no out_dir, no audit.json) must still be able to tell a
+        # replayed answer from a measured one.
+        "cache_replay": result.cache_replay,
+        "cache_stats": result.cache_stats,
         "requires_rendering": requires_rendering,
         "requires_rendering_reason": requires_rendering_reason,
         "render_escalation": render_summary,

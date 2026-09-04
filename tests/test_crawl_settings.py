@@ -131,6 +131,7 @@ def test_free_form_headers_are_a_leaf_not_a_branch(tmp_path):
         ({"limits.max_depth": -1}, "max_depth"),
         ({"speed.min_delay_seconds": -1}, "min_delay_seconds"),
         ({"speed.concurrency": 0}, "concurrency"),
+        ({"cache.mode": "always"}, "cache.mode"),
         ({"rendering.mode": "always"}, "rendering.mode"),
         ({"rendering.browser.viewport": "tablet"}, "rendering.browser.viewport"),
         ({"rendering.browser.wait_until": "instant"}, "rendering.browser.wait_until"),
@@ -148,6 +149,25 @@ def test_free_form_headers_are_a_leaf_not_a_branch(tmp_path):
 def test_invalid_values_are_refused(override, message):
     with pytest.raises(cfg.ConfigError, match=message):
         cfg.load(overrides=override)
+
+
+def test_cache_defaults_to_off():
+    """No side effect (a cache directory written outside any explicit output directory) may
+    appear behind a default; caching is opt-in."""
+    resolved = cfg.load()
+    assert resolved["cache"]["mode"] == "off"
+    assert resolved["cache"]["invalidate"] is False
+
+
+def test_cache_mode_and_invalidate_are_results_affecting():
+    assert "cache.mode" in cfg.RESULTS_AFFECTING
+    assert "cache.invalidate" in cfg.RESULTS_AFFECTING
+
+
+def test_cache_mode_is_configurable_through_a_file(tmp_path):
+    path = tmp_path / "crawl.json"
+    path.write_text(json.dumps({"cache": {"mode": "replay"}}))
+    assert cfg.load(str(path))["cache"]["mode"] == "replay"
 
 
 def test_a_missing_file_is_refused_rather_than_ignored():

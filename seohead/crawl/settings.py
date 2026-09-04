@@ -98,6 +98,19 @@ DEFAULTS: dict[str, Any] = {
         "dir": "",
         "write_pages_jsonl": True,
     },
+    "cache": {
+        # off (default): no cache, reads or writes — a crawl has exactly the side effects it
+        # had before this setting existed, per this project's own rule that a side effect (here,
+        # writing response bodies to a fixed location outside any explicit output directory)
+        # must be explicit, never hidden behind a default. live: real HTTP freshness semantics
+        # (max-age/Expires, ETag/Last-Modified revalidation). replay: serve whatever is on disk
+        # for a URL that already has an entry, at any age, without ever revalidating it — a URL
+        # with no entry is still fetched live. See seohead.crawl.cache for the full policy.
+        "mode": "off",
+        # Force every lookup to miss (a live measurement happens) while still writing the
+        # result back to the cache. A deliberate hard refresh, distinct from mode="off".
+        "invalidate": False,
+    },
     "rendering": {
         # raw: static HTML only, the crawler's original behaviour. legacy_
         # fragment: honour a page's own opt-in to the deprecated "#!" / "
@@ -215,6 +228,10 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "speed.min_delay_seconds",
         "speed.adaptive",
         "speed.stop_after_consecutive_timeouts",
+        # A replay run can answer entirely from a stale cache; a forced-invalidate run trusted
+        # nothing on disk. Both change whether the findings describe the site now or earlier.
+        "cache.mode",
+        "cache.invalidate",
         # Every rendering setting below changes what the crawl finds on the
         # patterns it escalates -- see seohead.tools.render's module
         # docstring on why raw and rendered numbers are not comparable
@@ -297,6 +314,15 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "output.dir": "Directory to write pages.jsonl and audit.json into; empty writes nothing to disk.",
     "output.write_pages_jsonl": "Write one JSON line per fetched page to pages.jsonl.",
+    "cache.mode": (
+        "'off' (default: no cache), 'live' (real HTTP freshness: max-age/Expires, "
+        "ETag/Last-Modified revalidation), or 'replay' (serve any cached entry regardless of "
+        "age, without revalidating; a URL with no entry yet is still fetched live)."
+    ),
+    "cache.invalidate": (
+        "Force every cache lookup to miss (a live measurement happens) while still writing the "
+        "result back to the cache. Does not disable the cache; 'cache.mode=off' does that."
+    ),
     "rendering.mode": (
         "'raw' (static HTML only), 'legacy_fragment' (honour a page's own "
         "'_escaped_fragment_' opt-in), or 'js' (execute JavaScript in a headless "
@@ -362,6 +388,7 @@ ENV_OVERRIDES: dict[str, str] = {
 
 ROBOTS_POLICIES = ("respect", "report_only", "ignore")
 INTERNAL_SCOPES = ("host", "registrable_domain")
+CACHE_MODES = ("live", "off", "replay")
 RENDER_MODES = ("raw", "legacy_fragment", "js")
 RENDER_VIEWPORTS = ("desktop", "mobile")
 RENDER_WAIT_UNTIL = ("load", "domcontentloaded", "networkidle")
@@ -442,6 +469,9 @@ def validate(config: dict[str, Any]) -> None:
     scope = config["scope"]["internal"]
     if scope not in INTERNAL_SCOPES:
         raise ConfigError(f"scope.internal must be one of {INTERNAL_SCOPES}, got {scope!r}")
+    cache_mode = config["cache"]["mode"]
+    if cache_mode not in CACHE_MODES:
+        raise ConfigError(f"cache.mode must be one of {CACHE_MODES}, got {cache_mode!r}")
     # A pattern that does not compile would otherwise fail mid-crawl, after the
     # site has already been asked for a few hundred pages.
     for key in ("include_patterns", "exclude_patterns"):
