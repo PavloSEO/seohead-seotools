@@ -64,6 +64,32 @@ sources are credited in `THIRD_PARTY_NOTICES.md`.
 The test suite does not depend on live sites or provider availability. Network boundaries are
 tested with fakes and pure verdict functions; live verification is a separate release step.
 
+## Content-area scoping is per-check, not a blanket flip
+
+Restricting text extraction to a content area (nav/footer excluded) had to be decided per
+consumer rather than applied everywhere, because the same whole-document text serves different
+purposes:
+
+- `word_count`, `content_text`, and the content-area strategy on `parse` output are scoped —
+  a mega-menu must not make a thin page look substantial, and this changes nothing about link
+  discovery, which always runs over the whole document.
+- `citability-check`'s URL path is scoped: it scores `markdown_extract`'s content-area Markdown,
+  not the parser's `text` field. `text` is a single collapsed line with no paragraph or heading
+  breaks at all, so scoring it directly would have silently zeroed the Answer-Blocks and
+  Structure-Quality dimensions for every live page regardless of content-area scoping — Markdown
+  fixes both problems at once. `text` passed directly to `citability-check` is untouched, since
+  the caller chose exactly what to score.
+- The parser's `text` field itself stays whole-document. `page_facts.py`'s schema-evidence
+  extraction (`sameAs` social links, breadcrumbs, price/rating heuristics) depends on facts that
+  legitimately live in header/footer widgets a content area would exclude; scoping it would
+  silently cost that evidence.
+- The Screaming Frog crawl audit's `THIN_CONTENT`/`LOW_TEXT_RATIO` checks stay unscoped: their
+  `word_count`/`text_ratio` come from Screaming Frog's own export columns, third-party data the
+  toolkit has no raw HTML to rescope without re-fetching every page — which would defeat the
+  zero-request, offline-corpus design of the SF audit path. The toolkit's own crawler (`crawl-site`)
+  needs no such carve-out: its word count already reads from `parser.parse_html`, so it inherited
+  the content-area scoping for free.
+
 ## Public history is intentionally clean
 
 The public repository starts from a reviewed snapshot. Internal experiments, research journals,

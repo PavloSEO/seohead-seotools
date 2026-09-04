@@ -568,8 +568,14 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["text"] = text
         # Word count is scoped to the content area (nav/footer excluded by
         # default) so a mega-menu can't make a thin page look substantial;
-        # "text" above stays whole-body for callers that rely on it (e.g.
-        # citability, price/rating heuristics). Link discovery never sees the
+        # "text" above stays whole-body on purpose. page_facts.py's schema
+        # evidence (sameAs social links, breadcrumbs, price/rating regexes)
+        # depends on facts that legitimately live in header/footer widgets the
+        # content area excludes, so scoping "text" would silently cost that
+        # evidence. citability_check(url=...) does not read this field either
+        # way: it scores markdown_extract's content-area Markdown instead,
+        # because "text" is a single collapsed line with no paragraph or
+        # heading breaks for the scorer to find. Link discovery never sees the
         # resolved root, so restricting text never restricts the crawl.
         content_config = options.get("content_area") if isinstance(options, dict) else None
         content_root, strategy = resolve_content_area(soup, content_config)
@@ -605,6 +611,46 @@ def _rel_has(token: str) -> Callable[[Any], bool]:
 # ── FETCH + PARSE ─────────────────────────────────────────────────────────────
 
 
+def fetch_html(url: str, timeout: float | None = None) -> dict[str, Any]:
+    """Fetch ``url`` and return its raw response, unparsed.
+
+    ``ok`` reports whether the *request* succeeded, not the HTTP status: a
+    404 or 500 still returns ``ok: True`` with the body it sent, exactly
+    like ``parse_url`` has always tolerated (a soft-404 page's own markup is
+    evidence, not noise). Only a transport failure (DNS, TLS, timeout, ...)
+    sets ``ok: False`` with an ``error``. Callers that need something other
+    than ``parse_html``'s extraction (Markdown rendering, boilerplate
+    hashing, a content-area-only citability score) fetch through this
+    function rather than duplicating the request logic.
+
+    Returns ``{"ok", "url", "final_url", "status_code", "html"}`` on a
+    completed request, or ``{"ok": False, "url", "error"}`` on a transport
+    failure.
+    """
+    try:
+        resolved_timeout = float(timeout or DEFAULT_TIMEOUT)
+    except (TypeError, ValueError):
+        resolved_timeout = DEFAULT_TIMEOUT
+    try:
+        client, _http2_capable = http_client(
+            resolved_timeout,
+            headers=DEFAULT_HEADERS,
+            follow_redirects=True,
+            max_redirects=_MAX_REDIRECTS,
+        )
+        with client:
+            response = client.get(url)
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": str(response.url),
+            "status_code": response.status_code,
+            "html": response.text,
+        }
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
+
+
 def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """Fetch ``url`` and return its extracted SEO data.
 
@@ -623,31 +669,17 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     rather than raising.
     """
     opts = options or {}
-    try:
-        timeout = float(opts.get("timeout") or DEFAULT_TIMEOUT)
-    except (TypeError, ValueError):
-        timeout = DEFAULT_TIMEOUT
-
-    try:
-        client, _http2_capable = http_client(
-            timeout,
-            headers=DEFAULT_HEADERS,
-            follow_redirects=True,
-            max_redirects=_MAX_REDIRECTS,
-        )
-        with client:
-            response = client.get(url)
-        final_url = str(response.url)
-        data = parse_html(response.text, final_url, options)
-        return {
-            "url": url,
-            "final_url": final_url,
-            "status_code": response.status_code,
-            "ok": response.is_success,
-            **data,
-        }
-    except Exception as exc:
-        return {"url": url, "ok": False, "error": str(exc)}
+    fetched = fetch_html(url, timeout=opts.get("timeout"))
+    if not fetched["ok"]:
+        return fetched
+    data = parse_html(fetched["html"], fetched["final_url"], options)
+    return {
+        "url": url,
+        "final_url": fetched["final_url"],
+        "status_code": fetched["status_code"],
+        "ok": 200 <= fetched["status_code"] < 300,
+        **data,
+    }
 
 
 # ── SMOKE TEST (no network) ───────────────────────────────────────────────────
