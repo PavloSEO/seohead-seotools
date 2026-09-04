@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-52 callable tools · 114 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
+53 callable tools · 114 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -61,7 +61,7 @@ No client data is included.
 |---|---|---|
 | Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 114-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 47 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| A tool-calling AI agent | `seohead mcp` | Exposes 48 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -77,7 +77,7 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
-### 47 core CLI commands and MCP tools
+### 48 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |
 |---|---:|---|
@@ -201,7 +201,7 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **47 `seo_*` tools plus five `sf_*` tools**. The 47 core tools share the tested
+The server exposes **48 `seo_*` tools plus five `sf_*` tools**. The 48 core tools share the tested
 handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
 opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
 return paths instead of dumping large reports into an agent context.

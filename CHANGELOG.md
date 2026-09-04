@@ -4,7 +4,18 @@ All notable public changes are documented here.
 
 ## Unreleased
 
-<<<<<<< HEAD
+- Wire the ten remaining crawler settings that were validated, written into the run manifest, and
+  described by `--config-help` but read by nothing (#63): `limits.max_response_bytes`,
+  `speed.max_delay_seconds`, `robots.user_agent_token`, and `speed.stop_after_consecutive_timeouts`
+  now configure behaviour that was previously hardcoded; `robots.unavailable_means_stop` now
+  governs whether an unreachable or 5xx robots.txt stops the crawl or is treated as unrestricted
+  (previously an unreachable robots.txt never stopped the crawl regardless of policy, while a 5xx
+  one always did — now both are the same "unavailable" case, gated by the setting);
+  `limits.max_url_length`, `limits.max_query_variants_per_path`, `http.retry_on_timeout`, and
+  `discovery.follow_nofollow` are newly-implemented behaviour. `http.user_agent` is now applied to
+  real requests instead of always sending the toolkit's default. Add `crawl-describe-settings`
+  (CLI) and `seo_crawl_describe_settings` (MCP) so an agent can discover the configuration surface
+  without a filesystem (#23).
 - Add custom search (`tools/custom_search.py`) and custom extraction
   (`tools/custom_extract.py`) over an already-crawled corpus: presence/absence filters
   (raw source, visible text, a named CSS element, or an XPath node) and CSS/XPath/regex
@@ -20,7 +31,6 @@ All notable public changes are documented here.
   aggregated site-wide by `crawl/linkgraph.py`'s `inlink_composition`, which now feeds a new
   `INLINK_BOILERPLATE_ONLY` audit finding for pages linked only from boilerplate. Registry grows
   from 104 to 105 checks.
-=======
 - Add eight post-crawl second-pass computations that only become answerable once a crawl is
   complete (issue #15): an internal link score computed from the `all_inlinks` edge graph
   (`LOW_LINK_SCORE`); a canonical target no hyperlink ever points to (`UNLINKED_CANONICAL`);
@@ -34,7 +44,6 @@ All notable public changes are documented here.
   the two new "unlinked" checks are now withheld — reported as a named skip, not a finding — on a
   crawl the aggregator has marked partial, since "nothing links here" is unprovable on a
   truncated crawl. Registry grows from 104 to 114 checks.
->>>>>>> origin/main
 - Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
   verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
   missing x-default, duplicate entries, non-canonical targets), two robots directives

@@ -212,6 +212,12 @@ def test_resize_to_content_off_never_resizes(fake_stack):
     assert fake_stack["page"].viewport_calls == []
 
 
+# The dotted DEFAULTS paths behind the four tests below, spelled out so the coverage canary in
+# test_crawl_settings_wired.py can see that they are exercised behaviourally here:
+#   rendering.browser.flatten_shadow_dom
+#   rendering.browser.flatten_iframes
+#   rendering.browser.mobile_emulation
+#   rendering.browser.touch_emulation
 def test_flatten_shadow_dom_evaluates_the_flatten_script(fake_stack):
     render_document("https://example.com/", _rendering_config(flatten_shadow_dom=True))
     assert any("shadowRoot" in call for call in fake_stack["page"].evaluated)

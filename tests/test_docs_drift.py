@@ -98,14 +98,14 @@ def test_skills_and_docs_reference_only_existing_commands():
 def test_documented_product_counts_match_the_registries():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     provenance = (ROOT / "PROVENANCE.md").read_text(encoding="utf-8")
-    assert len(COMMANDS) == len(HANDLERS) == 47
+    assert len(COMMANDS) == len(HANDLERS) == 48
     assert len(_sf_tool_names()) == 5
     assert len(CHECKS) == 114
     assert len(TECHNICAL_SKILLS) == 22
     assert len(PACKAGED_SKILLS) == 7
     for text in (readme, provenance):
-        assert "47" in text and "114" in text and "five" in text.lower()
-    assert "52 callable tools" in readme
+        assert "48" in text and "114" in text and "five" in text.lower()
+    assert "53 callable tools" in readme
     assert "29 workflow skills" in readme
     assert (ROOT / "CITATION.cff").is_file()
 
