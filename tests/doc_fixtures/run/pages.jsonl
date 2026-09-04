@@ -1,0 +1,5 @@
+{"url": "https://example.com/p0", "status_code": 200, "content_type": "text/html; charset=utf-8", "size_bytes": 12000, "word_count": 420, "text_ratio": 22.5, "representation": "static"}
+{"url": "https://example.com/p1", "status_code": 200, "content_type": "text/html; charset=utf-8", "size_bytes": 12001, "word_count": 420, "text_ratio": 22.5, "representation": "static"}
+{"url": "https://example.com/p2", "status_code": 200, "content_type": "text/html; charset=utf-8", "size_bytes": 12002, "word_count": 420, "text_ratio": 22.5, "representation": "static"}
+{"url": "https://example.com/p3", "status_code": 200, "content_type": "text/html; charset=utf-8", "size_bytes": 12003, "word_count": 420, "text_ratio": 22.5, "representation": "static"}
+{"url": "https://example.com/image.png", "status_code": 200, "content_type": "image/png", "size_bytes": 51234, "word_count": 0, "text_ratio": null, "representation": "static"}

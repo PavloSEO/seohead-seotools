@@ -17,7 +17,9 @@ from seohead.sf.core.registry import CHECKS
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TECHNICAL_SKILLS = sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md"))
 PACKAGED_SKILLS = sorted((ROOT / "seohead" / "skills").glob("*/SKILL.md"))
-DOCS = sorted((ROOT / "docs").glob("*.md"))
+# Every level: docs/scenarios/ is part of the public contract too, so the English-only
+# gate and the count checks apply to it like anything else under docs/.
+DOCS = sorted((ROOT / "docs").glob("**/*.md"))
 PUBLIC_MARKDOWN = [
     ROOT / "README.md",
     ROOT / "AGENTS.md",

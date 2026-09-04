@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "tool": "seohead",
+  "run": {
+    "input_mode": "crawl",
+    "source": "https://example.com/"
+  },
+  "summary": {
+    "by_check": {
+      "THIN_CONTENT": 1
+    },
+    "totals": {
+      "issues": 1
+    }
+  },
+  "issues": [
+    {
+      "id": "ISSUE-000001",
+      "check": "THIN_CONTENT",
+      "severity": "warning",
+      "target_url": "https://example.com/p3",
+      "message": "Page has little body text"
+    }
+  ],
+  "pages": []
+}
