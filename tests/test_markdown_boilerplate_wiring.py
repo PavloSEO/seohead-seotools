@@ -98,7 +98,7 @@ def test_markdown_extract_from_html_is_pure_and_scoped():
     assert "Sign up now" not in out["content_markdown"]  # nav excluded
     assert "newsletter" not in out["content_markdown"]  # footer excluded
     assert "Sign up now" in out["full_markdown"]  # full rendering keeps it
-    assert out["content_area_strategy"] == "default_body"
+    assert out["content_area_strategy"] == "auto_main"
 
 
 def test_markdown_extract_from_url_fetches_then_renders(monkeypatch):
@@ -130,7 +130,11 @@ def test_markdown_extract_requires_url_or_html():
 
 
 def test_markdown_extract_honors_content_area_config():
-    scoped = handlers.markdown_extract(html=NAV_HTML, content_area={"exclude_tags": []})
+    # Scoped to the body rather than the auto-detected <main>, so the disabled exclusions are
+    # what decides whether the nav survives.
+    scoped = handlers.markdown_extract(
+        html=NAV_HTML, content_area={"root_selector": "body", "exclude_tags": []}
+    )
     assert "Sign up now" in scoped["content_markdown"]  # exclusions disabled
 
 

@@ -17,11 +17,18 @@ Configuration (all keys optional, passed as one dict):
   root_selector     -- CSS selector for the region to scope exclusions within.
       Defaults to the document ``<body>``.
   exclude_tags      -- tag names removed from the resolved root before text is
-      read. Defaults to ``DEFAULT_EXCLUDE_TAGS`` (nav, footer); pass ``[]`` to
-      keep everything.
+      read. Defaults to ``DEFAULT_EXCLUDE_TAGS`` (nav, header, aside, footer);
+      pass ``[]`` to keep everything.
   exclude_selectors -- CSS selectors (by class, id, or anything else) removed
       the same way, for boilerplate that is neither a ``<nav>`` nor a
       ``<footer>``.
+
+With no selector configured the region is detected from the document's own semantics —
+``<main>``, ``[role="main"]``, then ``<article>`` — rather than defaulting to the whole body.
+HTML5 defines those elements for exactly this, so this is a documented contract rather than a
+heuristic, and the strategy names which one matched so a reader can disagree with it. On a live
+WordPress post the whole-body default counted 433 words where ``main`` counts 429: 126 of them
+(29%) were template text, including a skip-to-content link and the word "header" (issue #96).
 
 This module is pure and performs no network access.
 """
@@ -33,9 +40,21 @@ from typing import Any
 
 from bs4 import BeautifulSoup, Tag
 
-# Menus and footers are boilerplate, not content, on most sites. Sites that
-# name their menu or footer differently use exclude_selectors instead.
-DEFAULT_EXCLUDE_TAGS = ("nav", "footer")
+# Menus, mastheads, sidebars and footers are boilerplate, not content, on most sites. Sites
+# that name theirs differently use exclude_selectors instead. header and aside are here because
+# stripping only nav and footer missed every masthead, breadcrumb bar and promo block that is
+# not wrapped in one of those two elements — on the page measured in #96, neither the skip link
+# nor the header block was inside a <nav>.
+DEFAULT_EXCLUDE_TAGS = ("nav", "header", "aside", "footer")
+
+# Tried in order when nothing is configured. HTML5 gives <main> (and its ARIA equivalent) for
+# the document's main content and <article> for a self-contained item within it; a CMS that
+# emits semantic markup gets a correct answer with no configuration at all.
+AUTO_STRATEGIES = (
+    ("main", "auto_main"),
+    ('[role="main"]', "auto_role_main"),
+    ("article", "auto_article"),
+)
 
 
 def _strip(root: Tag, exclude_tags: Any, exclude_selectors: Any) -> None:
@@ -63,9 +82,16 @@ def find_content_root(soup: BeautifulSoup, config: dict[str, Any] | None = None)
       "include_selector"      -- include_selector was given and matched.
       "root_selector"         -- root_selector was given (no include_selector
                                   or it did not match) and matched.
-      "default_body"          -- neither selector was configured.
+      "auto_main"             -- no selector configured; a <main> matched.
+      "auto_role_main"        -- no selector configured; a [role="main"] matched.
+      "auto_article"          -- no selector configured; an <article> matched.
+      "default_body"          -- no selector configured and none of the three
+                                  semantic containers is present.
       "fallback_default_body" -- a selector was configured but matched
                                   nothing, so the whole body was used instead.
+
+    Configuration always wins over detection: an explicit selector is an override, not the
+    only way to get a sane answer.
     """
     config = config or {}
     include_selector = config.get("include_selector")
@@ -84,6 +110,16 @@ def find_content_root(soup: BeautifulSoup, config: dict[str, Any] | None = None)
         if match is not None:
             return match, "root_selector"
         requested_but_missing = True
+
+    if not requested_but_missing:
+        # Nothing was asked for, so ask the document. Only reached when neither selector was
+        # configured — a configured-but-missing selector falls straight through to the body,
+        # because silently substituting a different region for the one that was named would
+        # hide the mistake this strategy field exists to show.
+        for selector, strategy in AUTO_STRATEGIES:
+            match = soup.select_one(selector)
+            if match is not None:
+                return match, strategy
 
     strategy = "fallback_default_body" if requested_but_missing else "default_body"
     return soup.body or soup, strategy

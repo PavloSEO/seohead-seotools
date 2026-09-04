@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Detect the content area from the document's own semantics when nothing is configured
+  (#96): `main`, then `[role="main"]`, then `article`, recording which one matched as
+  `auto_main` / `auto_role_main` / `auto_article`. The previous default — the whole body
+  minus the `nav` and `footer` tags — counted 126 template words out of 433 on a live
+  WordPress post (29%), including a skip-to-content link, and that inflation feeds
+  `THIN_CONTENT` and `LOW_TEXT_RATIO` in the same direction on every page of a template.
+  `header` and `aside` join `nav` and `footer` in `DEFAULT_EXCLUDE_TAGS` for the fallback
+  path. A configured selector still wins, and one that matches nothing still falls back to
+  `fallback_default_body` rather than silently auto-detecting a different region.
 - `URL_NOT_IN_SITEMAP` now compares pages with pages (#94). It compared a sitemap's URLs
   against every destination in the crawl's link graph, so on a live 124-page site it fired
   392 times — 362 image files a gallery links to directly, five off-host links, and 30 URLs
