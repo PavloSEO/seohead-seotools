@@ -75,7 +75,7 @@ def test_forwarded_keywords_exist_on_the_handler(tool, handler_name, forwarded):
 def test_crawl_site_accepts_every_robots_policy():
     # The boolean this tool used to take could not express report_only, which is
     # why the handler takes a policy instead.
-    from seohead.crawl.config import ROBOTS_POLICIES
+    from seohead.crawl.settings import ROBOTS_POLICIES
 
     accepted = inspect.signature(handlers.crawl_site).parameters
     assert "robots" in accepted
