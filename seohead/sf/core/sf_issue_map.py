@@ -345,12 +345,12 @@ CATEGORIES: dict[str, list[Entry]] = {
         _t("Rich Result Validation Warnings", "schema-check"),
     ],
     "Sitemaps": [
-        _g("XML Sitemap With Over 50k URLs", "the 50,000-URL protocol limit is not asserted"),
-        _g("XML Sitemap Over 50mb", "the 50 MB protocol limit is not asserted"),
+        _c("XML Sitemap With Over 50k URLs", "SITEMAP_TOO_MANY_URLS"),
+        _c("XML Sitemap Over 50mb", "SITEMAP_TOO_LARGE"),
         _c("URLs Not In Sitemap", "URL_NOT_IN_SITEMAP"),
         _c("Orphan URLs", "SITEMAP_ORPHAN", "ORPHAN_PAGE"),
         _c("Non-Indexable URLs In Sitemap", "SITEMAP_URL_NON_INDEXABLE"),
-        _g("URLs In Multiple Sitemaps", "duplicates across child sitemaps are counted, not named"),
+        _c("URLs In Multiple Sitemaps", "SITEMAP_URL_DUPLICATED"),
     ],
     "PageSpeed": [
         _c("Document Request Latency", "SLOW_RESPONSE"),

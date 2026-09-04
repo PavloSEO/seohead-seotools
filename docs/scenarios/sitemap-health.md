@@ -11,7 +11,7 @@ canonical. Every one of those tells a crawler that the list is not maintained.
 
 ## Covers
 
-- **Sitemaps** — Non-Indexable URLs In Sitemap
+- **Sitemaps** — Non-Indexable URLs In Sitemap · XML Sitemap With Over 50k URLs · XML Sitemap Over 50mb · URLs In Multiple Sitemaps
 
 ## The chain
 
@@ -25,7 +25,20 @@ The result carries `count` and, per entry, the raw `loc`, a normalized form and 
 `count` first: a sitemap that declares far fewer URLs than the site has pages is a different
 problem from one that declares too many.
 
-**2. Confirm the site actually points at the sitemap you just read.**
+**2. Check the two limits that make a sitemap invalid rather than merely large.**
+
+The protocol caps one file at 50,000 URLs and 50 MB uncompressed. Over either, the file is not
+"big" — it is invalid, and a search engine may take the first 50,000 entries and discard the
+rest, silently, with nothing the site owner can see. `SITEMAP_TOO_MANY_URLS` and
+`SITEMAP_TOO_LARGE` fire against the individual child sitemap rather than the index, because
+"your sitemap is too big" is not actionable when the index has forty children. The size is
+measured after decompression, so gzipping an over-long file does not fix it.
+
+A third one lives here too: `SITEMAP_URL_DUPLICATED` names a URL declared in more than one
+sitemap, with both document URLs in the details. It is usually a generator that ran twice, and
+it distorts every count taken from the declared set.
+
+**3. Confirm the site actually points at the sitemap you just read.**
 
 ```bash
 seohead robots-check --url https://example.com
@@ -34,19 +47,19 @@ seohead robots-check --url https://example.com
 The `sitemaps` array is what `robots.txt` declares. A sitemap that is generated but never
 declared, or an old path still declared after a migration, both show up as a mismatch here.
 
-**3. Crawl, seeded from the sitemap, so every declared URL is fetched and judged.**
+**4. Crawl, seeded from the sitemap, so every declared URL is fetched and judged.**
 
 ```bash
 seohead crawl-site --url https://example.com --sitemap https://example.com/sitemap.xml --out-dir ./run
 ```
 
-**4. Scan the run.**
+**5. Scan the run.**
 
 ```bash
 seohead log-scan --run ./run
 ```
 
-**5. Read `SITEMAP_URL_NON_INDEXABLE`.** One finding per declared URL that cannot be indexed as
+**6. Read `SITEMAP_URL_NON_INDEXABLE`.** One finding per declared URL that cannot be indexed as
 declared, which in practice is four different mistakes wearing the same label:
 
 | What the URL does | Where the fix belongs |
@@ -56,13 +69,13 @@ declared, which in practice is four different mistakes wearing the same label:
 | carries `noindex` | one of the two is wrong; decide which |
 | canonicalises elsewhere | declare the canonical instead |
 
-**6. Walk one of the redirecting entries to see where it now lands.**
+**7. Walk one of the redirecting entries to see where it now lands.**
 
 ```bash
 seohead redirects-check --url https://example.com/old
 ```
 
-**7. Export the list.**
+**8. Export the list.**
 
 ```bash
 seohead report-build --audit ./run/audit.json --format csv --out ./sitemap-health.csv

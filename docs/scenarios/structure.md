@@ -61,7 +61,7 @@ seohead log-scan --run ./run
 ```json
 "sitemap": {
   "urls_in_sitemap": 124,
-  "urls_reached_by_links": 118,
+  "urls_reached_by_links": 121,
   "in_sitemap_not_linked": ["https://example.com/services/legacy"],
   "linked_not_in_sitemap": ["https://example.com/services/new"]
 }

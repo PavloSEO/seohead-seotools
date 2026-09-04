@@ -12,6 +12,20 @@ All notable public changes are documented here.
   none omits its limits. All 143 findable issues are covered. Every command in every file
   is still executed against the fixture site in CI — the suite runs 2008 tests, of which
   the doc-command gate is now the largest single group.
+- Assert the sitemap protocol's own limits (#124): `SITEMAP_TOO_MANY_URLS` above 50,000
+  entries in one file, `SITEMAP_TOO_LARGE` above 50 MB uncompressed, and
+  `SITEMAP_URL_DUPLICATED` for a URL declared in more than one sitemap, naming both
+  documents. A file over either limit is invalid rather than merely large — a search
+  engine may read part of it and discard the rest with nothing the site owner can see —
+  and the thresholds come from the protocol, not from config. Both parsers now record the
+  per-document byte size and declared count, and the findings name the child sitemap
+  rather than the index. Registry grows from 118 to 121 checks.
+- Add `docs/GUIDELINE.md`, the document a person reads first (#121): what this is and is
+  not, a first run end to end, how to choose a crawl rate and how to tell whether the
+  errors are yours, how to read `audit.json` without being misled by it, what the config
+  file changes and what it only costs, the six mistakes everybody makes first, what to do
+  when the tool is wrong, and what it cannot answer at all. Linked first from the README,
+  ahead of the reference.
 - Add `docs/COVERAGE_SF_ISSUES.md`, generated from `seohead/sf/core/sf_issue_map.py`:
   every one of the 320 issues in the field's published catalogue, each with exactly one
   status — found by a named check, found by a named command, found in part with the
