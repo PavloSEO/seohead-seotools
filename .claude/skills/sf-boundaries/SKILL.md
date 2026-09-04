@@ -21,11 +21,32 @@ map: for each "need," it shows immediately who handles it—SF (through
 audit so you do not try to extract metrics SF does not calculate and do not
 manually duplicate data that SF provides at no additional cost.
 
-## When to Use It
+## Trigger
 - "What can/can't Screaming Frog do?", "SF boundaries," or "SF vs agent";
 - "How do I obtain <a specific need>?"—when the correct tool must be selected;
 - when planning an audit and deciding what to crawl in SF and what to collect
-  separately.
+  separately;
+- keyword triggers: what can Screaming Frog do, what can SF not do, SF
+  boundaries, how to obtain something, SF vs agent, Screaming Frog
+  capabilities, can Screaming Frog check X.
+
+## Anti-trigger
+This skill IS the router deciding "SF vs agent" — the anti-trigger here is
+about when NOT to even consult it:
+- The need already has an obvious, unambiguous home — "run a crawl audit" is
+  plainly `sf-analyzer`, "check Core Web Vitals" is plainly the PSI API.
+  Looking it up here first only adds a lookup step; go straight to the tool.
+- You are already mid-audit inside `seo-deep-audit`, which already encodes
+  this exact routing per phase — follow that orchestrator's phase list
+  instead of re-deriving it here.
+- The question is "how do I configure SF to unlock check X" for a check that
+  is showing as `skipped` — that is `sf-config`'s job, not this router's; this
+  skill tells you SF *can* produce something, not how to turn the module on.
+
+## Preconditions
+- [ ] A specific, nameable need exists to look up ("what handles X") — a bare
+  "audit this site" with no narrower question belongs in `seo-deep-audit`
+  instead of being routed need-by-need here.
 
 ## Table: Need -> How to Obtain It
 | Need | How to obtain it |
@@ -99,6 +120,40 @@ manually duplicate data that SF provides at no additional cost.
      `lighthouseResult.categories.performance.score`.
 4. **TLS/certificate expiration** (neither SF nor WHOIS), when needed—
    `echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates`.
+
+## Decision points
+- **A check shows `skipped` in `audit.json`** — decide whether it is a missing
+  module (route to `sf-config`) or genuinely not applicable to the site (e.g.
+  no structured data present anywhere); check `sf-config`'s checklist before
+  assuming it is a config gap.
+- **A need straddles two rows** — e.g. "duplicate content" could mean SF's
+  near-duplicate detection (textual similarity, a `sf-analyzer` job) or an
+  agent's meaning/E-E-A-T judgment (usefulness, not similarity); decide which
+  question is actually being asked before routing.
+- **Content is missing from the crawl and it's unclear why** — is it because
+  JS Rendering is disabled (`sf-config` fixes it) or because the content
+  genuinely requires JS the module can't capture (`js-render-check` diagnoses
+  it)? Check whether the module was enabled for that crawl before routing to
+  `js-render-check`.
+- **"The page is slow"** — decide whether this means Core Web Vitals /
+  Lighthouse (route to the PSI API) or origin/TTFB and cache behavior (route
+  to `seo-recon`'s `cdn-check`); these are different measurements with
+  different owners.
+
+## Definition of done
+- [ ] Each stated need was matched to exactly one owner (SF, toolkit, agent
+  skill, or external API) — nothing left unrouted.
+- [ ] Every route handed to the user names both the owning skill and the
+  exact command to run (per the table + Workflow), not just a skill name.
+- [ ] Any need with no matching row was named explicitly as a gap rather than
+  forced into the nearest row.
+
+## Cost
+This skill itself makes no calls — it is a lookup table, zero requests. The
+cost is whatever the routed-to skill/tool costs (see that skill's own Cost
+section). The most common destination, `sf-analyzer`, splits sharply: Mode B
+(`--exports-dir`) is offline/free; Mode A (`--crawl`) needs a licensed SF CLI
+and costs as long as the crawl itself.
 
 ## What to Deliver to the User
 - A concise verdict for each need: "SF handles this" / "this is outside SF; use

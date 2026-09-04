@@ -4,6 +4,30 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add `docs/TOOL_REFERENCE.md`, generated from the MCP tool definitions
+  (`seohead/servers/tool_reference.py`, `scripts/generate_tool_reference.py`): every
+  `seo_*`/`sf_*` tool's arguments with type and default, its cost (network/writes/
+  idempotent/spend, read from its `ToolAnnotations` profile), and its own docstring's
+  behavior and failure-mode notes. `tests/test_docs_drift.py` fails the build if it
+  drifts from the tool definitions or is missing a tool.
+- Add `tests/test_docs_commands_execute.py`: extracts every `seohead ...` command
+  shown in README/docs/skills/examples (`scripts/doc_commands.py`) and runs each one
+  offline, against a loopback fixture site (`tests/doc_fixtures/`) and materialized
+  copies of `examples/`, asserting a clean exit. Commands that need real
+  infrastructure (RDAP/DNS, a licensed SF binary, a paid provider credential, the
+  never-returning `mcp` server) are at least parsed against the live argument parser.
+  A documented command that no longer works now fails CI instead of shipping stale.
+- Reshape all 21 technical workflow skills (`.claude/skills/*/SKILL.md`) into a
+  shared shape: Trigger, Anti-trigger, Preconditions (as a checklist), the existing
+  Workflow, Decision points, Definition of done (as a checklist), and Cost. Fix the
+  stale command-coverage count at the bottom of `docs/SKILLS.md` (the real count,
+  recomputed by scanning every skill file, is asserted by a new drift test).
+- Fix several tool/test counts that had silently drifted from the real registries
+  (a stale CLI command count in `docs/USAGE.md`/`docs/COMPARISON.md`/`README.md`/
+  `docs/TESTING.md`, a stale MCP tool count in `docs/TOOLS.md`, a stale tool-reference
+  count in `docs/README.md`, and the offline test count) and pin the fixed ones with
+  a regression test (`test_stale_tool_counts_do_not_reappear`).
+
 - Add the four static Lighthouse audits that need no browser and no third-party API
   (#59): `MISSING_CHARSET`, `MISSING_DOCTYPE`, `VIEWPORT_MISSING` and `NO_COMPRESSION`,
   each computed from evidence a crawl already holds. `content_encoding`,

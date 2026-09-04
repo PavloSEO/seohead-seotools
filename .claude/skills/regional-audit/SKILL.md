@@ -28,11 +28,39 @@ the entire domain**. You cannot assign Moscow to `/msk/` and Saint Petersburg to
 Directories work only through the text on the page. Subdomains are separate hosts, and
 each host can be assigned its own region.
 
-## When to Use It
+## Trigger
 - A client has “branches throughout Russia,” but traffic comes from only one city.
 - Before selecting a regional SEO approach, to avoid rebuilding the structure later.
 - When satellite sites exist and you need to determine whether Yandex may group them as affiliates.
 - Regional pages exist but do not rank, and the reason is unclear.
+- Triggers from the frontmatter: regions, city subdomains, branches,
+  satellite sites, regional SEO, multi-region, cities, Yandex region,
+  affiliates, msk.example.com, region subdomains.
+
+## Anti-trigger
+- Assigning a region in Yandex Webmaster itself — that is a manual step in
+  Yandex's own interface; this skill only diagnoses the site structure, it
+  does not and cannot make that assignment.
+- Confirming affiliate grouping definitively — the tool surfaces signals
+  (matching contact info, matching content across separate domains); only
+  Yandex's own search results confirm actual affiliate grouping, so a signal
+  from this skill is not proof to report as a finished conclusion.
+- A single-region site with no city switcher and no branches — there is no
+  regional structure to compare; use a general audit (`seo-recon` /
+  `sf-analyzer`) instead of running a regional comparison against nothing.
+- A JS-rendered city switcher when `js-render-check` has not been run yet —
+  running `regions-check` alone at that point reports "zero regions found,"
+  which is a false negative here, not a real finding. Run `render-check`
+  first (see Workflow step 4).
+
+## Preconditions
+- [ ] A live URL to the site's homepage or a page where the regional
+  switcher is expected to live.
+- [ ] Any known or suspected satellite domains collected in advance — they
+  are rarely discoverable automatically and must be passed via `--extra`.
+- [ ] If step 1 finds zero regions, willingness to run `render-check` before
+  concluding there is no regional structure, since a JS-rendered switcher is
+  invisible to raw HTML.
 
 ## Workflow
 
@@ -94,6 +122,49 @@ a new city with one `_region(...)` line.
 Service subdomains such as `www`, `api`, `cdn`, and `lk`, and common first path segments
 such as `/catalog/`, `/blog/`, and `/ru/`, are never treated as regions. The
 `NON_REGION_HOSTS` and `NON_REGION_PATHS` lists are defined in the same module.
+
+## Decision points
+- **Zero regions found.** Per Workflow step 4, this is not proof there is no
+  regional structure — check whether the page source has an empty nav
+  container before concluding "single-region site"; if so, rerun after
+  `render-check`.
+- **Content similarity flagged (SimHash ≥ 0.95) across regions.** This can
+  mean genuine duplicate/templated cannibalization, or a small city that
+  legitimately has little to differentiate. Check whether pages differ only
+  in city name/address (real problem) versus share a template but carry
+  distinct pricing or local details (lower severity).
+- **Sites on separate domains with matching contact info.** This is a signal
+  toward affiliate grouping, not proof — state it as a signal in the report
+  and recommend checking search results, rather than declaring the sites
+  affiliated.
+- **Both a directory and a subdomain approach exist at once.** Decide
+  between recommending consolidation onto one approach (usually subdomains,
+  since only they get a per-host Yandex Webmaster region) versus simply
+  flagging the conflict, based on how much existing content and traffic
+  already lives on each.
+
+## Definition of done
+- [ ] `regions-check` has been run against the primary domain and any
+  known/suspected satellite domains via `--extra`.
+- [ ] If zero regions were found initially, `render-check` was run to rule
+  out a JS-rendered switcher before concluding there is no regional structure.
+- [ ] Every regional page found has been checked against every item in "What
+  the Tool Checks on Every Regional Page" (status/redirects, canonical,
+  noindex, title/h1 city mention, text volume, phone numbers, content
+  similarity).
+- [ ] Findings are reported with severity aligned to the findings table
+  order (redirect-to-main and de-indexing findings called out first).
+- [ ] The report distinguishes tool-detected signals (e.g. matching contact
+  info) from confirmed conclusions (e.g. actual affiliate grouping), per
+  Boundaries.
+
+## Cost
+One `seohead regions-check` invocation for the primary domain (plus one more
+per satellite batch if run separately) — cost scales with `--limit`, since
+each regional page checked is one plain HTTP GET plus a redirect-chain
+follow. Add one `seohead render-check` run only if a JS-rendered switcher is
+suspected. No paid API is touched; a typical `--limit 20` run is on the
+order of tens of requests and finishes in well under a minute.
 
 ## Related Skills
 `seo-recon` identifies domain ownership and hosting, which matters for satellite sites ·

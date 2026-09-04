@@ -18,10 +18,34 @@ Screaming Frog exports only H1/H2 and flags only "missing H1" / "multiple H1"
 `H2_MISSING`). It does not provide a complete H1–H6 outline **in document order**
 or check level jumps; the agent does this itself by parsing live HTML.
 
-## When to Use It
+## Trigger
 - "Check the headings / heading structure on the page";
 - "Is the H1→H2→H3 hierarchy correct, with no level jumps?";
 - "Build the page outline" or "inspect the Hx structure."
+- Triggers from the frontmatter: heading structure, page headings, H1 H2 H3
+  hierarchy, page outline, heading outline, Hx structure, check headings,
+  audit headings.
+
+## Anti-trigger
+- Bulk "does every page have exactly one H1" across many pages at once —
+  `sf-analyzer` already flags `H1_MISSING`/`H1_MULTIPLE` for the whole crawl;
+  reach for this skill only when the full H1–H6 order and nesting on specific
+  pages is needed, not as a page-by-page substitute for that crawl-wide check.
+- The page is a JS-rendered SPA and no rendered HTML is available yet — a
+  plain `curl` fetch returns an empty shell, so the outline would be built
+  from nothing. Run `js-render-check` (or an sf-analyzer crawl with JS
+  Rendering / "Store Rendered HTML") first.
+- The question is about heading **wording or keyword** quality ("should the
+  H1 contain this keyword") rather than structure/hierarchy — that is
+  content/copy review, not this skill.
+
+## Preconditions
+- [ ] Either an sf-analyzer `audit.json` with page URLs, or a specific URL
+  (or list of URLs) supplied directly.
+- [ ] `lxml` installed (`pip install lxml`) — the parser in step 2 depends on it.
+- [ ] For a JS-heavy page, rendered HTML is available (sf-analyzer mode A with
+  Store Rendered HTML), or it is accepted up front that a raw `curl` fetch
+  may return an empty shell.
 
 ## Workflow
 1. **Get the URL list.** Use the sf-analyzer audit (`audit.json` → `pages[].url`
@@ -64,6 +88,43 @@ or check level jumps; the agent does this itself by parsing live HTML.
    plus a list of detected issues, including the level and text of the offending heading.
    For a set of pages, provide a summary such as "N pages with hierarchy issues" and
    the most common issue types.
+
+## Decision points
+- **Zero headings found in raw HTML.** This can mean the page genuinely has
+  no headings, or that the DOM is populated only by JavaScript. If body text
+  is also thin or empty, treat the page as `js_dependent` and re-run on
+  rendered HTML (via `js-render-check` or sf-analyzer mode A) before
+  concluding "no headings."
+- **H2→H4 skip vs. a legitimate level drop.** The rule only flags an
+  *increase* of more than one level; a heading dropping down (H4→H2) is
+  valid. Before flagging `HEADING_SKIP`, confirm the skip isn't an artifact
+  of a decorative widget mistagged with the wrong heading level rather than a
+  real structural jump.
+- **Short heading text: decorative or legitimately terse?** "Read more",
+  bare icons, or lone numbers are decorative — but short, meaningful
+  headings ("FAQ", "Q&A", a city name) can also be only a few characters.
+  Judge by whether the text stands alone as real content, not by length alone.
+- **H1 equals `<title>` verbatim.** Flag it as a warning per the rule, but
+  don't force a rewrite on a small single-purpose page where the title and
+  H1 legitimately need to say the same thing — note it and let the user decide.
+
+## Definition of done
+- [ ] Every URL in scope has been parsed and an indented H1–H6 outline
+  produced, or a stated reason it could not be (e.g. JS-rendering block).
+- [ ] Every page has been checked against all six heuristics: H1 count,
+  skipped levels, H1-first, H1 non-empty, meaningful text, no duplicate text.
+- [ ] Findings carry the correct code (`H1_MISSING`, `H1_MULTIPLE`,
+  `HEADING_SKIP`, `H1_NOT_FIRST`, `H1_EQUALS_TITLE`, `HEADING_DECORATIVE`,
+  `HEADING_DUP_TEXT`).
+- [ ] For a multi-page run, a summary count of pages with issues and the
+  most common issue types is included.
+
+## Cost
+No `seohead` CLI command is invoked — this skill runs a plain `curl` fetch
+plus a local `lxml` parse per page: one HTTP request per URL, sub-second
+local processing, no paid API. Cost scales linearly with the number of pages
+audited; for a large set, reuse the URL list from an existing sf-analyzer
+`audit.json` rather than re-crawling to build it.
 
 ## What to Deliver to the User
 - **Outline** for each page: an indented tree (`H1` / `  H2` / `    H3` …),

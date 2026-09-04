@@ -25,12 +25,37 @@ These are no longer manual Bash steps, but three tools in the `seohead` toolkit
 plain-language conclusions. In MCP, they are `seo_domain_profile`, `seo_cdn_check`,
 and `seo_tech_detect`.
 
-## When to Use It
+## Trigger
 - "what hosting provider does the site use," "where is the server," "which ASN / provider hosts it";
 - "does it use Cloudflare," "which CDN," "does caching work," "why is it slow";
 - "which CMS," "which site engine," "what is the site built with," "how is traffic measured," stack detection;
 - "domain whois," "domain age," "when was it registered," "who is the registrar," TLS/expiration;
-- a quick competitor profile before a crawl audit.
+- a quick competitor profile before a crawl audit;
+- stack keyword triggers: Cloudflare, Fastly, Vercel, WordPress, Next.js, Tilda,
+  Bitrix, Shopify, cache-control, HTTP/2, HTTP/3, brotli.
+
+## Anti-trigger
+- The need is on-page/crawl data — status codes, redirect chains, Title/meta
+  robots/canonicals, broken links, sitemap discrepancies. SF sees the whole
+  site at once; use `sf-analyzer`, not this skill, for anything that scales
+  per-page.
+- The need is security posture — HSTS/CSP headers, cookie flags, exposed
+  `.git`/`.env` paths. These three tools do not evaluate security; use
+  `security-audit` (`seohead security-check`) instead.
+- The need is "does this page need JS to render" — `tech-detect` only names
+  the framework, it does not diff raw vs rendered output; use `js-render-check`
+  for that comparison.
+- The need is Core Web Vitals / Lighthouse scores — `cdn-check` measures TTFB
+  and cache behavior, not CWV; that is the PSI API's job (see `sf-boundaries`).
+
+## Preconditions
+- [ ] A domain (for `domain-profile`) or a full URL with scheme (for
+  `cdn-check`/`tech-detect`) is available.
+- [ ] Network access exists to make live HTTP/DNS requests to the target — all
+  three tools perform real requests, not a lookup against cached data.
+- [ ] For ccTLDs without RDAP (`.by`, some `.ru`) the system `whois` binary is
+  present as a fallback, or the report will honestly show `source: none`
+  rather than fabricated registration data.
 
 ## Workflow (All Three Tools by Default)
 
@@ -75,6 +100,43 @@ Use this only when `seohead` is not installed and cannot be installed. Run manua
 (`/wp-content/`, `/_next/`, `tildacdn.com`, `/bitrix/`) to identify the site engine,
 and `openssl s_client -connect "$DOM:443"` for the certificate. The logic is the
 same, but performed manually and without structured output.
+
+## Decision points
+- **RDAP is unavailable for a ccTLD** — the tool falls back to system `whois`;
+  if that is also unavailable, report `source: none` rather than guessing
+  registration data.
+- **`http_version_measurable` is false in `cdn-check`** (the `h2` package is
+  missing) — report the HTTP version as "not measurable," never silently
+  assume HTTP/1.1.
+- **`tech-detect` finds an SPA/Next.js/Nuxt stack** — flag JS rendering as
+  required for downstream work (`sf-analyzer`'s crawl, `js-render-check`);
+  this changes how later audit phases must be run.
+- **The `seohead` toolkit itself is unavailable** — fall back to the manual
+  commands above, but tell the user the result is unstructured (no
+  `findings` block, no automatic risk flags) rather than presenting it as
+  equivalent output.
+
+## Definition of done
+- [ ] All three tools ran — `domain-profile`, `cdn-check`, `tech-detect` — or
+  a stated reason exists for skipping one.
+- [ ] Each tool's `findings` block (not just raw JSON) is reflected in the
+  summary handed to the user.
+- [ ] Risk flags (young domain, expiring cert/registration, missing
+  SPF/DMARC, offshore hosting, geography mismatched to the target market)
+  are explicitly called out or explicitly ruled absent.
+- [ ] The user is pointed at the correct next skill for anything out of
+  scope here — `sf-analyzer` for crawl data, `security-audit` for security,
+  `seo-deep-audit` for a full automated audit — rather than this skill
+  trying to cover those itself.
+
+## Cost
+Three toolkit calls, each a small, fixed number of requests: `domain-profile`
+does RDAP/whois plus DNS lookups; `cdn-check` makes exactly three HTTP
+requests to the target URL (initial, repeat, conditional); `tech-detect` makes
+one request and parses it. Total well under 15 requests, seconds end-to-end,
+no paid API involved. The manual Emergency Fallback commands cost the same
+handful of requests run by hand, just without the structured `findings`
+output.
 
 ## What to Deliver to the User
 A concise profile in a single block, assembled from the three tools' `findings`:

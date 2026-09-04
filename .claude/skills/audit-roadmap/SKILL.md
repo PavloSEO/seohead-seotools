@@ -18,10 +18,34 @@ earlier: use quick reconnaissance to create a plan for **exactly what** to colle
 site, so that expensive work is not run unnecessarily and critical issues are not missed. The
 terms-of-reference principle is: "rushing is prohibited" — plan first, collect second.
 
-## When to use it
+## Trigger
 - You were given a domain and asked to analyze it, but the scope/focus is unknown.
 - You need a work plan and estimate before starting (for yourself, a client, or a team).
 - Before `seo-deep-audit`: determine which phases are needed and which should be skipped.
+- The request is phrased as: "create an audit plan," "roadmap for a domain," "what to collect from
+  the site," "analysis plan," "what to check on the site," "where to start an audit," "scope the
+  collection," "audit plan," "scoping," "audit roadmap," or "what to analyze."
+
+## Anti-trigger
+- The site has already been scoped and the ask is to actually run the checks — go straight to
+  `seo-deep-audit` (execution) instead of re-planning.
+- The user wants one specific technical check right now (robots, schema, duplicates, backlinks)
+  rather than a full plan — jump directly to that skill (`robots-audit`, `schema-check`,
+  `duplicate-audit`, `backlinks-check`, etc.); building a roadmap first is pure overhead.
+- There is no domain or site to scope at all (pure keyword research, content writing, or a
+  non-technical question) — this skill only scopes technical/content audits of an existing site.
+- The user needs the "SF or toolkit" routing decision itself (which crawl mode to use) — that
+  belongs to `sf-boundaries`, not this skill.
+
+## Preconditions
+- [ ] A domain or live URL is available to run the five Phase 0 recon commands against, or the user
+  has explicitly said the network/site is unavailable and supplied domain/access/objective details
+  instead.
+- [ ] The audit's objective is known well enough to place the site in a type bucket (e-commerce /
+  blog-media / services-local / corporate-SaaS / portal-UGC) — ask if genuinely unclear rather than
+  guessing.
+- [ ] Access-level expectations (L1 source, L2 server/logs, L3 database, L4 CDN) have been asked
+  about or are already known, so the roadmap can mark what is and is not checkable.
 
 ## Workflow
 
@@ -93,6 +117,38 @@ unnecessarily:
 - Small site (<100 pages) -> `duplicate-check` is excessive; a complete manual review is more
   practical.
 - No rich-result ambitions -> reduce deep schema analysis to error checking.
+
+## Decision points
+- **Scale reading.** A sitemap in the 500–5,000 range could still warrant a full manual review or
+  need templating — decide based on how repetitive the URL patterns actually look (few templates ->
+  full review; many near-identical templates -> template-based sampling), not on the raw count
+  alone.
+- **Ambiguous stack signal (client-side hydration on a server-rendered site).** Check
+  `tech-detect`'s raw output for which frameworks actually power the key templates, not just the
+  presence of a JS bundle, before deciding JS rendering + CWV are required.
+- **No SF license or no Playwright available.** Fall back to mode B (exports) or explicitly
+  postpone JS rendering/CWV rather than silently dropping them from the roadmap — the missing
+  dependency must show up in "Missing access," not just vanish.
+- **YAGNI calls (Phase 4).** Each skip (JS rendering, GEO checks, `duplicate-check` on a small
+  site) needs a reason tied to this site's actual profile, not a default; when in doubt, list the
+  item as optional instead of dropping it silently.
+
+## Definition of done
+- [ ] Phase 0 recon commands were run, or explicitly marked unavailable with a stated reason.
+- [ ] All four Phase 1 dimensions (scale, stack, site type, access/health) are stated together with
+  the signal that produced each.
+- [ ] The roadmap lists a tool for every collection item, in priority order, split into the
+  baseline set and type-specific items.
+- [ ] Missing access levels (L1–L4) are called out by name, not silently assumed available.
+- [ ] A YAGNI section names what is skipped and why, specific to this site.
+- [ ] A rough time/agent-count estimate is included.
+
+## Cost
+Phase 0 is five lightweight commands (`domain-profile`, `tech-detect`, `robots-check`,
+`sitemap-crawl`, `ai-bots-check`), each a single request against the target site, no paid API,
+well under a minute of network time total. The roadmap itself is then pure reasoning and write-up —
+no further tool cost — until it is handed to `seo-deep-audit`, whose per-phase execution cost is
+outside this skill's scope.
 
 ## What to deliver to the user (the roadmap as one document)
 1. **Site profile** (from reconnaissance): domain/age, hosting/CDN, CMS/stack, TLS/security flags.

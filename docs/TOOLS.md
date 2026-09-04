@@ -6,6 +6,12 @@ implementation, two faces: `seohead <command>` in the terminal and
 the Screaming Frog crawl audit workflow specifically — see that section below
 and the generated [CHECKS.md](CHECKS.md) for the 118 checks it runs.
 
+This page is hand-written orientation: what each group is for, and the calling
+conventions shared across it. The generated [TOOL_REFERENCE.md](TOOL_REFERENCE.md)
+carries the part that must never drift by hand — every argument with its type
+and default, and each tool's cost (network/writes/idempotent/spend) and its own
+docstring's failure-mode notes — read straight from the MCP tool definitions.
+
 The shared contract: JSON out; when a source is unreachable the tool returns
 `{"ok": false, "error": "..."}` instead of raising. An unreachable site is
 data, not an accident.
@@ -241,13 +247,14 @@ echo '{"url":"https://example.com"}' | seohead parse
 tool must not knock where it was not asked to.
 
 **MCP.** The same set under the `seo_*` names plus the `sf_*` audit tools
-(47 + 5):
+(48 + 5):
 
 ```bash
 seohead mcp        # stdio
 ```
 
 ## Where to go next
+- [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — every tool's arguments, types, defaults, cost, and failure modes, generated from the MCP definitions
 - [CHECKS.md](CHECKS.md) — the 118 checks the SF crawl audit runs, generated from the registry
 - [ARCHITECTURE.md](ARCHITECTURE.md) — layers, invariants, where new code goes
 - [SKILLS.md](SKILLS.md) — which skill drives which tool

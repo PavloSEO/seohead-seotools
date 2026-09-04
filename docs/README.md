@@ -10,7 +10,8 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 |---|---|
 | Setting the toolkit up from zero | [SETUP.md](SETUP.md) — versions, deps, first run |
 | Looking for a copy-paste command | [USAGE.md](USAGE.md) — runnable examples |
-| Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 49 |
+| Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 53 |
+| Looking for a tool's exact arguments, types, defaults, or cost | [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — generated from the MCP tool definitions |
 | Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 118, generated from the registry |
 | Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 22 skills |
 | Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
@@ -28,6 +29,12 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[TOOLS.md](TOOLS.md)** — what every tool does, which of them touch the
   network, which have side effects, where the boundaries are. Grouped by layer:
   recon, live tools, bounded site audit, own-crawl, external data sources, SF crawl audit.
+- **[TOOL_REFERENCE.md](TOOL_REFERENCE.md)** — every tool's arguments (name,
+  type, default), its cost (network/writes/idempotent/spend), and its own
+  docstring's behavior and failure-mode notes. Generated from the MCP tool
+  definitions in `seohead/servers/mcp_server.py` and `sf_mcp.py`
+  (`scripts/generate_tool_reference.py`); `tests/test_docs_drift.py` fails the
+  build if it drifts.
 - **[CHECKS.md](CHECKS.md)** — the 118 checks the SF crawl audit runs: what each fires
   on, what evidence it needs, and the fix that ships with the finding. Generated
   from `seohead/sf/core/registry.py` (`scripts/generate_checks_reference.py`);
@@ -43,7 +50,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[NAMING.md](NAMING.md)** — what a module or test file name must say, when a
   basename may legitimately repeat across packages, and what naming decisions
   are deliberately left open.
-- **[TESTING.md](TESTING.md)** — how to run the suite, what the 1100+ tests
+- **[TESTING.md](TESTING.md)** — how to run the suite, what the 1500+ tests
   cover, what they deliberately do not, and which missing tests to write first.
 - **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
   contracts: API money, quotas, stdin quirks, and explicit mutation flags.
@@ -87,6 +94,10 @@ recounts them. It fails when:
   breakdown disagrees with the check registry;
 - `docs/CHECKS.md` disagrees with what `scripts/generate_checks_reference.py`
   would produce from the registry right now, or is missing a check id.
+- `docs/TOOL_REFERENCE.md` disagrees with what `scripts/generate_tool_reference.py`
+  would produce from the MCP tool definitions right now, or is missing a tool.
+- a command shown in a fenced code block anywhere in the docs no longer runs
+  against fixtures (`tests/test_docs_commands_execute.py`).
 
 The contract test derives counts and command names directly from registries, so public prose
 cannot silently drift away from the interfaces users actually receive.

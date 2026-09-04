@@ -71,19 +71,21 @@ Then by the layer of the task.
 
 ## Tools without a skill of their own
 
-Twenty-four of the 48 commands are used inside other skills or are plumbing,
-and have no skill of their own — deliberately: a skill per single command
-is noise.
+18 of the 48 commands are not named in any skill's own body (a mention inside
+another tool's Markdown table above does not count) — used inline as plumbing
+inside a workflow's write-up, or not yet needed by one at all — and have no
+skill of their own, deliberately: a skill per single command is noise.
+`tests/test_docs_drift.py` recomputes this list by scanning every skill file
+for each command name, so it cannot silently rot the way this line once did.
 
-Page-level utilities: `headers-check` · `asset-weight-check` · `hreflang-check` · `links-check` ·
-`redirects-check` · `redirects-generate` · `soft404-check` ·
-`social-meta-check` · `log-analyze` · `keywords-cluster` ·
-`images-download` · `images-optimize`
+Page-level utilities: `asset-weight-check` · `boilerplate-report` ·
+`crawl-describe-settings` · `hreflang-check` · `keywords-cluster` ·
+`log-analyze` · `mirror-check` · `redirects-check` ·
+`redirects-generate` · `soft404-check`
 
-External data sources (`data_sources/` layer): `keywords-expand` ·
-`keywords-seasonality` · `keywords-exact` · `serp-fetch` ·
-`google-keywords` · `google-serp` · `metrika-counters` · `metrika-setup` ·
-`metrika-report` · `spend-report` · `sources-doctor` · `regions-tree`
+External data sources (`data_sources/` layer): `google-keywords` ·
+`google-serp` · `keywords-exact` · `keywords-expand` · `keywords-seasonality` ·
+`regions-tree` · `serp-fetch` · `spend-report`
 
 Two of them are candidates for a skill if the work becomes regular:
 `log-analyze` (log parsing is its own genre with its own method) and

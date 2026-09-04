@@ -1,0 +1,19 @@
+# Example Tools Co
+
+> A fixture site used only to run documented commands offline.
+
+Example Tools Co makes the Fixture Widget, a stand-in product used across the
+seohead-seotools documentation and test suite.
+
+## Product
+
+- [Fixture Widget](http://127.0.0.1/product/example): specifications and pricing.
+- [General page](http://127.0.0.1/page): background material.
+
+## Docs
+
+- [About](http://127.0.0.1/about): who publishes this fixture.
+
+## Proof
+
+- [Changelog](http://127.0.0.1/#change-log): what changed and when.

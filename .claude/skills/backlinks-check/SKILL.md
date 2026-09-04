@@ -28,11 +28,30 @@ here; a request to "show every link to the site" requires one of them.
 
 The tool is `seohead backlinks-check` (CLI + MCP `seo_backlinks_check` + HTTP).
 
-## When to use it
+## Trigger
 - "check my backlinks," "are the links still live," "was the link removed";
-- "dofollow or nofollow," "does it pass link equity";
-- "does page X link to our site";
+- "dofollow or nofollow," "does it pass link equity," "is there a link to the site";
+- "does page X link to our site," "check the donor pages";
 - regular monitoring of purchased backlinks.
+
+## Anti-trigger
+- The ask is to discover an unknown backlink profile ("who links to us," "find new backlinks")
+  rather than verify a known list — that requires Ahrefs/Majestic/GSC data this toolkit does not
+  provide; this skill only checks URLs already in hand.
+- The ask is about the user's OWN outbound links breaking (broken links, redirect chains on the
+  user's own site) — that is `sf-analyzer`/`links-check`, not this skill.
+- No donor URL list exists yet and none can be supplied — there is nothing to check; do not
+  substitute a guess or a crawl of the target domain for a real donor list.
+- The question is about a donor site's overall authority or trustworthiness rather than one
+  specific link's state — that is `domain-profile`/`seo-recon` on the donor, not `backlinks-check`.
+
+## Preconditions
+- [ ] A concrete list of donor URLs exists (inline `--donors` or a `--donors-file`), at or under
+  the 500-page limit.
+- [ ] The target is defined precisely as either a domain (subdomain matches count) or an exact URL
+  (exact match only) — know which is intended before running.
+- [ ] Donor pages are expected to be reachable; if the list is stale, expect a mix of `missing` and
+  errored results rather than treating every miss as a confirmed lost link.
 
 ## Workflow
 **Target: a domain** (any link to the domain or one of its subdomains will match):
@@ -54,6 +73,35 @@ The limit is 500 donor pages per run.
   `canonical`/`canonical_elsewhere`, `links[]` (for every link found: `href`, `anchor`,
   `rel`, `follow`, `blocked_by`), and `reason`, which explains why the link is absent
   or why it does not work.
+
+## Decision points
+- **`missing` link vs `on_noindex_page`.** A donor page returning the link is not enough — check
+  `donor_indexable`/`canonical` before concluding equity passes; a noindexed or
+  canonicalized-elsewhere donor page passes no equity even when `found: true`.
+- **Link-level `nofollow` vs page-wide `nofollow`.** The `rel` on the specific `<a>` may look clean
+  while the whole donor page blocks equity another way — check `blocked_by` and the page-level
+  flags, not only the individual link's `rel`.
+- **Target defined as domain vs exact URL.** If the link appears "missing" but the donor links to a
+  different URL on the same domain (a redirected or alternate page), decide with the user whether
+  that still satisfies the requirement — do not let it silently lower the "found" count.
+- **Donor page unreachable (4xx/5xx/timeout).** Distinguish "link removed" from "donor page itself
+  died" using the `reason` field — the former is a lost backlink, the latter may just need
+  revisiting later; do not merge both into one "missing" bucket.
+
+## Definition of done
+- [ ] Every donor URL in the input list has a result row (`found`/`missing`/error) — none silently
+  dropped.
+- [ ] Each `found` link is classified dofollow/nofollow and cross-checked against donor-page
+  indexability and canonical.
+- [ ] The summary counts (found/missing/dofollow/nofollow/on_noindex_page) reconcile against the
+  per-donor table.
+- [ ] Dead and nofollow/no-equity links are listed separately under "requires attention."
+
+## Cost
+One HTTP request per donor page, up to the 500-page limit, run with `--concurrency` (default 3,
+max 10) — a typical run of a few dozen donors is a few dozen requests taking well under a minute.
+No paid API is touched: `seohead backlinks-check` is a local crawler against the donor pages
+themselves, not a third-party backlink-index API.
 
 ## What to deliver to the user
 Provide a table by donor page: donor page → link present → anchor text →

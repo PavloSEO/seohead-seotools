@@ -20,12 +20,40 @@ Extracts as much information as possible from SF panels, precisely locates links
 checks that SF itself does not flag (HTML size anomalies, sitemap discrepancies,
 and stale `lastmod` values).
 
-## When to Use
+## Trigger
 - "Run an SEO audit on this crawl / `.seospider` file / set of SF exports";
 - "Find broken links and where they appear in the DOM";
 - "Check the sitemap for stale lastmod values, 4xx/3xx entries, and discrepancies";
 - "Which pages are abnormally large?" or "There are two H1s—which ones and where?";
-- "Create an audit.json file for the site."
+- "Create an audit.json file for the site";
+- keyword triggers: screaming frog, `.seospider`, SF export, `internal_all.csv`,
+  sitemap audit, broken links, audit.json, crawl SEO audit.
+
+## Anti-trigger
+- Only one external check is needed (domain/hosting/CDN/stack) — use
+  `seo-recon` instead; SF crawls the site itself, not who hosts it.
+- The ask is *why* a `robots.txt` rule is harmful and how to fix it, not just
+  which live URLs it blocks — `sf-analyzer` only reports the blocked-URL list;
+  route the interpretation and fix to `robots-audit`.
+- The ask is JS-rendered vs raw-HTML comparison — `sf-analyzer` only sees what
+  SF's JS Rendering module captured during the crawl (see `sf-config`); it does
+  not itself diff raw vs rendered output. Use `js-render-check` for that.
+- The deliverable wanted is a human-readable narrative or a prioritized
+  backlog, not the `audit.json`/`audit.md` pair — hand off to `sf-report` /
+  `sf-tasks`, which consume this skill's output rather than duplicating it.
+- There is no `.seospider` file, no export folder, and no domain/URL to
+  crawl — nothing exists yet to feed in (see Preconditions).
+
+## Preconditions
+- [ ] Mode A: `seohead sf doctor` confirms a licensed SF CLI is discoverable
+  (via `--sf-cli`, `$SF_CLI`/`$SCREAMINGFROG_CLI`, `config.json`, `PATH`, or a
+  standard install directory) — otherwise fall back to Mode B.
+- [ ] Mode A: an active SF license (headless crawling requires one).
+- [ ] Mode B: an export folder exists with at least `Internal:All` exported
+  from SF as CSV/XLSX.
+- [ ] If module-dependent checks are expected (structured data, spelling, DOM
+  depth, mixed content), `audit.seospiderconfig` exists per `sf-config` —
+  otherwise those checks will legitimately come back `skipped`, not run.
 
 ## Two Input Modes
 - **Mode B (default; SF not required):** a folder containing CSV/XLSX files
@@ -75,6 +103,39 @@ Related skills: **sf-report** provides a human-readable report analysis;
 **sf-tasks** provides a prioritized backlog (`seohead sf tasks` / MCP
 `sf_audit_tasks`). MCP tools: `sf_audit_run`, `sf_audit_summary`, `sf_audit_issues`,
 `sf_list_exports`, `sf_audit_tasks`.
+
+## Decision points
+- **A `.seospider` file is provided but no SF CLI is available** — it cannot
+  be parsed directly (Java serialization); switch to Mode B via a manual CSV
+  export instead of attempting to read the binary file.
+- **Many checks return `skipped` rather than `0`** — that means the SF module
+  producing them was disabled, not that the site is clean. Route the user to
+  `sf-config` instead of reporting a false-positive clean bill.
+- **The mode/profile is unclear from the request** — clarify (A vs B,
+  `lite` vs `full`) before running rather than guessing: re-running a full
+  crawl is costly (Mode A), and guessing wrong in Mode B means asking for a
+  different export afterward anyway.
+- **`audit.json` exists but the user wants prose or a backlog** — hand off to
+  `sf-report`/`sf-tasks` rather than writing that narrative from this skill;
+  they are built to consume this skill's exact output contract.
+
+## Definition of done
+- [ ] Both `audit.json` (machine contract) and `audit.md` (human report) exist
+  for the given input.
+- [ ] The health summary and critical section (broken links with DOM
+  location, sitemap 4xx/5xx entries) were surfaced before any deep-dive detail.
+- [ ] Every check reported as `skipped` is called out explicitly as "module
+  not enabled," not silently omitted from the summary.
+- [ ] Both files are attached/available for the user to download.
+
+## Cost
+- **Mode B (`--exports-dir`):** offline and free — parses local export files
+  already on disk, no network requests, seconds regardless of site size.
+- **Mode A (`--crawl`):** requires a licensed SF CLI; the cost is the crawl
+  itself — duration scales with site size (minutes to hours), and it consumes
+  the already-owned SF license's crawl time, not a per-request paid API.
+
+No paid API is touched by this skill in either mode.
 
 ## Interpretation
 - Check registry and severity levels: `reference/checks.md`.

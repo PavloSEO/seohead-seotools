@@ -164,7 +164,7 @@ value — logs end up in session transcripts.
 
 ## Tests
 
-over 1100 tests, **all offline**; runtime varies by Python version and installed extras. See
+over 1500 tests, **all offline**; runtime varies by Python version and installed extras. See
 [TESTING.md](TESTING.md) for what they cover and what they deliberately do
 not.
 

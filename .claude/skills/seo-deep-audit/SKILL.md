@@ -26,6 +26,41 @@ retrieves what" is in the `sf-boundaries` skill.
 > `audit-roadmap` (Recon lite -> roadmap with priorities, scale, site type, and YAGNI), and then
 > this skill executes the roadmap.
 
+## Trigger
+- A domain/site is provided with a request to inspect/analyze/check it and **no
+  scope is specified**: "analyze the site," "perform an SEO audit of the
+  domain," "inspect the entire site," "what is wrong with the site," "audit
+  this domain," "full SEO audit," or simply a bare URL/domain handed over for
+  analysis.
+- The user wants everything in one pass: reconnaissance + crawl evidence +
+  agent-level checks + a consolidated report and task backlog.
+- A request that started narrow has grown into "also check X, and Y, and Z"
+  to the point where running the whole pipeline is cheaper than hand-assembling
+  the parts one skill at a time.
+
+## Anti-trigger
+- The user names one narrow check explicitly ("only robots.txt," "just check
+  schema," "quick tech-detect") — go straight to that skill (`robots-audit`,
+  `schema-graph`, `seo-recon`, …) instead of running every phase here.
+- Only crawl evidence is wanted, with no reconnaissance or agent-level work —
+  call `sf-analyzer` directly instead of the orchestrator.
+- No domain or URL was actually supplied (e.g. a generic "how do I improve
+  SEO" question) — there is nothing yet to audit.
+- A full audit already exists and the question is "did anything change since
+  last time" — use `compare-crawls` against the earlier `audit.json` instead
+  of rerunning every phase from scratch.
+
+## Preconditions
+- [ ] A domain or URL is provided — this orchestrator has no target without one.
+- [ ] `seohead sf doctor` has been run to know whether Mode A (live SF crawl)
+  or Mode B (`--exports-dir`) applies for Phase 1.
+- [ ] For Mode A: a licensed SF CLI is installed and discoverable; for Mode B:
+  an exports folder path is available.
+- [ ] Network reachability to the domain for Phase 0 reconnaissance and the
+  Phase 2 checks that make live requests (`js-render-check`, `security-check`)
+  — otherwise those phases degrade honestly rather than silently skip (see
+  "Graceful degradation").
+
 ## Default rule
 - **No scope clarification -> MAX.** Run every phase below.
 - **Explicitly narrowed scope -> only that scope.** "only sitemap" -> only the sitemap portion;
@@ -88,6 +123,54 @@ available, request exports and use mode B (`--exports-dir`); see `sf-analyzer`/`
 **Phase 3 — Synthesis.** `sf-report` — a human-readable analysis of `audit.json`; merge the Phase
 0 and Phase 2 findings into it. `sf-tasks` — a prioritized backlog; add tasks from agent-level
 findings (robots fix, SSR/prerendering, completing silo clusters, heading hierarchy).
+
+## Decision points
+- **Scope is ambiguous** ("check the site," no further detail) vs explicitly
+  narrowed ("only sitemap," "quick/lite") — default to MAX unless the user
+  actually named a narrower scope; never ask permission to go full-depth.
+- **Phase 0's `tech-detect` finds an SPA/Next.js/Nuxt stack** — this forces
+  Phase 2's `js-render-check` to run (raw HTML will materially understate the
+  page), rather than treating it as optional.
+- **The audit comes back with many `skipped` results**
+  (MIXED_CONTENT/STRUCTURED_DATA/SPELLING/DOM_*) — decide whether to pause and
+  fix it via `sf-config` first (when full depth genuinely matters for this
+  audit) or proceed and mark those checks "not checked" (when a fast turnaround
+  matters more); never report a `skipped` check as if it were clean.
+- **SF/a license is unavailable** — switch to Mode B (`--exports-dir`) rather
+  than blocking the entire audit on Phase 1; request exports from the user if
+  none exist yet.
+
+## Definition of done
+- [ ] Phase 0 reconnaissance (domain-profile, cdn-check, tech-detect) ran, or
+  is explicitly marked "not checked" with a stated reason.
+- [ ] Phase 1 produced `audit.json` + `audit.md` via `sf run`, unless the
+  scope was explicitly narrowed to exclude crawl evidence.
+- [ ] Every applicable Phase 2 check ran — robots-audit, js-render-check (if
+  an SPA was detected), silo-audit, heading-outline, security-audit,
+  schema-graph, duplicate-audit, geo-aeo-audit — or carries a stated reason
+  for being skipped.
+- [ ] Phase 3 synthesis exists: a readable report plus a prioritized
+  `tasks.md`.
+- [ ] All 8 items in "What to deliver to the user" below are populated, not
+  partially filled.
+
+## Cost
+This orchestrator makes no calls of its own beyond what each phase invokes:
+- **Phase 0:** 3 toolkit calls (`domain-profile`, `cdn-check`, `tech-detect`),
+  each a handful of HTTP/DNS requests — seconds total, no paid API.
+- **Phase 1:** delegates entirely to `sf-analyzer`. Mode B (`--exports-dir`) is
+  offline/free and parses existing exports in seconds. Mode A (`--crawl`)
+  requires a licensed SF CLI and takes as long as the crawl itself — minutes
+  to hours depending on site size — but spends no per-request paid API, only
+  the already-owned SF license's crawl time.
+- **Phase 2:** one or two requests per agent-level check
+  (`security-check`, `schema-build`/`schema-check` per template,
+  `ai-bots-check`, `llms-txt-check`); `duplicate-check` is local computation
+  over already-crawled text with no extra network cost.
+- **Phase 3:** local report/task generation from `audit.json`, no network cost.
+
+Overall: no paid API is touched anywhere in this pipeline; the only variable
+cost is Mode A's crawl duration when a live SF crawl is requested.
 
 ## What to deliver to the user (one consolidated package)
 1. **Site profile** (reconnaissance): domain/age, hosting/CDN, CMS/stack, risk flags.

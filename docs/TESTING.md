@@ -11,7 +11,7 @@
 
 If the venv does not exist, see [SETUP.md](SETUP.md) — nothing is installed
 by the tests themselves. The first public snapshot contained **458 offline tests**; the current
-suite contains **over 1100 offline tests**. Runtime varies
+suite contains **over 1500 offline tests**. Runtime varies
 with Python version and installed extras. CI (`.github/workflows/ci.yml`) runs the same suite on
 Python 3.10, 3.12, and 3.13 plus the gates described below.
 
@@ -70,6 +70,14 @@ Grouped by area (file names under `tests/`):
 - **Docs**: `test_docs_drift.py` — recounts tool/skill/check numbers in
   README, skills, and docs, and fails on references to
   non-existent commands. Documentation must rot loudly.
+  `test_docs_commands_execute.py` goes one step further: it extracts every
+  `seohead ...` invocation actually shown in README/docs/skills/examples
+  (`scripts/doc_commands.py`) and runs each one for real against a loopback
+  fixture site and copies of `examples/` — a renamed or removed flag fails
+  here even if no other test happens to exercise it. The handful that need
+  real infrastructure (RDAP/DNS, a licensed SF binary, a paid provider
+  credential, the never-returning `mcp` server) are at least parsed against
+  the live argument parser instead.
 - **Safety nets**: `test_public_safety.py` covers private-network URL
   blocking and image mutation safeguards.
 
@@ -105,9 +113,12 @@ From `.github/workflows/ci.yml` (all run on every push/PR to `main`):
 Descriptions only — write them when the corresponding code changes or
 before extending that area.
 
-1. **Per-command CLI smoke** (`seohead <cmd> --help` for all 42): the
+1. **Per-command CLI smoke** (`seohead <cmd> --help` for all 45): the
    cheapest possible net against argument-parser typos — the exact class of
    the `soft-404-check` bug that once left a tool dead with tests green.
+   `test_docs_commands_execute.py` now covers this for every command that
+   happens to appear in a documented example; this item is the remainder —
+   every command, whether or not any doc shows it.
 2. **Flag-mapping test**: for each command in `COMMANDS`, assert that the
    flags added in `_add_flags` survive `_build_kwargs` into handler kwargs.
    Today a flag that is silently dropped is invisible to the suite.
@@ -129,3 +140,8 @@ copies it into a temp dir per test (`exports_dir` fixture) and exposes a
 ready `result` fixture that runs the full audit. Never edit fixtures to
 make a check pass — the fixture is the ground truth the CI gate audits
 against.
+
+`tests/doc_fixtures/` — a small static site (`site/`) plus a loopback
+`ThreadingHTTPServer` (`site_server.py`) that serves it, used only by
+`test_docs_commands_execute.py` so live-URL commands from the docs have
+something local and offline to point at.

@@ -17,10 +17,34 @@ Converts an SF export (CSV/XLSX) **or** an existing `audit.json` into a human-re
 `sf-analyzer`, but the goal here is not diagnostics for the sake of JSON; it is a
 **clear report**.
 
-## When to Use It
+## Trigger
 - "Create a readable report from this SF export";
 - "Format an audit report for the client / developers";
 - "Explain `audit.json` in plain language and identify what matters."
+- Frontmatter triggers: Screaming Frog report, audit.md, readable report, export
+  report, SEO report.
+
+## Anti-trigger
+- No SF export directory and no `audit.json` exist yet, and only a `.seospider`
+  project file is available — that needs the SF CLI or a manual CSV export first.
+  Run `sf-analyzer` (`seohead sf run`) to produce the data this skill formats.
+- The deliverable is a prioritized backlog ("what should I fix first," "tasks.md",
+  P1/P2/P3 tickets) rather than a narrative explanation — use `sf-tasks`. It reads
+  the same `audit.json` but outputs a task list, not prose.
+- There is no Screaming Frog crawl at all and the ask is a bulk sitemap-based audit
+  with xlsx/docx/csv output — use `site-report`, which runs its own site-level and
+  page-level checks against the sitemap instead of reformatting an SF export.
+- The question is about topical/silo structure (clusters, hubs, semantic coverage),
+  not issue severity — use `silo-audit`, which layers structural analysis on the
+  same `audit.json`.
+
+## Preconditions
+- [ ] Either a directory of SF exports (at minimum `Internal:All`) or an existing
+  `audit.json` is available.
+- [ ] If only a `.seospider` file exists, the SF CLI (Mode A) or a manual CSV
+  export (Mode B) has been produced first — see `../sf-analyzer/SKILL.md`.
+- [ ] It is known whether `audit.json` is already current for the exports at hand,
+  or whether it must be (re)generated in step 2.
 
 ## Workflow
 1. **Identify the input:** a directory containing SF exports (at minimum
@@ -47,6 +71,40 @@ Converts an SF export (CSV/XLSX) **or** an existing `audit.json` into a human-re
    field). Do not dump the entire list — highlight the priorities and attach the
    rest as a file.
 5. **Attach** `report/audit.md` (+ `audit.json`) for download.
+
+## Decision points
+- **`audit.json` already exists vs. fresh exports were also handed over.** If the
+  exports are newer than the existing `audit.json` (or its content looks stale),
+  rebuild via `seohead sf run`; otherwise reuse it rather than re-running the audit
+  engine for nothing.
+- **Severity vs. frequency when ordering the narrative.** `summary.by_check` can
+  show a notice-level check with hundreds of occurrences outranking a critical
+  check with three. Always lead with severity (critical first), and use frequency
+  only to order items *within* the same severity band, not to override it.
+- **Multiple-H1 findings.** A page reporting two H1 elements is not automatically
+  wrong — an accordion, a hidden tab panel, or an SVG title can trigger a false
+  positive. Show the actual H1 text for both occurrences (as the report format
+  requires) so the user can judge intent before it is treated as a defect.
+- **"Heavy HTML (× median)."** Judge this relative to the site's own median page
+  weight, not an absolute KB threshold — a template-heavy page can be normal for
+  one site and anomalous for another. Flag pages that are outliers against their
+  own crawl, not against a generic number.
+
+## Definition of done
+- [ ] `report/audit.md` exists and covers all five structural sections: health
+  summary, critical, warning, notice, sitemap & robots.
+- [ ] Every broken link in the critical section carries
+  source/destination/anchor/position/XPath, not just a URL.
+- [ ] The narrative delivered to the user leads with critical issues and cites
+  `summary.by_check` for scale, rather than dumping the full issue list inline.
+- [ ] `audit.md` (+ `audit.json`) is attached for download.
+
+## Cost
+This skill does not call any `seohead <command>` beyond `seohead sf run` (the same
+engine `sf-analyzer` uses) to (re)build the report from data already collected by
+a prior Screaming Frog crawl or export — it makes no live HTTP requests of its own
+and touches no paid API. Runtime is local computation over the export/`audit.json`
+size: seconds for a small site, low minutes for a large export.
 
 ## Interpretation
 - Check registry and severity levels — `../sf-analyzer/reference/checks.md`.
