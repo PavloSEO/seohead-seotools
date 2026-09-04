@@ -28,7 +28,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[TOOLS.md](TOOLS.md)** — what every tool does, which of them touch the
   network, which have side effects, where the boundaries are. Grouped by layer:
   recon, live tools, bounded site audit, own-crawl, external data sources, SF crawl audit.
-- **[CHECKS.md](CHECKS.md)** — the 104 checks the SF crawl audit runs: what each fires
+- **[CHECKS.md](CHECKS.md)** — the 108 checks the SF crawl audit runs: what each fires
   on, what evidence it needs, and the fix that ships with the finding. Generated
   from `seohead/sf/core/registry.py` (`scripts/generate_checks_reference.py`);
   `tests/test_docs_drift.py` fails the build if it drifts from the registry.

@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-50 callable tools · 108 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
+52 callable tools · 108 checks over Screaming Frog crawl exports · 28 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -61,7 +61,7 @@ No client data is included.
 |---|---|---|
 | Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 108-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 45 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| A tool-calling AI agent | `seohead mcp` | Exposes 47 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -77,13 +77,13 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ## What is included
 
-### 45 core CLI commands and MCP tools
+### 47 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |
 |---|---:|---|
 | Live page and URL evidence | 12 | parsing, robots.txt, headers, CSS/JS weight and delivery, links, hreflang, redirects, sitemaps, image download and optimization, keyword clustering |
 | Domain and infrastructure reconnaissance | 8 | domain/DNS/TLS, CDN cache behavior, technology detection, security headers, mirrors, regional structure, donor backlink verification, AI crawler access |
-| Structured data, content, rendering, and logs | 10 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
+| Structured data, content, rendering, and logs | 12 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, content-area Markdown extraction, boilerplate consistency, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis |
 | Audit orchestration and reporting | 2 | bounded sitemap-based site evidence and XLSX/DOCX/CSV/Markdown/JSON output |
 | Demand, SERP, and traffic sources | 11 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
 
@@ -201,7 +201,7 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **45 `seo_*` tools plus five `sf_*` tools**. The 45 core tools share the tested
+The server exposes **47 `seo_*` tools plus five `sf_*` tools**. The 47 core tools share the tested
 handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
 opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
 return paths instead of dumping large reports into an agent context.
@@ -264,7 +264,7 @@ Read [provider gotchas](docs/GOTCHAS.md) before enabling production credentials.
   backlink index.
 - International tools validate hreflang and regional structure; the package does not claim a
   machine-translation engine. Translation belongs to a reviewed model or localization workflow.
-- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 42 core
+- `site-audit` is a bounded sitemap-based evidence pass, not an exhaustive run of all 47 core
   tools and not a replacement for a production crawler.
 - SEOHEAD does not include its own general-purpose crawler. Whole-site crawling is delegated to
   Screaming Frog; export analysis remains available without live crawl mode.

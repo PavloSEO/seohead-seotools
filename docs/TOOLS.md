@@ -1,6 +1,6 @@
 # Tool reference
 
-45 tools, reachable identically from the CLI and from MCP. One
+47 tools, reachable identically from the CLI and from MCP. One
 implementation, two faces: `seohead <command>` in the terminal and
 `seo_<command>` on the MCP server (`seohead mcp`). Five more `sf_*` tools cover
 the Screaming Frog crawl audit workflow specifically — see that section below
@@ -63,9 +63,11 @@ the report says `http_version_measurable: false`.
 | `schema-check` | Schema.org validation **in two layers**: the vocabulary (1010 types, `domainIncludes`/`rangeIncludes`, inheritance, deprecated terms) and Google rich-result eligibility |
 | `schema-build` | Builds a suggested connected `@graph` with `@id`s for the page type; `--type` sets the type manually when the classifier is unsure |
 | `social-meta-check` | Open Graph and Twitter Card: what is there, what is missing, what contradicts the content |
-| `citability-check` | How quotable a text is for an AI answer: direct answers, facts, structure |
+| `citability-check` | How quotable a text is for an AI answer: direct answers, facts, structure. Fetching a URL scores the resolved content area's Markdown (nav/footer excluded), not the raw whole-document text |
 | `llms-txt-check` | Is there a `/llms.txt`, how useful it is to a model, is the brand mentioned |
-| `duplicate-check` | Near-duplicates via simhash + LSH: finds almost-identical texts in a large set without comparing all pairs |
+| `duplicate-check` | Near-duplicates via simhash + LSH: finds almost-identical texts in a large set without comparing all pairs; exact duplicates (by content hash) are reported separately and excluded from near-duplicate clusters. `--all-pages` also compares non-indexable items (default: indexable only) |
+| `markdown-extract` | Renders a page as Markdown in two scopes: `content_markdown` (boilerplate stripped, structure kept — worth diffing, scoring, or feeding to a model) and `full_markdown` (header/footer included, the input `boilerplate-report` hashes) |
+| `boilerplate-report` | Hashes header/nav/footer per page across a crawled corpus and reports minority template groups (fraction + sample URL), answering whether boilerplate is actually the same everywhere |
 | `keywords-cluster` | Keyword clustering; the algorithm and parameters come via `--input` |
 | `render-check` | Raw HTML vs the rendered DOM + lab metrics. See the [js-render-check](../.claude/skills/js-render-check/SKILL.md) skill |
 
@@ -227,6 +229,8 @@ the handler's arguments. Frequent parameters are duplicated as flags:
 seohead schema-check --url https://example.com/product/nasos
 seohead backlinks-check --target example.com --donors-file donors.txt
 seohead duplicate-check --input '{"items":[{"id":"a","text":"..."}],"threshold":0.9}'
+seohead markdown-extract --url https://example.com/product/nasos
+seohead boilerplate-report --input '{"pages":[{"url":"https://example.com/a","html":"..."}]}'
 echo '{"url":"https://example.com"}' | seohead parse
 ```
 
@@ -235,7 +239,7 @@ echo '{"url":"https://example.com"}' | seohead parse
 tool must not knock where it was not asked to.
 
 **MCP.** The same set under the `seo_*` names plus the `sf_*` audit tools
-(44 + 5):
+(47 + 5):
 
 ```bash
 seohead mcp        # stdio
