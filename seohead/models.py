@@ -64,6 +64,11 @@ class ParsedPage(_ParsedPageOptional):
     jsonld_invalid: list[dict[str, Any]]
     links: list[LinkInfo]
     text: str
+    # The whole body, and the content area alone. word_count follows the
+    # content area, because a nav-and-footer word count describes the template
+    # rather than the page.
+    content_text: str
+    content_area_strategy: str
     word_count: int
 
 
