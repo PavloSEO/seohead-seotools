@@ -82,7 +82,20 @@ seohead duplicate-check --input '{"items":[{"id":"a","text":"..."},{"id":"b","te
 echo '{"url": "https://example.com"}' | seohead parse          # stdin JSON also works
 ```
 
-Output is always JSON on stdout; errors go to stderr with a non-zero exit.
+Output is always JSON on stdout. Exit codes:
+
+- `0` — the command completed and reports `"ok": true` (or carries no `ok` field at all).
+- `1` — either the handler could not complete its check and says so in the JSON with
+  `"ok": false` (a bad input, an unreachable host, a missing dependency — the tool's own
+  contract in `docs/ARCHITECTURE.md` is to report this as data, never raise), or the process
+  crashed before producing JSON, in which case a one-line `error: ...` goes to stderr instead
+  of stdout.
+- `2` — reserved for `log-scan` alone: the run it inspected contradicts itself (its own numbers
+  disagree), which is a distinct signal from "the command failed" so a script can tell the two
+  apart. `log-scan` still exits `1` for an ordinary failure such as a missing run directory.
+
+An MCP client sees the same distinction via `isError` on the tool result rather than a process
+exit code.
 
 ## Paid data sources (demand, SERP, traffic)
 

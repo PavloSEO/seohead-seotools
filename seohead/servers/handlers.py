@@ -31,6 +31,17 @@ from seohead.tools import (
     robots as robots_core,
 )
 
+
+def handler_failed(result: Any) -> bool:
+    """A handler reports its own failure to fetch, parse, or reach a provider via ``ok: False``
+    in the returned dict, rather than raising (see ``docs/ARCHITECTURE.md``'s "the network never
+    kills a tool" invariant). The CLI and the MCP server both call this instead of re-deriving
+    the check, so the two surfaces cannot drift on what counts as a failure — see the exit-code
+    contract in ``docs/USAGE.md``.
+    """
+    return isinstance(result, dict) and result.get("ok") is False
+
+
 # SEO core is extracted BY DEFAULT (the caller can turn any field off with False).
 DEFAULT_PARSE_OPTIONS: dict[str, bool] = {
     "meta": True,

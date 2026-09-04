@@ -37,6 +37,11 @@ ROOT = Path(__file__).resolve().parent.parent
 NEEDS_LIVE_INFRASTRUCTURE = {
     "domain-profile",
     "mirror-check",
+    # Its target-domain matching deliberately rejects a bare IP address (the fixture server has
+    # no name, only 127.0.0.1) — the same "needs a real domain, not just an HTTP-answering host"
+    # gap as domain-profile and mirror-check above, just surfaced only once ok:false reached the
+    # exit code (#155) instead of being silently swallowed by an exit-0 success.
+    "backlinks-check",
     "keywords-expand",
     "keywords-seasonality",
     "keywords-exact",
@@ -109,6 +114,12 @@ def _seed_workdir(tmp_path: Path, base_url: str) -> None:
     images_dir = tmp_path / "images"
     images_dir.mkdir()
     shutil.copy(ROOT / "tests" / "doc_fixtures" / "site" / "image.png", images_dir / "image.png")
+    # docs/../deliverables.md's chain optimizes whatever `images-download --output-dir
+    # ./original` just wrote; its own `--urls` is an illustrative "<comma list>" placeholder
+    # that downloads nothing, so pre-seed the directory the second command reads from.
+    original_dir = tmp_path / "original"
+    original_dir.mkdir()
+    shutil.copy(ROOT / "tests" / "doc_fixtures" / "site" / "image.png", original_dir / "image.png")
 
 
 @pytest.fixture(scope="module")
