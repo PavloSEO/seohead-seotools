@@ -109,6 +109,10 @@ class AuditContext:
             "link_score": rec.get("link_score"),
             "is_in_sitemap": None,
             "sitemap_lastmod": None,
+            # "static" unless the collector recorded a fuller fetch (#18). An
+            # SF export never has this column, so it defaults the same way a
+            # native crawl that never escalated would.
+            "representation": rec.get("representation") or "static",
         }
 
     # -- config-aware helpers ----------------------------------------------

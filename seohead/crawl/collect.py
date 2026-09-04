@@ -75,6 +75,14 @@ class PageRecord:
     # This is the per-URL half of "a report built partly from cache must say so"; cache_stats on
     # the run as a whole is the aggregate half.
     cache_status: str = ""
+    # Which representation produced this page's evidence: "static" (raw HTML,
+    # the default), "rendered" (JavaScript executed), or "legacy_fragment"
+    # (the deprecated ``_escaped_fragment_`` scheme). Recorded per page, not
+    # assumed for the whole crawl, because selective escalation (#18) renders
+    # only the URL patterns that need it -- a report that mixed the two
+    # populations in one column would compare numbers that were never
+    # measured the same way.
+    representation: str = "static"
 
     @property
     def is_html(self) -> bool:
@@ -316,6 +324,31 @@ def fetch_one(
         cache.store(url, request_headers, record.status_code, headers, body)
         record.cache_status = "miss"
     parsed = _apply_body(record, url, body)
+    parsed = None
+    if record.size_bytes > MAX_RESPONSE_BYTES:
+        # Too large to parse, but a 200 is still a 200: not "unreachable".
+        record.error = "response too large to parse"
+    elif record.is_html and body:
+        parsed = parse_html(body, url)
+        # Transient, never persisted to pages.jsonl or PageRecord: the
+        # rendering pre-flight gate (#18) needs the start page's raw HTML to
+        # check for an empty SPA shell, and this is the one place that HTML
+        # is already in memory, so it costs nothing to hand back here rather
+        # than fetching the start page a second time.
+        parsed["_raw_html"] = body
+        for key, value in _record_from_parsed(parsed).items():
+            setattr(record, key, value)
+        found, parsed_count = _jsonld_counts(body, parsed)
+        record.jsonld_blocks_found = found
+        record.jsonld_blocks_parsed = parsed_count
+        text_len = len(_text_of(parsed.get("text")).encode("utf-8", "ignore"))
+        # Percent, not a fraction: the analyzer's threshold is a percentage and
+        # the export format this projects onto uses percent too (20.0, 15.0).
+        # Emitting 0.6 here made LOW_TEXT_RATIO fire on every crawled page,
+        # since 0.6 < 10 always.
+        record.text_ratio = (
+            round(text_len / record.size_bytes * 100, 2) if record.size_bytes else None
+        )
     return record, parsed
 
 

@@ -125,6 +125,17 @@ def aggregate(
             "html_indexable": len(ctx.indexable_html_pages()),
             "issues_total": len(issues),
             "groups_total": len(ctx.groups),
+            # "static" unless a collector recorded otherwise (#18). Kept in
+            # the standard totals block, not a rendering-specific one, so
+            # every report -- crawled natively or loaded from an SF export --
+            # states the two populations without a caller having to ask.
+            "pages_by_representation": dict(
+                sorted(
+                    Counter(
+                        (page.metrics.get("representation") or "static") for page in ctx.pages
+                    ).items()
+                )
+            ),
         },
         "by_severity": {
             "critical": by_severity.get("critical", 0),
@@ -142,6 +153,20 @@ def aggregate(
     if not crawl_valid:
         summary["health_score"] = None
         summary["health_score_reason"] = invalid_reason
+
+    # An empty SPA shell or a start page with zero internal links fetches
+    # fine and produces a clean-looking, one-page audit -- the false-green
+    # #18's gate exists to catch. The collector (seohead.crawl, via
+    # seohead.servers.handlers) decides this and passes it through ``run``,
+    # the same channel crawl_partial already uses, so seohead.sf never has
+    # to import the collector to honour its verdict.
+    requires_rendering = bool(run.get("requires_rendering"))
+    run["requires_rendering"] = requires_rendering
+    if requires_rendering and summary["health_score"] is not None:
+        summary["health_score"] = None
+        summary["health_score_reason"] = run.get("requires_rendering_reason") or (
+            "the run requires JavaScript rendering before it can be scored"
+        )
 
     # A score built from half the checks is not comparable to one built from all
     # of them, and the difference is invisible in the number. Fewer checks means

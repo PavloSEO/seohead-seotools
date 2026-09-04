@@ -111,6 +111,76 @@ DEFAULTS: dict[str, Any] = {
         # result back to the cache. A deliberate hard refresh, distinct from mode="off".
         "invalidate": False,
     },
+    "rendering": {
+        # raw: static HTML only, the crawler's original behaviour. legacy_
+        # fragment: honour a page's own opt-in to the deprecated "#!" / "
+        # ?_escaped_fragment_=" AJAX-crawling scheme when it declares one, no
+        # browser required. js: execute JavaScript in a headless browser and
+        # extract from the rendered DOM -- always in addition to, never
+        # instead of, the links already found in the raw HTML, because a
+        # link hydration removes is a real finding, not a link that never
+        # existed. See seohead.crawl.render_escalation for how "js" and
+        # "legacy_fragment" are applied selectively rather than to every URL.
+        "mode": "raw",  # raw | legacy_fragment | js
+        "escalation": {
+            # How many URLs per detected template pattern are probed
+            # raw-versus-fuller before the whole pattern is escalated.
+            # Sampling patterns, not every URL, is what keeps rendering an
+            # order of magnitude cheaper than rendering the whole crawl.
+            "sample_per_pattern": 2,
+            # A budget for the re-fetch step, separate from the static
+            # crawl's own limits.max_urls: escalating every page of a large
+            # pattern would erase the saving sampling was meant to buy.
+            "max_render_urls": 30,
+            "max_render_seconds": 0,  # 0 = no wall-clock limit
+        },
+        "browser": {
+            # How long JavaScript may keep running after the page and its
+            # subresources have loaded. Too short loses content on a slow
+            # application; too long multiplies crawl duration -- there is no
+            # universally correct value, which is why it is recorded.
+            "script_timeout_seconds": 10.0,
+            # A responsive page renders a different DOM at different widths,
+            # so word count and link count change with this setting.
+            # "desktop" and "mobile" are the only presets (see
+            # seohead.tools.render.VIEWPORT_PRESETS) so two runs are only
+            # ever comparable by name, never by an arbitrary pixel value.
+            "viewport": "desktop",  # desktop | mobile
+            # Grow the viewport to the rendered page's own height so lazily
+            # loaded listings are captured, capped by
+            # resize_to_content_max_height_px so a page that grows without
+            # bound is truncated deterministically, not crawled forever.
+            "resize_to_content": False,
+            "resize_to_content_max_height_px": 15000,
+            # Both match how a search engine assembles a page from what a
+            # user's browser actually renders, and both change the extracted
+            # content: a component's markup that lives only inside a shadow
+            # root, or only inside a same-origin iframe, is otherwise absent
+            # from page.content() entirely.
+            "flatten_shadow_dom": False,
+            "flatten_iframes": False,
+            "device_pixel_ratio": 1.0,
+            "mobile_emulation": False,
+            "touch_emulation": False,
+            # What counts as "loaded" before script_timeout_seconds starts
+            # counting down. "networkidle" may never occur on a commercial
+            # site (analytics, chat, ads keep connections open), turning a
+            # useful render into a timeout -- see render.render_check.
+            "wait_until": "load",  # load | domcontentloaded | networkidle
+            # Off by default, and refused without an explicit directory
+            # (see validate() below): attaching a real browser profile
+            # crawls the site as whoever's cookies that profile carries.
+            "persistent_profile": False,
+            "persistent_profile_dir": "",
+        },
+        "artifacts": {
+            # Both off by default: heavy on disk, and most audits need
+            # neither. Screenshots and console errors are per-URL artefacts,
+            # not audit findings, so they never change what is found.
+            "screenshots": False,
+            "console_errors": False,
+        },
+    },
 }
 
 # Settings that can change what the audit finds. These go into the manifest.
@@ -162,6 +232,29 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         # nothing on disk. Both change whether the findings describe the site now or earlier.
         "cache.mode",
         "cache.invalidate",
+        # Every rendering setting below changes what the crawl finds on the
+        # patterns it escalates -- see seohead.tools.render's module
+        # docstring on why raw and rendered numbers are not comparable
+        # unless the settings that produced each are recorded.
+        "rendering.mode",
+        "rendering.escalation.sample_per_pattern",
+        "rendering.escalation.max_render_urls",
+        "rendering.escalation.max_render_seconds",
+        "rendering.browser.script_timeout_seconds",
+        "rendering.browser.viewport",
+        "rendering.browser.resize_to_content",
+        "rendering.browser.resize_to_content_max_height_px",
+        "rendering.browser.flatten_shadow_dom",
+        "rendering.browser.flatten_iframes",
+        "rendering.browser.device_pixel_ratio",
+        "rendering.browser.mobile_emulation",
+        "rendering.browser.touch_emulation",
+        "rendering.browser.wait_until",
+        # A different profile crawls as a different, possibly logged-in,
+        # visitor; the directory itself is not included here (nor in the
+        # manifest below) for the same reason a credential's value is not:
+        # a shareable manifest should not carry a local filesystem path.
+        "rendering.browser.persistent_profile",
     }
 )
 
@@ -230,6 +323,58 @@ DESCRIPTIONS: dict[str, str] = {
         "Force every cache lookup to miss (a live measurement happens) while still writing the "
         "result back to the cache. Does not disable the cache; 'cache.mode=off' does that."
     ),
+    "rendering.mode": (
+        "'raw' (static HTML only), 'legacy_fragment' (honour a page's own "
+        "'_escaped_fragment_' opt-in), or 'js' (execute JavaScript in a headless "
+        "browser, selectively -- see rendering.escalation)."
+    ),
+    "rendering.escalation.sample_per_pattern": (
+        "URLs probed raw-versus-fuller per detected template pattern before deciding "
+        "whether the whole pattern needs escalation."
+    ),
+    "rendering.escalation.max_render_urls": (
+        "Maximum number of pages re-fetched under the fuller representation, across all "
+        "escalated patterns combined."
+    ),
+    "rendering.escalation.max_render_seconds": (
+        "Wall-clock budget for the escalation step; 0 means no limit."
+    ),
+    "rendering.browser.script_timeout_seconds": (
+        "How long JavaScript may keep running after the page and its subresources have "
+        "loaded, before the DOM is captured."
+    ),
+    "rendering.browser.viewport": "Viewport preset used for rendering: 'desktop' or 'mobile'.",
+    "rendering.browser.resize_to_content": (
+        "Grow the viewport to the rendered page's own height before capture, capped by "
+        "resize_to_content_max_height_px."
+    ),
+    "rendering.browser.resize_to_content_max_height_px": (
+        "Deterministic cap on resize_to_content, so an unbounded page is truncated rather "
+        "than crawled forever."
+    ),
+    "rendering.browser.flatten_shadow_dom": (
+        "Merge open shadow roots into their host elements before capturing the DOM."
+    ),
+    "rendering.browser.flatten_iframes": (
+        "Replace same-origin iframes with their own document's body content before capture."
+    ),
+    "rendering.browser.device_pixel_ratio": "Device scale factor used for rendering.",
+    "rendering.browser.mobile_emulation": "Emulate a mobile device (touch UA, is_mobile).",
+    "rendering.browser.touch_emulation": "Emulate touch input.",
+    "rendering.browser.wait_until": (
+        "Page-load strategy before script_timeout_seconds starts counting down: 'load', "
+        "'domcontentloaded', or 'networkidle'."
+    ),
+    "rendering.browser.persistent_profile": (
+        "Attach a persistent browser profile instead of an anonymous one. Off by default: "
+        "a real profile crawls the site as whoever's cookies it carries."
+    ),
+    "rendering.browser.persistent_profile_dir": (
+        "Directory for the persistent profile; required when persistent_profile is true, "
+        "and never a computed default."
+    ),
+    "rendering.artifacts.screenshots": "Save a full-page screenshot per rendered URL.",
+    "rendering.artifacts.console_errors": "Capture browser console error messages per rendered URL.",
 }
 
 # Environment overrides, applied between the file and explicit arguments.
@@ -244,6 +389,9 @@ ENV_OVERRIDES: dict[str, str] = {
 ROBOTS_POLICIES = ("respect", "report_only", "ignore")
 INTERNAL_SCOPES = ("host", "registrable_domain")
 CACHE_MODES = ("live", "off", "replay")
+RENDER_MODES = ("raw", "legacy_fragment", "js")
+RENDER_VIEWPORTS = ("desktop", "mobile")
+RENDER_WAIT_UNTIL = ("load", "domcontentloaded", "networkidle")
 
 # A reference to an environment variable, never an inline secret. This is the
 # only value shape a credential header may carry in a config file.
@@ -350,6 +498,49 @@ def validate(config: dict[str, Any]) -> None:
         )
 
     _validate_credential_headers(config["http"])
+    _validate_rendering(config["rendering"])
+
+
+def _validate_rendering(rendering: dict[str, Any]) -> None:
+    if rendering["mode"] not in RENDER_MODES:
+        raise ConfigError(
+            f"rendering.mode must be one of {RENDER_MODES}, got {rendering['mode']!r}"
+        )
+
+    escalation = rendering["escalation"]
+    if escalation["sample_per_pattern"] < 1:
+        raise ConfigError("rendering.escalation.sample_per_pattern must be at least 1")
+    if escalation["max_render_urls"] < 0:
+        raise ConfigError("rendering.escalation.max_render_urls cannot be negative")
+    if escalation["max_render_seconds"] < 0:
+        raise ConfigError("rendering.escalation.max_render_seconds cannot be negative")
+
+    browser = rendering["browser"]
+    if browser["viewport"] not in RENDER_VIEWPORTS:
+        raise ConfigError(
+            f"rendering.browser.viewport must be one of {RENDER_VIEWPORTS}, "
+            f"got {browser['viewport']!r}"
+        )
+    if browser["wait_until"] not in RENDER_WAIT_UNTIL:
+        raise ConfigError(
+            f"rendering.browser.wait_until must be one of {RENDER_WAIT_UNTIL}, "
+            f"got {browser['wait_until']!r}"
+        )
+    if browser["script_timeout_seconds"] < 0:
+        raise ConfigError("rendering.browser.script_timeout_seconds cannot be negative")
+    if browser["resize_to_content_max_height_px"] < 1:
+        raise ConfigError("rendering.browser.resize_to_content_max_height_px must be at least 1")
+    if browser["device_pixel_ratio"] <= 0:
+        raise ConfigError("rendering.browser.device_pixel_ratio must be positive")
+    if browser["persistent_profile"] and not browser["persistent_profile_dir"]:
+        # No default directory on purpose: a default would eventually collide
+        # with someone's real, cookie-carrying browser profile. Naming one is
+        # the explicit choice this setting requires.
+        raise ConfigError(
+            "rendering.browser.persistent_profile is true but "
+            "persistent_profile_dir is empty; a persistent profile must name "
+            "a directory explicitly"
+        )
 
 
 def _validate_credential_headers(http: dict[str, Any]) -> None:
