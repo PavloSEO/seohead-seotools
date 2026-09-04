@@ -46,3 +46,7 @@ _sandbox/
 _big/
 backup/
 sf spider parsing/
+
+# Agent worktrees: full checkouts of this repository, created under it.
+# Untracked and unignored, a single "git add -A" would commit every copy.
+.claude/worktrees/

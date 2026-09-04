@@ -18,7 +18,7 @@ supported by `config.json` search paths.
 ## Install
 
 ```bash
-git clone https://github.com/PavloSEO/seohead-seotools.git
+git clone https://github.com/PavloSEO/seotools.git
 cd seohead-seotools
 
 python3 -m venv .venv
