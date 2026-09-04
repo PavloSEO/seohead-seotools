@@ -98,6 +98,31 @@ def test_repeated_timeouts_stop_the_run_and_mark_it_partial():
     assert len(result.pages) < len(urls), "must stop rather than walk the whole list"
 
 
+def test_repeated_connection_failures_stop_the_run_and_mark_it_partial():
+    """#132: a fetcher that always raises a connection-level failure — never a
+    response, never a message containing "timeout" — used to be invisible to the
+    breaker: every one of 50 URLs got attempted and the run reported itself as a
+    plain "finished" success. Classification by exception type must catch this."""
+    urls = [f"https://example.com/{i}" for i in range(50)]
+    mapping = {u: ConnectionResetError("Connection reset by peer") for u in urls}
+    result = collect_urls(urls, fetcher=_fetch(mapping))
+    assert result.partial is True
+    assert result.finish_reason == "errors"
+    assert len(result.pages) < len(urls), "must stop rather than walk the whole list"
+
+
+def test_a_dns_failure_stops_the_run_the_same_way():
+    """The other example the issue names: an OSError that carries no HTTP response
+    and no "timeout" in its message either — socket.gaierror is exactly this."""
+    import socket
+
+    urls = [f"https://example.com/{i}" for i in range(8)]
+    mapping = {u: socket.gaierror("Name or service not known") for u in urls}
+    result = collect_urls(urls, fetcher=_fetch(mapping))
+    assert result.partial is True
+    assert result.finish_reason == "errors"
+
+
 def test_url_limit_marks_the_result_partial():
     urls = [f"https://example.com/{i}" for i in range(5)]
     result = collect_urls(urls, max_urls=2, fetcher=_fetch({u: FakeResponse(HTML) for u in urls}))

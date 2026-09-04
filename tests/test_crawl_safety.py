@@ -227,6 +227,125 @@ def test_pinning_honours_the_named_host_allowlist_but_not_a_different_host(monke
         net.pinned_target("https://other-internal.example/")
 
 
+# ── http_client()'s pinning transport (#142) ─────────────────────────────────
+#
+# pinned_target() alone only protects a caller disciplined enough to call it.
+# http_client() is the one function every tool actually calls, so the fix has
+# to live in the client it hands back: a transport that pins the connection to
+# the address it resolved itself, on every hop, rather than handing httpcore a
+# hostname it would resolve a second time on its own.
+
+
+def test_a_rebinding_resolver_cannot_move_a_plain_http_client_request():
+    """The exact shape from issue #142: a resolver that answers the check with
+    a public address and every later lookup for the same host with a loopback
+    one. Before the fix, httpcore's own connect did that later lookup and
+    nothing re-checked its answer. After the fix, the transport's own
+    resolution is what connects, so this must always fail closed rather than
+    silently reach the loopback address."""
+    import socket
+
+    from seohead.recon import net
+
+    real_getaddrinfo = socket.getaddrinfo
+    calls = {"n": 0}
+
+    def rebinding_getaddrinfo(host, *args, **kwargs):
+        if host == "rebind.example.test":
+            calls["n"] += 1
+            answer = "93.184.216.34" if calls["n"] == 1 else "127.0.0.1"
+            return real_getaddrinfo(answer, *args, **kwargs)
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    orig_getaddrinfo = net.socket.getaddrinfo
+    net.socket.getaddrinfo = rebinding_getaddrinfo
+    try:
+        client, _ = net.http_client(5.0)
+        with client, pytest.raises(ValueError, match="private"):
+            client.get("http://rebind.example.test:9/")
+    finally:
+        net.socket.getaddrinfo = orig_getaddrinfo
+
+    # The first call is the request hook's own check; every later call belongs
+    # to the transport pinning the connection — and it is that later call's
+    # answer that decided the outcome above, not the first one.
+    assert calls["n"] >= 2
+
+
+def test_the_pinning_transport_connects_to_the_address_it_resolved_not_a_hostname(
+    monkeypatch,
+):
+    """Direct proof of the mechanism: the underlying connection never receives
+    the hostname at all (so it has nothing left to re-resolve), while Host and
+    SNI still carry the real name for routing and certificate verification."""
+    import httpx
+
+    from seohead.recon import net
+
+    monkeypatch.setattr(
+        net.socket,
+        "getaddrinfo",
+        lambda host, port, *a, **k: [
+            (net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))
+        ],
+    )
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+
+    captured = {}
+
+    def fake_connect(self, request):
+        captured["host"] = request.url.host
+        captured["sni_hostname"] = request.extensions.get("sni_hostname")
+        captured["host_header"] = request.headers.get("host")
+        return httpx.Response(200, content=b"ok", request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_connect)
+
+    client, _ = net.http_client(5.0)
+    with client:
+        response = client.get("https://rebind.example.test/")
+
+    assert response.status_code == 200
+    assert captured["host"] == "93.184.216.34"
+    assert captured["sni_hostname"] == "rebind.example.test"
+    assert captured["host_header"] == "rebind.example.test"
+
+
+def test_a_redirect_to_a_private_address_is_refused_by_the_transport_alone(monkeypatch):
+    """Issue #142's "one more step" variant: a 302 pointing at a private
+    target. Built with no event hooks at all, so a pass here can only be the
+    transport itself re-validating and re-pinning the second hop — not the
+    request/response hooks that already covered this at the httpx-hook layer
+    in test_public_safety.py."""
+    import httpx
+
+    from seohead.recon import net
+
+    def fake_getaddrinfo(host, port, *_args, **_kwargs):
+        address = "10.0.0.5" if host == "internal.example.test" else "93.184.216.34"
+        return [(net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(net.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+
+    def fake_connect(self, request):
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(
+                302,
+                headers={"Location": "http://internal.example.test/secret"},
+                content=b"",
+                request=request,
+            )
+        raise AssertionError("must never connect for the private redirect target")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", fake_connect)
+
+    transport = net._get_pinning_transport_cls()()
+    client = httpx.Client(transport=transport, follow_redirects=True)
+    with pytest.raises(ValueError, match="private"):
+        client.get("https://start.example.test/")
+
+
 # ── circuit breaker ─────────────────────────────────────────────────────────
 
 
@@ -281,6 +400,26 @@ def test_a_success_clears_the_refusal_streak():
         t.record_server_error(503)
     t.record_success()
     assert t.host_is_failing() is False
+
+
+def test_a_connection_failure_trips_the_breaker_like_a_timeout():
+    """#132: a ConnectionResetError's message never contains the word "timeout",
+    so a breaker keyed on that substring stayed at zero no matter how many times
+    a dead host refused the connection. Classification is by exception type now
+    (see _classify_fetch_error), so a connection failure must feed the same
+    counter a real timeout does."""
+    from seohead.crawl.throttle import Throttle
+
+    def fetcher(_url):
+        raise ConnectionResetError("Connection reset by peer")
+
+    throttle = Throttle()
+    for _ in range(5):
+        record, parsed = fetch_one("https://example.com/", fetcher=fetcher, throttle=throttle)
+        assert parsed is None
+        assert record.error_kind == "connection"
+    assert throttle.timeouts == 5
+    assert throttle.should_stop(limit=5) is True
 
 
 # ── concurrency ceiling (#14: "a config file alone cannot raise it") ────────

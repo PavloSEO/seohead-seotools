@@ -19,6 +19,16 @@ All notable public changes are documented here.
   `if ... : pass` conditional that looked like this validation but always no-opped is
   gone. `tests/test_docs_commands_execute.py` now asserts the documented recipe's
   rendered summary against `audit.json`'s own totals, not just its exit code.
+- Close a DNS-rebinding gap in `http_client()` (#142): `pinned_target()`, the fix for the
+  TOCTOU window described in #14, protected only `collect.py`'s list-mode fetch — the
+  other fourteen call sites, including `spider.py`'s `crawl-site` engine, let httpx resolve
+  DNS a second, independent time to open the socket, so a hostile resolver answering that
+  second lookup differently than the guard's own reached `169.254.169.254` or any RFC 1918
+  address regardless of the guard's verdict. `http_client()` now builds every client on a
+  transport that pins the connection to the address it resolves itself, on the first
+  request and on every redirect hop, keeping the hostname only for the `Host` header and
+  TLS SNI — so the fix is structural rather than a discipline every caller had to remember.
+  `SEOHEAD_ALLOW_PRIVATE_NETWORKS`/`SEOHEAD_ALLOW_PRIVATE_HOSTS` are unchanged.
 - Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
   arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
   taste: each declares the catalogued issues it resolves, and

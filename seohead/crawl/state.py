@@ -31,6 +31,16 @@ class CrawlState:
     # means the frontier on disk was built under different rules than this
     # invocation is about to apply, so resuming would silently mix them.
     config_fingerprint: str = ""
+    # Exclusion tally and per-path query-variant budget, checkpointed for the same
+    # reason queue/seen are: both are accumulators the spider builds up while
+    # walking the frontier, and both are cheap (a handful of counters and short
+    # string sets) compared to the link graph, so there is no size reason to leave
+    # them out the way links.jsonl is kept as a sidecar instead of inline here.
+    # Losing the query budget specifically defeats it as a safety cap: it exists
+    # to stop faceted/filter parameters from exploding a crawl, and a cap that
+    # reopens on every resume stops capping anything.
+    excluded: dict[str, int] = field(default_factory=dict)
+    query_budget: dict[str, list[str]] = field(default_factory=dict)
 
 
 def ensure_safe_dir(directory: str) -> None:
@@ -77,7 +87,14 @@ def load(path: str, start_url: str, config_fingerprint: str = "") -> tuple[Crawl
         queue = [(str(u), int(d)) for u, d in raw.get("queue") or []]
         seen = [str(u) for u in raw.get("seen") or []]
         depth = int(raw.get("max_depth_reached") or 0)
-    except (TypeError, ValueError):
+        excluded = {str(k): int(v) for k, v in (raw.get("excluded") or {}).items()}
+        query_budget = {
+            str(path): [str(q) for q in variants]
+            for path, variants in (raw.get("query_budget") or {}).items()
+        }
+    except (TypeError, ValueError, AttributeError):
+        # AttributeError: excluded/query_budget present but not JSON objects
+        # (e.g. a list), so ``.items()`` itself fails.
         return None, "checkpoint contents are malformed; starting fresh"
     state = CrawlState(
         start_url=start_url,
@@ -85,6 +102,8 @@ def load(path: str, start_url: str, config_fingerprint: str = "") -> tuple[Crawl
         seen=seen,
         max_depth_reached=depth,
         config_fingerprint=raw.get("config_fingerprint") or "",
+        excluded=excluded,
+        query_budget=query_budget,
     )
     return state, f"resuming from checkpoint: {len(queue)} URL(s) queued, {len(seen)} seen"
 
@@ -98,6 +117,8 @@ def save(path: str, state: CrawlState) -> None:
         "seen": state.seen,
         "max_depth_reached": state.max_depth_reached,
         "config_fingerprint": state.config_fingerprint,
+        "excluded": state.excluded,
+        "query_budget": state.query_budget,
     }
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as handle:
