@@ -4,6 +4,10 @@ One file represents one entity, so the renderer writes two adjacent files:
 ``<name>.csv`` contains findings and ``<name>.pages.csv`` contains pages. Mixing
 different entities into a single table produces an ambiguous file that is difficult
 or impossible to import reliably.
+
+Named ``csvfile`` rather than ``csv``: a module named ``csv.py`` next to code that does
+``import csv`` for the standard library would shadow it. This is deliberate, not an
+inconsistency to align with the other format modules in this package (see docs/NAMING.md).
 """
 
 from __future__ import annotations

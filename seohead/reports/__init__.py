@@ -68,21 +68,21 @@ def build_report(data: Any, fmt: str = "xlsx", path: str | None = None) -> dict[
         if fmt == "json":
             target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
         elif fmt == "xlsx":
-            from seohead.reports import excel
+            from seohead.reports import xlsx
 
-            excel.write(document, target)
+            xlsx.write(document, target)
         elif fmt == "docx":
-            from seohead.reports import word
+            from seohead.reports import docx
 
-            word.write(document, target)
+            docx.write(document, target)
         elif fmt == "csv":
             from seohead.reports import csvfile
 
             csvfile.write(document, target)
         else:
-            from seohead.reports import markdown
+            from seohead.reports import md
 
-            markdown.write(document, target)
+            md.write(document, target)
     except ImportError as exc:
         return {
             "ok": False,
