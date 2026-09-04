@@ -51,6 +51,40 @@ PARTIAL_CRAWL_RATIO = 0.2
 # serving a fifth of the checks would grade a site on almost no evidence.
 MIN_COVERAGE_TO_SCORE = 0.5
 
+# Every one of these findings asserts a negative over the whole site — "no
+# hyperlink reaches this", "nothing links to it" — which is only provable once
+# every URL has been fetched. On a partial crawl the missing link may simply be
+# in the part that was never crawled, so proving the negative is unsound and
+# the finding is withheld rather than footnoted (issue #15's design
+# requirement: "partial crawls poison specific conclusions").
+UNLINKED_FINDING_CHECKS = frozenset(
+    {
+        "ORPHAN_PAGE",
+        "SITEMAP_ORPHAN",
+        "UNLINKED_CANONICAL",
+        "UNLINKED_PAGINATION_SERIES",
+    }
+)
+
+
+def _withhold_unlinked_findings(ctx: AuditContext, issues: list[Issue]) -> list[Issue]:
+    """Drop findings that assert "nothing links here" and declare why.
+
+    Each withheld check moves from a finding to a named skip, the same
+    discipline ``ctx.skip`` already applies to missing evidence: a check that
+    could not be proven must not look identical to a check that ran clean.
+    """
+    withheld = {i.check for i in issues if i.check in UNLINKED_FINDING_CHECKS}
+    if not withheld:
+        return issues
+    for check_id in sorted(withheld):
+        ctx.skip(
+            check_id,
+            "crawl is partial: an 'unlinked' finding cannot be proven when the "
+            "crawl did not reach every URL",
+        )
+    return [i for i in issues if i.check not in UNLINKED_FINDING_CHECKS]
+
 
 def _crawl_validity(
     n_pages: int, by_check: dict[str, int], urls_crawled: int
@@ -94,6 +128,30 @@ def aggregate(
 ) -> AuditResult:
     issues = _dedupe(ctx.issues)
 
+    # Partial-crawl status must be known before issues are finalized: an
+    # "unlinked"/"orphan" finding computed on a truncated crawl is unproven,
+    # and withholding it after ids/back-links are assigned would leave stale
+    # references. Both crawl_valid and crawl_partial depend only on counts
+    # that do not themselves change when unlinked findings are withheld
+    # (NO_RESPONSE presence; total URLs crawled), so they are safe to compute
+    # up front.
+    urls_crawled = len(ctx.pages)
+    n_pages = len(ctx.html_pages())
+    crawl_valid, invalid_reason = _crawl_validity(
+        n_pages, dict(Counter(i.check for i in issues)), urls_crawled
+    )
+    urls_in_sitemap = int((sitemap_summary or {}).get("urls_in_sitemap") or 0)
+    sitemap_partial = bool(
+        urls_in_sitemap and crawl_valid and urls_crawled < urls_in_sitemap * PARTIAL_CRAWL_RATIO
+    )
+    # A caller may already know the run is partial — a URL limit, a timeout, an
+    # interrupted crawl — before any sitemap comparison happens. That signal
+    # must survive here, not be replaced by a sitemap check that has nothing to
+    # say when there is no sitemap.
+    crawl_partial = bool(run.get("crawl_partial")) or sitemap_partial
+    if crawl_partial:
+        issues = _withhold_unlinked_findings(ctx, issues)
+
     # assign ordered ids + fingerprints (sorted for determinism)
     sev_rank = {"critical": 0, "warning": 1, "notice": 2}
     issues.sort(key=lambda i: (sev_rank.get(i.severity, 3), i.check, str(i.target_url)))
@@ -115,7 +173,6 @@ def aggregate(
 
     by_severity = Counter(i.severity for i in issues)
     by_check = Counter(i.check for i in issues)
-    n_pages = len(ctx.html_pages())
     weights = ctx.config.get("scoring", {}).get("weights", {})
 
     summary: dict[str, Any] = {
@@ -135,8 +192,6 @@ def aggregate(
         "health_score": _health_score(by_severity, n_pages, weights),
     }
 
-    urls_crawled = len(ctx.pages)
-    crawl_valid, invalid_reason = _crawl_validity(n_pages, dict(by_check), urls_crawled)
     run["crawl_valid"] = crawl_valid
     run["crawl_invalid_reason"] = invalid_reason
     if not crawl_valid:
@@ -186,15 +241,7 @@ def aggregate(
 
     # A crawl far below the declared sitemap still scores, but says so: the
     # score describes what was crawled, not the site.
-    urls_in_sitemap = int((sitemap_summary or {}).get("urls_in_sitemap") or 0)
-    sitemap_partial = bool(
-        urls_in_sitemap and crawl_valid and urls_crawled < urls_in_sitemap * PARTIAL_CRAWL_RATIO
-    )
-    # A caller may already know the run is partial — a URL limit, a timeout, an
-    # interrupted crawl — before any sitemap comparison happens. That signal
-    # must survive here, not be replaced by a sitemap check that has nothing to
-    # say when there is no sitemap.
-    run["crawl_partial"] = bool(run.get("crawl_partial")) or sitemap_partial
+    run["crawl_partial"] = crawl_partial
     if sitemap_partial:
         summary["health_score_scope"] = (
             f"{urls_crawled} of {urls_in_sitemap} sitemap URLs crawled — "
