@@ -1,0 +1,105 @@
+# Scenario 17 — Pagination: whether page 2 onward is reachable and allowed to exist
+
+## The question
+
+> The category has 40 pages of products. Google has the first one. Where did the other 39 go?
+
+A pagination series is a chain, and a chain has two independent failure modes: a link somewhere
+in it does not resolve, or every page past the first is told not to be indexed. Both look
+identical from the front page.
+
+## Covers
+
+- **Pagination** — Non-200 Pagination URLs · Unlinked Pagination URLs · Pagination Loop · Non-Indexable
+
+## The chain
+
+**1. Crawl the site, which answers the indexability half immediately.**
+
+```bash
+seohead crawl-site --url https://example.com --out-dir ./run
+```
+
+`PAGINATION_NONINDEXABLE` covers both published issue names at once, because they are the same
+question asked twice: a pagination URL that answers 3xx/4xx/5xx and a pagination URL that
+answers 200 with a `noindex` are both pages a crawler will not keep. A series where page 1 is
+indexable and pages 2..n are not is the most common shape, and it is usually a plugin default
+nobody chose.
+
+**2. Notice which pagination checks the crawl declares it cannot run.**
+
+`run.checks_skipped` will contain both of these:
+
+```json
+[
+  {"id": "PAGINATION_LOOP", "reason": "no rel=\"next\" column in Internal:All"},
+  {"id": "UNLINKED_PAGINATION_SERIES", "reason": "no rel=\"next\" column in Internal:All"}
+]
+```
+
+The native spider records hyperlinks; it does not extract `rel="next"` / `rel="prev"` into a
+column of its own. Rather than reporting a clean series it never examined, both checks declare
+themselves absent by name.
+
+**3. Run the audit over a Screaming Frog export to close that half.**
+
+```bash
+seohead sf run --exports-dir ./exports --out report --tasks
+```
+
+`PAGINATION_LOOP` walks the `rel="next"` graph and flags a series that cycles instead of
+terminating — page 5 pointing back to page 2 is a crawler walking in circles for as long as it
+has budget. `UNLINKED_PAGINATION_SERIES` flags a series reachable *only* by following
+`rel="next"`, never by an ordinary hyperlink: a discovery path that depends entirely on an
+annotation search engines have said they no longer use for indexing.
+
+**4. Confirm the links themselves resolve.**
+
+```bash
+seohead links-check --url https://example.com --internal-only
+```
+
+**5. Scan the run, because an unlinked finding is a claim about the whole site.**
+
+```bash
+seohead log-scan --run ./run
+```
+
+`UNLINKED_PAGINATION_SERIES` is withheld and re-declared as a named skip when the crawl is
+partial, for the same reason as `ORPHAN_PAGE` and `UNLINKED_CANONICAL`: the missing hyperlink
+may simply be in the part nobody fetched.
+
+## What comes out
+
+```json
+{
+  "check": "PAGINATION_NONINDEXABLE",
+  "severity": "warning",
+  "target_url": "https://example.com/catalog/page/2",
+  "message": "Pagination page is non-indexable",
+  "fix_hint": "Pagination pages should generally remain crawlable and indexable unless a deliberate alternative architecture is in place."
+}
+```
+
+Read the fix hint as written. "Generally" is doing real work there: a site with a proper
+view-all page, or one that loads the rest of the catalogue from a feed, has a defensible reason
+for non-indexable pagination. A site with 39 unreachable pages of products does not.
+
+## What it costs
+
+- One crawl for step 1, one destination fetch per internal link for step 4.
+- Steps 3 and 5 read files already on disk. Nothing paid.
+- On a large catalogue, `links-check` is the expensive step; scope it before running it.
+
+## What it cannot answer
+
+- **Whether the numeric order of the series is right.** A sequence that jumps from page 3 to
+  page 5 is not validated; only loops and dead ends are.
+- **Multiple `rel="next"` declarations on one page.** They are not counted, so a page declaring
+  two successors reads as declaring one.
+- **Whether `rel="next"` targets appear as real anchors.** The annotation is not cross-checked
+  against the page's own anchor list — that is a named gap, not a clean result.
+- **Infinite scroll.** A series assembled by JavaScript has no `rel` annotations to read and no
+  hyperlinks to follow; [scenario 4](rendering.md) comes first.
+- **Whether the products on page 2 are indexed.** Reachability is not indexation, and nothing
+  here reads the index.
