@@ -4,6 +4,21 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix `report-build` silently rendering a zero-findings report for an SF Analyzer
+  `audit.json` (#151). The documented recipe — `sf run --tasks` piped into
+  `report-build --format docx`/`xlsx`/`csv`/`md` — read `findings`/flat page keys, which
+  the SF schema does not use (findings live under `issues`, page facts under
+  `pages[].metrics`); the mismatch produced a confident `0/0/0/0` summary for an audit
+  that found real critical issues, with no findings sections at all. `build_report` now
+  recognizes both the native `seohead.site-audit/1` shape and the SF Analyzer shape,
+  normalizing the latter into the flat contract the four human-facing writers already
+  understand before rendering. `--format json` is untouched — it already relayed the
+  original document correctly, which is what proved the data was never missing. A
+  document matching neither contract is refused with `ok: False` naming the schema
+  mismatch instead of being rendered as an empty deliverable, and the dead
+  `if ... : pass` conditional that looked like this validation but always no-opped is
+  gone. `tests/test_docs_commands_execute.py` now asserts the documented recipe's
+  rendered summary against `audit.json`'s own totals, not just its exit code.
 - Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
   arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
   taste: each declares the catalogued issues it resolves, and
