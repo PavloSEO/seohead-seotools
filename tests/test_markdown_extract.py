@@ -36,7 +36,7 @@ def test_full_markdown_includes_header_and_footer():
 
 def test_default_content_area_used_when_no_config_given():
     out = M.extract_markdown(_HTML)
-    assert out["content_area_strategy"] == "default_body"
-    # Default exclusions are nav/footer, so both are stripped from content_markdown.
+    # No configuration: the region comes from the document's own semantics (#96).
+    assert out["content_area_strategy"] == "auto_main"
     assert "Home About Contact" not in out["content_markdown"]
     assert "Copyright" not in out["content_markdown"]

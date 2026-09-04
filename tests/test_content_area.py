@@ -20,9 +20,9 @@ def _soup() -> BeautifulSoup:
 # ── resolve_content_area ──────────────────────────────────────────────────────
 
 
-def test_default_excludes_nav_and_footer():
+def test_default_detects_main_and_says_which_container_it_used():
     root, strategy = content_area.resolve_content_area(_soup())
-    assert strategy == "default_body"
+    assert strategy == "auto_main"
     text = content_area.extract_area_text(root)
     assert "Widget" in text and "short but real product description" in text
     assert "Sign up now" not in text  # nav
@@ -58,7 +58,11 @@ def test_exclude_selectors_removes_class_or_id_based_boilerplate():
 
 
 def test_exclude_tags_empty_list_disables_the_default_exclusions():
-    root, _strategy = content_area.resolve_content_area(_soup(), {"exclude_tags": []})
+    # Detection would scope this to <main>, where there is no nav or footer to keep, so the
+    # exclusion behaviour is exercised on the body itself.
+    root, _strategy = content_area.resolve_content_area(
+        _soup(), {"root_selector": "body", "exclude_tags": []}
+    )
     text = content_area.extract_area_text(root)
     assert "Sign up now" in text  # nav kept this time
     assert "newsletter" in text  # footer kept this time
@@ -70,7 +74,11 @@ def test_exclude_tags_empty_list_disables_the_default_exclusions():
 def test_word_count_changes_with_content_area_but_link_count_does_not():
     # A content area covering the whole body (exclusions disabled) versus one
     # scoped to the article: the same page, two different regions.
-    full = parse_html(_HTML, "https://example.com/page", {"content_area": {"exclude_tags": []}})
+    full = parse_html(
+        _HTML,
+        "https://example.com/page",
+        {"content_area": {"root_selector": "body", "exclude_tags": []}},
+    )
     scoped = parse_html(
         _HTML, "https://example.com/page", {"content_area": {"include_selector": "#content"}}
     )
@@ -82,7 +90,7 @@ def test_word_count_changes_with_content_area_but_link_count_does_not():
 
 def test_content_area_strategy_appears_per_page():
     default = parse_html(_HTML, "https://example.com/page")
-    assert default["content_area_strategy"] == "default_body"
+    assert default["content_area_strategy"] == "auto_main"
     scoped = parse_html(
         _HTML, "https://example.com/page", {"content_area": {"root_selector": "#nope"}}
     )
@@ -93,3 +101,79 @@ def test_content_area_strategy_none_when_text_disabled():
     off = parse_html(_HTML, "https://example.com/page", {"text": False})
     assert off["content_area_strategy"] is None
     assert off["word_count"] == 0
+
+
+# ── automatic detection (issue #96) ──────────────────────────────────────────
+
+# The live shape the issue measured: a skip link and a masthead that are outside <main> and
+# inside neither <nav> nor <footer>, so tag-stripping alone never removed them.
+_WORDPRESS_SHAPE = """<html><body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header><div class="site-branding">header</div><p>Call us any time on 555 0100</p></header>
+<main id="content"><article><h1>Post</h1><p>The body of the article itself.</p></article></main>
+<footer>Copyright</footer>
+</body></html>"""
+
+
+def test_content_outside_main_is_not_counted_as_content():
+    soup = BeautifulSoup(_WORDPRESS_SHAPE, features="lxml")
+    root, strategy = content_area.resolve_content_area(soup)
+    text = content_area.extract_area_text(root)
+    assert strategy == "auto_main"
+    assert "The body of the article itself." in text
+    assert "Skip to content" not in text
+    assert "header" not in text
+    assert "555 0100" not in text
+
+
+def test_role_main_is_used_when_there_is_no_main_element():
+    html = '<html><body><header>masthead</header><div role="main"><p>Real text.</p></div></body></html>'
+    root, strategy = content_area.resolve_content_area(BeautifulSoup(html, features="lxml"))
+    assert strategy == "auto_role_main"
+    assert "Real text." in content_area.extract_area_text(root)
+    assert "masthead" not in content_area.extract_area_text(root)
+
+
+def test_article_is_used_when_there_is_neither():
+    html = "<html><body><header>masthead</header><article><p>Real text.</p></article></body></html>"
+    root, strategy = content_area.resolve_content_area(BeautifulSoup(html, features="lxml"))
+    assert strategy == "auto_article"
+    assert "Real text." in content_area.extract_area_text(root)
+
+
+def test_a_page_with_none_of_the_three_still_resolves_to_the_body():
+    html = "<html><body><div class='wrap'><p>Real text.</p></div></body></html>"
+    root, strategy = content_area.resolve_content_area(BeautifulSoup(html, features="lxml"))
+    assert strategy == "default_body"
+    assert "Real text." in content_area.extract_area_text(root)
+
+
+def test_an_explicit_selector_still_wins_over_detection():
+    root, strategy = content_area.resolve_content_area(
+        BeautifulSoup(_WORDPRESS_SHAPE, features="lxml"), {"include_selector": "header"}
+    )
+    assert strategy == "include_selector"
+    assert "header" in content_area.extract_area_text(root)
+
+
+def test_a_configured_selector_that_matches_nothing_does_not_silently_auto_detect():
+    """Substituting a different region for the one that was named would hide the mistake
+    the strategy field exists to show."""
+    root, strategy = content_area.resolve_content_area(
+        BeautifulSoup(_WORDPRESS_SHAPE, features="lxml"), {"include_selector": "#nope"}
+    )
+    assert strategy == "fallback_default_body"
+    assert "The body of the article itself." in content_area.extract_area_text(root)
+
+
+def test_header_and_aside_are_excluded_on_the_fallback_path():
+    html = (
+        "<html><body><header>masthead</header><aside>promo block</aside>"
+        "<div><p>Real text.</p></div></body></html>"
+    )
+    root, strategy = content_area.resolve_content_area(BeautifulSoup(html, features="lxml"))
+    text = content_area.extract_area_text(root)
+    assert strategy == "default_body"
+    assert "Real text." in text
+    assert "masthead" not in text
+    assert "promo block" not in text
