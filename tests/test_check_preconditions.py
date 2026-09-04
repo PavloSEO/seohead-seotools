@@ -61,7 +61,10 @@ def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
         coverage["checks_fired"] + coverage["checks_skipped"] + coverage["checks_silent"] == total
     )
     # A ratchet: this may fall as declarations are added, never rise unnoticed.
-    assert coverage["checks_silent"] <= 56
+    # Raised from 56 to 59 when NOTRANSLATE, UNAVAILABLE_AFTER and
+    # CANONICAL_FRAGMENT were added (issue #30): the example fixture has no
+    # page that trips them, so they run clean rather than declare a skip.
+    assert coverage["checks_silent"] <= 59
 
 
 def test_removing_evidence_only_ever_grows_the_skip_set(tmp_path):

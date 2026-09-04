@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**96 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**104 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -164,6 +164,8 @@ python scripts/generate_checks_reference.py
 | `NOSNIPPET` | notice | SF:Directives:NoSnippet | Page contains a nosnippet directive | Confirm that suppressing the page's search-result snippet is intentional. |
 | `NOIMAGEINDEX` | notice | SF:Directives:NoImageIndex | Page contains a noimageindex directive | Confirm that preventing images on this page from being indexed is intentional. |
 | `META_REFRESH_REDIRECT` | warning | SF:Directives:Refresh | Redirect is implemented with meta refresh | Replace meta refresh with a server-side 301 redirect when the move is permanent. |
+| `NOTRANSLATE` | notice | SF-derived | Page contains a notranslate directive | Confirm that blocking the browser's offer-to-translate prompt is intentional. |
+| `UNAVAILABLE_AFTER` | warning | SF-derived | Page carries an unavailable_after directive with a deindex date | Confirm the date is intentional and in the future; once it passes, the page is removed from the index automatically. |
 
 ## --- extension: canonicals ---
 
@@ -171,6 +173,7 @@ python scripts/generate_checks_reference.py
 |---|---|---|---|---|
 | `CANONICAL_RELATIVE` | notice | SF:Canonicals:Canonical Is Relative | Canonical URL is relative | Use an absolute URL in the canonical element. |
 | `CANONICAL_MULTIPLE` | warning | SF:Canonicals:Multiple | Page declares multiple canonical URLs | Declare exactly one canonical URL for the page. |
+| `CANONICAL_FRAGMENT` | notice | SF-derived | Canonical URL contains a #fragment | Drop the fragment; the server never receives it, so a canonical pointing at one is meaningless. |
 
 ## --- extension: canonical graph (Mode B, built from Internal:All) ---
 
@@ -179,6 +182,11 @@ python scripts/generate_checks_reference.py
 | `CANONICAL_CHAIN` | warning | SF-derived | Canonical chain: the target canonicalizes to another URL (two or more steps) | Point the canonical directly to the final canonical URL in one step and break any canonical loops. |
 | `CANONICAL_TO_REDIRECT` | warning | SF-derived | Canonical points to a redirecting URL (3xx) | Point the canonical to the final 200-status URL; otherwise search engines must resolve conflicting canonical signals. |
 | `HREFLANG_BROKEN_TARGET` | warning | inlinks:All Hreflang | Hreflang points to a redirecting or broken URL (3xx, 4xx, or 5xx) | Update hreflang to reference the final 200-status URL; redirecting or broken targets undermine localization signals and crawling. |
+| `HREFLANG_INVALID_CODE` | warning | inlinks:All Hreflang | Hreflang value is not a valid ISO 639-1 language / ISO 3166-1 region code | Use a valid language code, optionally followed by a valid region (e.g. en-GB, not en-UK). |
+| `HREFLANG_MULTIPLE_ENTRIES` | warning | inlinks:All Hreflang | The same hreflang value is declared more than once on the page | Declare each language/region combination exactly once; conflicting duplicates make the annotation ambiguous. |
+| `HREFLANG_MISSING_SELF_REFERENCE` | warning | inlinks:All Hreflang | Page declares hreflang alternates but does not reference itself | Every page in an hreflang set must include a self-referencing annotation for its own URL and language. |
+| `HREFLANG_MISSING_XDEFAULT` | notice | inlinks:All Hreflang | Hreflang set has no x-default fallback | Add an x-default annotation to catch users whose language/region does not match any declared alternate. |
+| `HREFLANG_NOT_CANONICAL` | warning | inlinks:All Hreflang | Hreflang points to a URL that is not itself the canonical version | Point hreflang annotations at each target's canonical URL, not at a duplicate that canonicalizes elsewhere. |
 
 ## --- extension: pagination ---
 

@@ -38,7 +38,7 @@ Grouped by area (file names under `tests/`):
 
 - **SF audit core**: `test_loader.py` (export discovery/normalization),
   `test_rules.py`, `test_extended_checks.py`, `test_inlinks.py`,
-  `test_heuristics.py`, `test_sitemap.py`, `test_sitemap_txt.py` — the 96
+  `test_heuristics.py`, `test_sitemap.py`, `test_sitemap_txt.py` — the 104
   checks over the synthetic crawl in `tests/fixtures/`.
 - **Audit outputs**: `test_reporters.py` (audit.json validates against
   `sf/schema/audit.schema.json` — the contract test), `test_tasks.py`

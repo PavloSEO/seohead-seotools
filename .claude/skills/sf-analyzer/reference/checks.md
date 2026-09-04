@@ -1,6 +1,6 @@
 # Check Registry (Issue Registry)
 
-Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
+Total checks: **104**. Generated from `seohead/sf/core/registry.py`.
 
 | ID | Severity | Source | What it means | How to fix it |
 |---|---|---|---|---|
@@ -27,6 +27,10 @@ Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
 | `H1_MULTIPLE` | warning | SF:H1:Multiple | The page has multiple H1s | Keep one H1; demote the others to H2/H3. |
 | `HREFLANG_BROKEN_TARGET` | warning | inlinks:All Hreflang | Hreflang points to a broken or redirecting URL (3xx/4xx/5xx) | Update hreflang to the final 200 URL; broken targets disrupt localization and crawling. |
 | `HREFLANG_ERROR` | warning | SF:Hreflang | Hreflang error | Make hreflang links reciprocal and canonical. |
+| `HREFLANG_INVALID_CODE` | warning | inlinks:All Hreflang | Hreflang value is not a valid ISO 639-1/3166-1 code | Use a valid language code, optionally with a valid region (e.g. en-GB, not en-UK). |
+| `HREFLANG_MISSING_SELF_REFERENCE` | warning | inlinks:All Hreflang | The page declares hreflang alternates but not itself | Add a self-referencing hreflang annotation for the page's own URL and language. |
+| `HREFLANG_MULTIPLE_ENTRIES` | warning | inlinks:All Hreflang | The same hreflang value is declared more than once on the page | Declare each language/region combination exactly once. |
+| `HREFLANG_NOT_CANONICAL` | warning | inlinks:All Hreflang | Hreflang points to a URL that is not itself canonical | Point hreflang at each target's canonical URL, not at a duplicate. |
 | `HTTP_URL` | warning | SF-derived | The URL uses http:// rather than https | Migrate it to HTTPS and add a 301 redirect. |
 | `IMG_MISSING_ALT` | warning | SF:Images:Missing Alt Text | An image has no alt text | Add descriptive alt text. |
 | `IMG_OVER_KB` | warning | SF:Images:Over X KB | Oversized image | Compress it or convert it to WebP/AVIF. |
@@ -49,11 +53,13 @@ Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
 | `THIN_CONTENT` | warning | SF-derived | Thin content (low word count) | Expand the content or prevent it from being indexed. |
 | `TITLE_DUPLICATE` | warning | SF-derived | Duplicate Title | Make the Title unique for each page. |
 | `TITLE_MULTIPLE` | warning | SF:Page Titles:Multiple | The page has multiple `<title>` tags | Keep one `<title>`. |
+| `UNAVAILABLE_AFTER` | warning | SF-derived | The page carries an unavailable_after deindex directive | Confirm the date is intentional and in the future. |
 | `URL_CONTAINS_SPACE` | warning | SF:URL:Contains Space | The URL contains a space | Remove spaces/%20 from the URL. |
 | `URL_TRACKING_PARAMS` | warning | SF-derived | The URL of an indexable page contains a tracking parameter (utm_/gclid/fbclid/…) | Remove tracking parameters from public links; to handle incoming traffic, add a self-referencing canonical or block the parameters in robots.txt/Search Console. |
 | `AMPHTML_PRESENT` | notice | SF-derived | An AMP version is declared (informational) | Verify that the AMP version is current and valid. |
 | `BAD_REDIRECT_TYPE` | notice | SF-derived | A temporary redirect (302/303/307) is used where a permanent redirect (301) is expected | If the move is permanent, use 301. |
 | `CANONICALISED` | notice | SF-derived | The canonical points to another URL | Verify that the canonicalization is intentional. |
+| `CANONICAL_FRAGMENT` | notice | SF-derived | The canonical URL contains a #fragment | Drop the fragment; the server never receives it, so it is meaningless in a canonical. |
 | `CANONICAL_RELATIVE` | notice | SF:Canonicals:Canonical Is Relative | Relative canonical | Use an absolute URL in the canonical. |
 | `DESC_TOO_LONG` | notice | SF-derived | The Meta Description exceeds the threshold | Shorten the description. |
 | `DESC_TOO_SHORT` | notice | SF-derived | The Meta Description is shorter than the threshold | Expand the description. |
@@ -67,6 +73,7 @@ Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
 | `H2_MISSING` | notice | SF-derived | The page has an H1 but no H2 | Add H2 subheadings to provide structure. |
 | `HIGH_EXTERNAL_OUTLINKS` | notice | SF:Links:Pages With High External Outlinks | Many outgoing external links | Check for link equity leakage and spam links. |
 | `HIGH_OUTLINKS` | notice | SF:Links:Pages With High Outlinks | The page has a very large number of outgoing links | Reduce the number of links to focus crawling. |
+| `HREFLANG_MISSING_XDEFAULT` | notice | inlinks:All Hreflang | The hreflang set has no x-default fallback | Add an x-default annotation for users who match no declared alternate. |
 | `HTML_BLOAT` | notice | heuristic | Bloated HTML: high byte size with little text | Reduce bytes per word: extract styles/scripts and remove base64 data. |
 | `HTTP1_ONLY` | notice | SF-derived | Served over HTTP/1.x rather than HTTP/2 | Enable HTTP/2+ on the server/CDN. |
 | `IMG_MISSING_DIMENSIONS` | notice | SF:Images:Missing Size Attributes | An image has no width/height attributes | Specify dimensions to keep the layout stable (CLS). |
@@ -80,6 +87,7 @@ Total checks: **96**. Generated from `seohead/sf/core/registry.py`.
 | `NOINDEX` | notice | SF:Directives:Noindex | noindex directive | Make sure exclusion from indexing is intentional. |
 | `NON_INDEXABLE_LINKED` | notice | SF-derived | A non-indexable page has internal links pointing to it | Check whether the page should be indexed; otherwise, remove the internal links or account for the crawl budget. |
 | `NOSNIPPET` | notice | SF:Directives:NoSnippet | nosnippet directive | nosnippet removes the search result snippet; verify that this is intentional. |
+| `NOTRANSLATE` | notice | SF-derived | notranslate directive | Confirm that blocking the browser's offer-to-translate prompt is intentional. |
 | `OG_MISSING` | notice | SF:Social:Open Graph | og:title is missing, so the social preview cannot be generated | Add og:title/og:image/og:url; at minimum, add og:title and og:image for a correct preview. |
 | `READABILITY_DIFFICULT` | notice | SF-derived | Text is difficult to read (low Flesch score) | Simplify the wording and use shorter sentences. |
 | `ROBOTS_BLOCKS_RESOURCES` | notice | sitemap | robots.txt blocks resources (JS/CSS), breaking rendering for crawlers | Do not block `.js`, `.css`, or `_next/static` in robots.txt; otherwise, Google renders the page incompletely. |

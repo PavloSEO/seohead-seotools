@@ -110,6 +110,107 @@ def test_extended_checks_fire(tmp_path):
     assert two in f.get("HIGH_EXTERNAL_OUTLINKS", set())
 
 
+def test_notranslate_unavailable_after_and_canonical_fragment_fire(tmp_path):
+    """Issue #30: three of the cheap CONFIRMED gaps (directives + canonical)."""
+    rows = [
+        [
+            "https://example.com/notranslate",
+            "text/html",
+            "200",
+            "OK",
+            "Indexable",
+            TITLE,
+            DESC,
+            "H",
+            "https://example.com/notranslate",
+            "",
+            "index,follow,notranslate",
+            "",
+            "2",
+            "Easy",
+            "70",
+            "12",
+            "10",
+            "5",
+            "500",
+        ],
+        [
+            "https://example.com/unavailable",
+            "text/html",
+            "200",
+            "OK",
+            "Indexable",
+            TITLE,
+            DESC,
+            "H",
+            "https://example.com/unavailable",
+            "",
+            "index,follow,unavailable_after: 2099-01-01T00:00:00Z",
+            "",
+            "2",
+            "Easy",
+            "70",
+            "12",
+            "10",
+            "5",
+            "500",
+        ],
+        [
+            "https://example.com/fragment",
+            "text/html",
+            "200",
+            "OK",
+            "Indexable",
+            TITLE,
+            DESC,
+            "H",
+            "https://example.com/fragment#section",
+            "",
+            "index,follow",
+            "",
+            "2",
+            "Easy",
+            "70",
+            "12",
+            "10",
+            "5",
+            "500",
+        ],
+        [
+            "https://example.com/clean",
+            "text/html",
+            "200",
+            "OK",
+            "Indexable",
+            TITLE,
+            DESC,
+            "H",
+            "https://example.com/clean",
+            "",
+            "index,follow",
+            "",
+            "2",
+            "Easy",
+            "70",
+            "12",
+            "10",
+            "5",
+            "500",
+        ],
+    ]
+    res = _run(tmp_path, rows)
+    f = _fired(res)
+    clean = "https://example.com/clean"
+    assert f.get("NOTRANSLATE", set()) == {"https://example.com/notranslate"}
+    unavail = next(i for i in res.issues if i.check == "UNAVAILABLE_AFTER")
+    assert unavail.target_url == "https://example.com/unavailable"
+    assert "2099" in unavail.details["directive"]
+    assert f.get("CANONICAL_FRAGMENT", set()) == {"https://example.com/fragment"}
+    assert clean not in f.get("NOTRANSLATE", set())
+    assert clean not in f.get("UNAVAILABLE_AFTER", set())
+    assert clean not in f.get("CANONICAL_FRAGMENT", set())
+
+
 def test_native_export_checks_skip_without_export(tmp_path):
     rows = [
         [
@@ -874,3 +975,112 @@ def test_hreflang_broken_target_fires_and_skips(tmp_path):
     res2 = run_audit(input_mode="parse-exports", exports_dir=str(d2), log=lambda m: None)
     assert "HREFLANG_BROKEN_TARGET" in {s.id for s in res2.skipped}
     assert "HREFLANG_BROKEN_TARGET" not in {i.check for i in res2.issues}
+
+
+# --- Issue #30: hreflang code/self-reference/x-default/duplicate/canonical quality ---
+_HREFLANG_QUALITY_CHECKS = (
+    "HREFLANG_INVALID_CODE",
+    "HREFLANG_MULTIPLE_ENTRIES",
+    "HREFLANG_MISSING_SELF_REFERENCE",
+    "HREFLANG_MISSING_XDEFAULT",
+    "HREFLANG_NOT_CANONICAL",
+)
+
+
+def _hreflang_quality_internal_row(url, canonical=None):
+    return [
+        url,
+        "text/html",
+        "200",
+        "OK",
+        "Indexable",
+        TITLE,
+        DESC,
+        "H",
+        canonical or url,
+        "index,follow",
+    ]
+
+
+def test_hreflang_quality_checks_fire(tmp_path):
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(_HREFLANG_INTERNAL_COLS)
+        # "hub" declares a whole alternates set but never references itself,
+        # never declares x-default, duplicates "es", and uses an invalid code.
+        w.writerow(_hreflang_quality_internal_row("https://example.com/hub"))
+        w.writerow(_hreflang_quality_internal_row("https://example.com/en"))
+        w.writerow(_hreflang_quality_internal_row("https://example.com/es-a"))
+        w.writerow(_hreflang_quality_internal_row("https://example.com/es-b"))
+        # the hub's "de" alternate is a duplicate that itself canonicalizes
+        # elsewhere -> HREFLANG_NOT_CANONICAL.
+        w.writerow(
+            _hreflang_quality_internal_row(
+                "https://example.com/de-dup", canonical="https://example.com/de-canonical"
+            )
+        )
+        w.writerow(_hreflang_quality_internal_row("https://example.com/de-canonical"))
+        # a clean, well-formed two-page cluster: self-reference + x-default
+        # both present, no duplicates, no invalid codes -> nothing fires.
+        w.writerow(_hreflang_quality_internal_row("https://example.com/clean-en"))
+        w.writerow(_hreflang_quality_internal_row("https://example.com/clean-fr"))
+
+    with open(d / "all_hreflang.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["Source", "Destination", "Hreflang"])
+        hub = "https://example.com/hub"
+        w.writerow([hub, "https://example.com/en", "en"])
+        w.writerow([hub, "https://example.com/es-a", "es"])
+        w.writerow([hub, "https://example.com/es-b", "es"])  # duplicate "es"
+        w.writerow([hub, "https://example.com/de-dup", "de"])  # not canonical
+        w.writerow([hub, "https://example.com/fr-x", "fr-XX"])  # invalid region
+
+        clean_en, clean_fr = "https://example.com/clean-en", "https://example.com/clean-fr"
+        for src in (clean_en, clean_fr):
+            w.writerow([src, clean_en, "en"])
+            w.writerow([src, clean_fr, "fr"])
+            w.writerow([src, clean_en, "x-default"])
+
+    res = run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
+    fired: dict[str, set[str]] = {}
+    for i in res.issues:
+        fired.setdefault(i.check, set()).add(i.target_url)
+
+    assert fired.get("HREFLANG_INVALID_CODE") == {"https://example.com/hub"}
+    invalid = next(i for i in res.issues if i.check == "HREFLANG_INVALID_CODE")
+    assert invalid.details["invalid"][0]["hreflang"] == "fr-XX"
+
+    assert fired.get("HREFLANG_MULTIPLE_ENTRIES") == {"https://example.com/hub"}
+    dup = next(i for i in res.issues if i.check == "HREFLANG_MULTIPLE_ENTRIES")
+    assert dup.details["duplicate_values"] == ["es"]
+
+    assert fired.get("HREFLANG_MISSING_SELF_REFERENCE") == {"https://example.com/hub"}
+    assert fired.get("HREFLANG_MISSING_XDEFAULT") == {"https://example.com/hub"}
+
+    assert fired.get("HREFLANG_NOT_CANONICAL") == {"https://example.com/hub"}
+    non_canon = next(i for i in res.issues if i.check == "HREFLANG_NOT_CANONICAL")
+    offender = non_canon.details["non_canonical_targets"][0]
+    assert offender["destination"] == "https://example.com/de-dup"
+    assert offender["canonical"] == "https://example.com/de-canonical"
+
+    # the clean cluster trips none of the five checks
+    for check_id in _HREFLANG_QUALITY_CHECKS:
+        assert "https://example.com/clean-en" not in fired.get(check_id, set())
+        assert "https://example.com/clean-fr" not in fired.get(check_id, set())
+
+
+def test_hreflang_quality_checks_skip_without_export(tmp_path):
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(_HREFLANG_INTERNAL_COLS)
+        w.writerow(_hreflang_quality_internal_row("https://example.com/"))
+    res = run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
+    skipped_ids = {s.id for s in res.skipped}
+    fired_ids = {i.check for i in res.issues}
+    for check_id in _HREFLANG_QUALITY_CHECKS:
+        assert check_id in skipped_ids
+        assert check_id not in fired_ids
