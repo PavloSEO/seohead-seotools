@@ -113,6 +113,13 @@ class SpiderResult(CrawlResult):
     # auditable: which URLs were fetched only because they were seeded, versus
     # discovered by following a link.
     seed_urls: list[str] = field(default_factory=list)
+    # The start page's raw HTML and outlink counts, captured once as a
+    # by-product of the ordinary fetch (never an extra request). This is what
+    # lets seohead.crawl.render_escalation's pre-flight gate (#18) check for
+    # an empty SPA shell or a link-less start page even in "raw" mode, which
+    # has no render to fall back on. Empty when the start page was not
+    # (re-)fetched in this call, e.g. a resumed run that starts past depth 0.
+    start_page_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def _canonical_key(url: str) -> str:
@@ -467,6 +474,23 @@ def crawl_site(
             record.crawl_depth = depth
             result.pages.append(record)
             _write(handle, record)
+
+            if (
+                depth == 0
+                and url == start
+                and not result.start_page_evidence
+                and parsed is not None
+            ):
+                # Captured once, straight from the ordinary fetch -- no extra
+                # request. Used only by the pre-flight rendering gate (#18):
+                # an empty SPA shell or a link-less start page must withhold
+                # the health score, and both checks are static, so they must
+                # not wait for a render that a raw-mode run will never perform.
+                result.start_page_evidence = {
+                    "html": parsed.get("_raw_html", ""),
+                    "outlinks": record.outlinks,
+                    "external_outlinks": record.external_outlinks,
+                }
 
             consecutive_timeouts, consecutive_server_errors = _fold_failure_streaks(
                 record, consecutive_timeouts, consecutive_server_errors

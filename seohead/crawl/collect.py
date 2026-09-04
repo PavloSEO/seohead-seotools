@@ -68,6 +68,14 @@ class PageRecord:
     jsonld_blocks_found: int = 0
     jsonld_blocks_parsed: int = 0
     error: str = ""
+    # Which representation produced this page's evidence: "static" (raw HTML,
+    # the default), "rendered" (JavaScript executed), or "legacy_fragment"
+    # (the deprecated ``_escaped_fragment_`` scheme). Recorded per page, not
+    # assumed for the whole crawl, because selective escalation (#18) renders
+    # only the URL patterns that need it -- a report that mixed the two
+    # populations in one column would compare numbers that were never
+    # measured the same way.
+    representation: str = "static"
 
     @property
     def is_html(self) -> bool:
@@ -212,6 +220,12 @@ def fetch_one(
         record.error = "response too large to parse"
     elif record.is_html and body:
         parsed = parse_html(body, url)
+        # Transient, never persisted to pages.jsonl or PageRecord: the
+        # rendering pre-flight gate (#18) needs the start page's raw HTML to
+        # check for an empty SPA shell, and this is the one place that HTML
+        # is already in memory, so it costs nothing to hand back here rather
+        # than fetching the start page a second time.
+        parsed["_raw_html"] = body
         for key, value in _record_from_parsed(parsed).items():
             setattr(record, key, value)
         found, parsed_count = _jsonld_counts(body, parsed)
