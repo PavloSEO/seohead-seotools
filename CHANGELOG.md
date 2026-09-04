@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Restructure the operator skill into a controller directory (#111). `.claude/skills/`
+  now has two tiers: 21 method skills, each covering one thing well, and `control/`,
+  which decides which of them to run on a site nobody has looked at yet. The controller
+  routes rather than restating, and carries five loadable sub-skills (scoping, rate and
+  load, reading an audit, verifying, deliverables) and a three-file reference archive
+  (defects found on live sites and what gave each away, which population each check
+  describes, and what the toolkit cannot answer at all). The English-only gate and the
+  doc-command gate now cover every Markdown file under a skill directory, not only
+  `SKILL.md`.
 - Add `docs/scenarios/`: ten end-to-end chains, each with the real commands in order, the
   artifact that comes out, what it costs, and what that chain cannot answer (#110). The
   rest of the documentation lists what the toolkit has; this describes what it does. Linked

@@ -79,6 +79,11 @@ Network conditions, crawl scope, provider quotas, and expert review still determ
 
 ### What it does end to end
 
+For an agent: **[.claude/skills/control/SKILL.md](.claude/skills/control/SKILL.md)** is the
+entry point — what to run on a site nobody has looked at yet, in what order, and whether to
+believe the answer. It routes to the 21 method skills and carries its own sub-skills and a
+reference archive of defects found on live sites.
+
 Individual tools are listed below; **[docs/scenarios/](docs/scenarios/README.md)** describes the
 chains — several tools in order, ending in something a person can act on. Ten of them, each
 with the real commands, the artifact that comes out, what it costs, and what that chain cannot

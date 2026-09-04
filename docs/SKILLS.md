@@ -1,15 +1,38 @@
 # Skill map
 
-22 skills in `.claude/skills/`. A skill is not tool documentation — it is a
-**method**: when to apply, in what order, how to read the result, and where
-the boundary is beyond which the tool starts to lie.
+22 skills in `.claude/skills/`, in two tiers.
+
+**Method skills** — 21 of them. Each covers one thing well: when to apply it, in what
+order, how to read the result, and where the boundary is beyond which the tool starts to lie.
+
+**The controller** — `control/`, which decides *which* method skill to run on a site nobody has
+looked at yet, and whether to believe the answer. It routes rather than restating, and it is
+the only skill that carries its own sub-skills and a reference archive:
+
+```
+.claude/skills/control/
+  SKILL.md                     the entry point: the loop, the decision points, the cost
+  subskills/scoping.md         how big is this site, what runs on it, what can be skipped
+  subskills/rate-and-load.md   what rate a host tolerates, and whose fault the errors are
+  subskills/reading-an-audit.md  fired vs skipped vs silent; when a score is not earned
+  subskills/verifying.md       confirming a finding live before it reaches anybody
+  subskills/deliverables.md    turning findings into a task, an archive, a document
+  reference/defects.md         bugs found on live sites, and what gave each one away
+  reference/populations.md     which set each check describes, and its invalid comparisons
+  reference/limits.md          what this toolkit cannot answer at all
+```
+
+Each sub-skill is loadable on its own: a reader who needs only the rate lesson should not have
+to read the deliverables section. The reference archive matters as much as the sub-skills —
+every defect found on a live site so far was recognisable by a pattern, and writing those down
+is what lets the next run catch one in minutes instead of an afternoon.
 
 ## How to choose
 
 ```
 given a domain, what to do?
-   └─ seotools-operator ─ run the system: crawl, read the audit honestly,
-        │                 verify live, produce the deliverable
+   └─ control ────────── run the system: scope, crawl, scan, read the audit
+        │                 honestly, verify live, produce the deliverable
         └─ seo-deep-audit ─ the analysis entry point, orchestrates the rest
              └─ audit-roadmap ─ when the domain is new: scout the minimum
                                 first and decide what to collect
@@ -21,7 +44,7 @@ Then by the layer of the task.
 
 | Skill | When |
 |---|---|
-| **seotools-operator** | Given a site and asked to audit it, or you are about to write a one-off script to check pages. The whole loop: crawl, read `audit.json`'s honesty fields before its findings, verify criticals with `curl`, build the deliverable. Written against a 4 260-URL run over three live sites |
+| **control** | Given a site and asked to audit it, or you are about to write a one-off script to check pages. The whole loop: scope, crawl, `log-scan` the run, read `audit.json`'s honesty fields before its findings, verify criticals live, build the deliverable. Routes to the method skills below rather than restating them; carries its own sub-skills and reference archive. Written against a 4 260-URL run over three live sites |
 | **seo-deep-audit** | Given a site and asked "look what's there". Single entry, distributes the work |
 | **audit-roadmap** | Unfamiliar domain: 5 minutes of recon to decide what to collect next |
 | **sf-boundaries** | The fork "does Screaming Frog cover this, or does it need an agent?" — a router |
@@ -71,17 +94,17 @@ Then by the layer of the task.
 
 ## Tools without a skill of their own
 
-19 of the 49 commands are not named in any skill's own body (a mention inside
+20 of the 49 commands are not named in any skill's own body (a mention inside
 another tool's Markdown table above does not count) — used inline as plumbing
 inside a workflow's write-up, or not yet needed by one at all — and have no
 skill of their own, deliberately: a skill per single command is noise.
 `tests/test_docs_drift.py` recomputes this list by scanning every skill file
 for each command name, so it cannot silently rot the way this line once did.
 
-Page-level utilities: `asset-weight-check` · `boilerplate-report` · `log-scan` ·
-`crawl-describe-settings` · `hreflang-check` · `keywords-cluster` ·
-`log-analyze` · `mirror-check` · `redirects-check` ·
-`redirects-generate` · `soft404-check`
+Page-level utilities: `asset-weight-check` · `boilerplate-report` ·
+`crawl-describe-settings` · `hreflang-check` · `images-download` ·
+`images-optimize` · `keywords-cluster` · `log-analyze` · `mirror-check` ·
+`redirects-check` · `redirects-generate` · `soft404-check`
 
 External data sources (`data_sources/` layer): `google-keywords` ·
 `google-serp` · `keywords-exact` · `keywords-expand` · `keywords-seasonality` ·

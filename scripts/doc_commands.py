@@ -27,7 +27,7 @@ def doc_files(root: Path) -> list[Path]:
             # Every level, not just the top: docs/scenarios/ describes chains, and a chain
             # whose commands are not executed by CI is a chain that quietly stops working.
             *(root / "docs").glob("**/*.md"),
-            *(root / ".claude" / "skills").glob("*/SKILL.md"),
+            *(root / ".claude" / "skills").glob("*/**/*.md"),
             *(root / "seohead" / "skills").glob("*/SKILL.md"),
             *(root / "examples").glob("**/README.md"),
         ]
