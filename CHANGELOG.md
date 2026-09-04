@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Detect the content area from the document's own semantics when nothing is configured
+  (#96): `main`, then `[role="main"]`, then `article`, recording which one matched as
+  `auto_main` / `auto_role_main` / `auto_article`. The previous default — the whole body
+  minus the `nav` and `footer` tags — counted 126 template words out of 433 on a live
+  WordPress post (29%), including a skip-to-content link, and that inflation feeds
+  `THIN_CONTENT` and `LOW_TEXT_RATIO` in the same direction on every page of a template.
+  `header` and `aside` join `nav` and `footer` in `DEFAULT_EXCLUDE_TAGS` for the fallback
+  path. A configured selector still wins, and one that matches nothing still falls back to
+  `fallback_default_body` rather than silently auto-detecting a different region.
 - Fix `size_bytes`: it is now the response body as it arrived on the wire, measured before
   the body is decoded (#99). It was measured from the decoded string, so every byte that is
   not valid UTF-8 became U+FFFD and re-encoded to three — a 739 KB WebP from a real crawl
