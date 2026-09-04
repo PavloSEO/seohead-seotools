@@ -313,6 +313,10 @@ def crawl_site(
         if out_dir and settings["output"]["write_pages_jsonl"]
         else None
     )
+    # Tied to out_dir alone, not the write_pages_jsonl toggle: this sidecar is what makes a
+    # resumed run's result.links whole again (see spider.crawl_site), a correctness need
+    # distinct from whether the operator also wants pages.jsonl as a human-readable export.
+    links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
     max_seconds = settings["limits"]["max_crawl_seconds"]
     # One cache per run, shared by every worker thread a concurrent crawl starts — see
     # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
@@ -340,6 +344,7 @@ def crawl_site(
             scope=settings["scope"],
             seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
+            links_path=links_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
             # crawl with no out_dir has nothing to resume into anyway.
