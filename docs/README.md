@@ -43,7 +43,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 - **[NAMING.md](NAMING.md)** — what a module or test file name must say, when a
   basename may legitimately repeat across packages, and what naming decisions
   are deliberately left open.
-- **[TESTING.md](TESTING.md)** — how to run the suite, what the 672 tests
+- **[TESTING.md](TESTING.md)** — how to run the suite, what the 1100+ tests
   cover, what they deliberately do not, and which missing tests to write first.
 - **[GOTCHAS.md](GOTCHAS.md)** — operational traps captured by tests and code
   contracts: API money, quotas, stdin quirks, and explicit mutation flags.

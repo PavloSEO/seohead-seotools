@@ -68,7 +68,7 @@ Then by the layer of the task.
 
 ## Tools without a skill of their own
 
-Twenty-one of the 42 commands are used inside other skills or are plumbing,
+Twenty-four of the 47 commands are used inside other skills or are plumbing,
 and have no skill of their own — deliberately: a skill per single command
 is noise.
 
