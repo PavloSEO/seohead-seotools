@@ -69,15 +69,24 @@ class _DispatchGate:
     buys overlap on the response *wait*, never on how densely requests are sent.
     """
 
-    def __init__(self, throttle: Throttle, sleeper: Callable[[float], None]) -> None:
+    def __init__(
+        self,
+        throttle: Throttle,
+        sleeper: Callable[[float], None],
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._throttle = throttle
         self._sleeper = sleeper
+        # The crawl's own clock, not the wall clock: the pacing decision is then testable
+        # against a fake clock instead of by measuring real elapsed time, which made the
+        # cross-worker pacing test fail whenever the machine was busy (#107).
+        self._clock = clock
         self._lock = threading.Lock()
-        self._next_at = time.monotonic()
+        self._next_at = clock()
 
     def wait_turn(self) -> None:
         with self._lock:
-            now = time.monotonic()
+            now = self._clock()
             start_at = max(now, self._next_at)
             self._next_at = start_at + self._throttle.delay
             wait = start_at - now
@@ -672,7 +681,7 @@ def crawl_site(
                     break
                 stopped = after_fetch(url, depth, record, parsed)
         else:
-            gate = _DispatchGate(throttle, sleeper)
+            gate = _DispatchGate(throttle, sleeper, clock)
 
             def dispatch(item: tuple[str, int]) -> tuple[str, int, PageRecord, dict | None]:
                 url, depth = item
