@@ -296,6 +296,8 @@ def crawl_site(
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
             concurrency=settings["speed"]["concurrency"],
+            classify_links=settings["link_position"]["classify"],
+            link_position_rules=settings["link_position"]["rules"] or None,
             cache=cache,
         )
         discovery = {
@@ -390,6 +392,24 @@ def crawl_site(
         for extra_url in sitemap_summary["linked_not_in_sitemap"]:
             ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
 
+    # Same "native crawl produces evidence the SF export never carries" shape
+    # as the sitemap reconciliation above: classification runs inside the
+    # spider's own link recording (see crawl/spider.py), never through the
+    # analyzer, and only meets the SF-shaped audit here.
+    link_position: dict[str, Any] = {}
+    if url and settings["link_position"]["classify"]:
+        from seohead.crawl.linkgraph import inlink_composition
+
+        link_position = inlink_composition(result.links)
+        for page in link_position["pages"]:
+            if page["boilerplate_only"]:
+                ctx.add(
+                    "INLINK_BOILERPLATE_ONLY",
+                    target_url=page["url"],
+                    occurrences_count=page["inlinks_total"],
+                    details={"by_position": page["by_position"]},
+                )
+
     audit = aggregate(
         ctx,
         {
@@ -434,6 +454,7 @@ def crawl_site(
         "resumed": result.resumed,
         "discovery": discovery,
         "limitations": result.limitations,
+        "link_position": link_position,
         "summary": audit["summary"],
         "checks_skipped": len(audit["run"].get("checks_skipped", [])),
         "out_dir": out_dir,

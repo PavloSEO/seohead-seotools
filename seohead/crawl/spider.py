@@ -84,6 +84,12 @@ class LinkEdge:
     destination: str
     anchor: str
     nofollow: bool
+    # Where the link sits in the DOM (nav/header/sidebar/footer/content/other;
+    # see tools/link_position.py). Empty when the crawl did not classify links
+    # (the default): storing this per link on a large crawl is a real memory
+    # cost, so it is switchable, and leaving it off means the position of every
+    # edge is simply unmeasured rather than a false "content" or "".
+    position: str = ""
 
 
 @dataclass
@@ -274,6 +280,9 @@ def crawl_site(
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
     concurrency: int = 1,
+    classify_links: bool = False,
+    link_position_rules: list[dict[str, Any]] | None = None,
+    content_area_config: dict[str, Any] | None = None,
     cache: ResponseCache | None = None,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
@@ -309,6 +318,17 @@ def crawl_site(
     enqueueing, and the checkpoint — before anything downstream sees them, so
     the output (and the saved frontier, on an early stop) is identical to
     ``concurrency=1`` aside from ``response_time``.
+
+    ``classify_links`` resolves each recorded ``LinkEdge.position`` (nav,
+    header, sidebar, footer, content, other — see ``tools/link_position.py``)
+    while the page is already being parsed, at zero extra requests; it is off
+    by default because storing a position per link is a real memory cost on a
+    large crawl, and with it off every edge's ``position`` is simply ``""``
+    (unmeasured), never a guessed value. ``link_position_rules`` overrides the
+    default nav/header/sidebar/footer selectors (site-specific menus are
+    common); ``content_area_config`` is the same config
+    ``content_area.resolve_content_area`` takes, reused here so "content"
+    means the same thing it means for word counts.
     """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
@@ -322,6 +342,15 @@ def crawl_site(
     max_concurrency = max(1, min(int(concurrency), MAX_CONCURRENCY_CEILING))
     if state_path:
         crawl_state.ensure_safe_dir(os.path.dirname(os.path.abspath(state_path)) or ".")
+    parse_options = (
+        {
+            "classify_links": True,
+            "link_position_rules": link_position_rules,
+            "content_area": content_area_config,
+        }
+        if classify_links
+        else None
+    )
 
     result = SpiderResult()
     throttle = Throttle(min_delay=min_delay, max_concurrency=max_concurrency)
@@ -454,6 +483,7 @@ def crawl_site(
                         destination=href,
                         anchor=(link.get("text") or "")[:200],
                         nofollow=bool(link.get("nofollow")),
+                        position=link.get("position") or "",
                     )
                 )
                 reason = rules.rejection(href, host)
@@ -542,6 +572,7 @@ def crawl_site(
                         fetcher=fetcher,
                         throttle=throttle,
                         extra_headers=_extra_headers_for(url),
+                        parse_options=parse_options,
                         cache=cache,
                         wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
                     )
@@ -568,6 +599,7 @@ def crawl_site(
                     fetcher=fetcher,
                     throttle=throttle,
                     extra_headers=_extra_headers_for(url),
+                    parse_options=parse_options,
                     cache=cache,
                     wait=gate.wait_turn,
                 )

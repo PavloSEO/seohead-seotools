@@ -98,6 +98,16 @@ DEFAULTS: dict[str, Any] = {
         "dir": "",
         "write_pages_jsonl": True,
     },
+    "link_position": {
+        # Off by default: classifying every link's DOM ancestry (nav, header,
+        # sidebar, footer, content) has a real per-link cost, and most crawls
+        # never read the result. See tools/link_position.py.
+        "classify": False,
+        # Overrides the built-in nav/header/sidebar/footer selectors. Each
+        # entry is {"position": ..., "selector": ...}; empty keeps the
+        # built-ins. Plenty of production menus are not a <nav> element.
+        "rules": [],
+    },
     "cache": {
         # off (default): no cache, reads or writes — a crawl has exactly the side effects it
         # had before this setting existed, per this project's own rule that a side effect (here,
@@ -228,6 +238,11 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "speed.min_delay_seconds",
         "speed.adaptive",
         "speed.stop_after_consecutive_timeouts",
+        # Whether links are classified changes whether the inlink-composition
+        # finding can be computed at all, and which rules classify them
+        # changes where any given link lands.
+        "link_position.classify",
+        "link_position.rules",
         # A replay run can answer entirely from a stale cache; a forced-invalidate run trusted
         # nothing on disk. Both change whether the findings describe the site now or earlier.
         "cache.mode",
@@ -314,6 +329,15 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "output.dir": "Directory to write pages.jsonl and audit.json into; empty writes nothing to disk.",
     "output.write_pages_jsonl": "Write one JSON line per fetched page to pages.jsonl.",
+    "link_position.classify": (
+        "Classify each link's DOM ancestry (nav/header/sidebar/footer/content) as it is "
+        "parsed, at no extra requests; off by default because storing a position per link "
+        "costs memory on a large crawl."
+    ),
+    "link_position.rules": (
+        "Ordered [{'position', 'selector'}] overrides for the built-in nav/header/sidebar/"
+        "footer selectors; empty keeps the built-ins. Only read when classify is true."
+    ),
     "cache.mode": (
         "'off' (default: no cache), 'live' (real HTTP freshness: max-age/Expires, "
         "ETag/Last-Modified revalidation), or 'replay' (serve any cached entry regardless of "
@@ -496,6 +520,12 @@ def validate(config: dict[str, Any]) -> None:
         raise ConfigError(
             "a crawl needs at least one budget: max_urls, max_depth or max_crawl_seconds"
         )
+
+    for rule in config["link_position"]["rules"]:
+        if not isinstance(rule, dict) or not rule.get("position") or not rule.get("selector"):
+            raise ConfigError(
+                f"link_position.rules entries need both 'position' and 'selector'; got {rule!r}"
+            )
 
     _validate_credential_headers(config["http"])
     _validate_rendering(config["rendering"])

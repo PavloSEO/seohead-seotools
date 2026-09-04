@@ -4,6 +4,23 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+<<<<<<< HEAD
+- Add custom search (`tools/custom_search.py`) and custom extraction
+  (`tools/custom_extract.py`) over an already-crawled corpus: presence/absence filters
+  (raw source, visible text, a named CSS element, or an XPath node) and CSS/XPath/regex
+  extractors, both reporting which representation (static markup vs. rendered DOM) they ran
+  against. Absence is counted honestly: a page whose fetch failed is excluded from both the
+  numerator and the denominator rather than counted as missing. Extraction runs each
+  (document, extractor) pair under a wall-clock budget (`SIGALRM` on POSIX): a pathological
+  expression aborts only that document, and the run still finishes.
+- Add link position classification (`tools/link_position.py`): nav/header/sidebar/footer/content,
+  by ordered rule over a link's ancestor path, reusing `content_area.py`'s notion of content
+  rather than inventing a second one. Wired into `crawl/spider.py`'s link recording behind
+  `link_position.classify` (default off — a position per link costs memory on a large crawl) and
+  aggregated site-wide by `crawl/linkgraph.py`'s `inlink_composition`, which now feeds a new
+  `INLINK_BOILERPLATE_ONLY` audit finding for pages linked only from boilerplate. Registry grows
+  from 104 to 105 checks.
+=======
 - Add eight post-crawl second-pass computations that only become answerable once a crawl is
   complete (issue #15): an internal link score computed from the `all_inlinks` edge graph
   (`LOW_LINK_SCORE`); a canonical target no hyperlink ever points to (`UNLINKED_CANONICAL`);
@@ -16,7 +33,8 @@ All notable public changes are documented here.
   `tools/content_area.py` into the audit for the first time. `ORPHAN_PAGE`, `SITEMAP_ORPHAN` and
   the two new "unlinked" checks are now withheld — reported as a named skip, not a finding — on a
   crawl the aggregator has marked partial, since "nothing links here" is unprovable on a
-  truncated crawl. Registry grows from 104 to 113 checks.
+  truncated crawl. Registry grows from 104 to 114 checks.
+>>>>>>> origin/main
 - Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
   verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
   missing x-default, duplicate entries, non-canonical targets), two robots directives

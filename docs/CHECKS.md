@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**113 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**114 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -229,3 +229,9 @@ python scripts/generate_checks_reference.py
 | `OG_MISSING` | notice | SF:Social:Open Graph | og:title is missing, so social previews may not render correctly | Add og:title, og:image, and og:url; at minimum, provide og:title and og:image for a useful preview. |
 | `IMG_OVER_KB` | warning | SF:Images:Over X KB | Image exceeds the configured file-size threshold | Compress the image and consider converting it to WebP or AVIF while preserving acceptable visual quality. |
 | `IMG_MISSING_DIMENSIONS` | notice | SF:Images:Missing Size Attributes | Image is missing width and height attributes | Declare intrinsic width and height values to reserve layout space and reduce CLS. |
+
+## handler layer rather than through a registered export requirement.
+
+| Check id | Severity | Evidence | Fires on | Fix |
+|---|---|---|---|---|
+| `INLINK_BOILERPLATE_ONLY` | warning | crawl:link_position | Page is linked only from navigation, header, sidebar, or footer, never from body content | Add a contextual link to the page from relevant body copy; a page reachable only through boilerplate is not linked the way a page in the content graph is. |
