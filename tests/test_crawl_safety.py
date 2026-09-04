@@ -210,6 +210,23 @@ def test_pinning_refuses_a_private_target():
         pinned_target("http://127.0.0.1:8080/")
 
 
+def test_pinning_honours_the_named_host_allowlist_but_not_a_different_host(monkeypatch):
+    """The connection path itself (not just validate_url) respects the scoped opt-in."""
+    from seohead.recon import net
+
+    records = [(net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", ("10.0.0.9", 443))]
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_a, **_k: records)
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+
+    url, headers, _ = net.pinned_target("https://staging.internal/")
+    assert headers["Host"] == "staging.internal"
+    assert "10.0.0.9" in url
+
+    with pytest.raises(ValueError):
+        net.pinned_target("https://other-internal.example/")
+
+
 # ── circuit breaker ─────────────────────────────────────────────────────────
 
 
@@ -264,6 +281,40 @@ def test_a_success_clears_the_refusal_streak():
         t.record_server_error(503)
     t.record_success()
     assert t.host_is_failing() is False
+
+
+# ── concurrency ceiling (#14: "a config file alone cannot raise it") ────────
+
+
+def test_the_concurrency_ceiling_is_enforced_by_the_throttle_itself_not_only_by_a_caller():
+    """A config-supplied value is clamped at the object that actually paces
+    requests, not only where the caller happens to validate it — so a future
+    caller that constructs a Throttle directly, without going through
+    crawl_site()'s own clamp, still cannot exceed the ceiling."""
+    from seohead.crawl.throttle import MAX_CONCURRENCY_CEILING, Throttle
+
+    t = Throttle(max_concurrency=999)
+    assert t.max_concurrency == MAX_CONCURRENCY_CEILING
+
+
+def test_the_configured_concurrency_ceiling_survives_a_crawl_end_to_end():
+    """The obvious bypass: ask crawl_site() itself for far more than the ceiling."""
+    from seohead.crawl.throttle import MAX_CONCURRENCY_CEILING
+
+    site = {
+        "https://example.com/robots.txt": FakeResponse("User-agent: *\n", ct="text/plain"),
+        "https://example.com/": page(*[f"/p{i}" for i in range(30)]),
+        **{f"https://example.com/p{i}": page() for i in range(30)},
+    }
+    result = crawl_site(
+        "https://example.com/",
+        min_delay=0,
+        sleeper=lambda _s: None,
+        fetcher=lambda u: site.get(u) or FakeResponse("", 404),
+        max_urls=50,
+        concurrency=999,
+    )
+    assert result.effective_concurrency <= MAX_CONCURRENCY_CEILING
 
 
 # ── credential headers ──────────────────────────────────────────────────────

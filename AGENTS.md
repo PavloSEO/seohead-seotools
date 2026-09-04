@@ -56,7 +56,8 @@ CLI and MCP. `tests/test_registration.py` enforces this boundary.
 - Missing data is not a clean result. Report skipped or unavailable checks with a reason.
 - Network failures are result data at tool boundaries, not process crashes.
 - User-controlled URL requests use `seohead.recon.net.http_client`; private networks are blocked
-  unless `SEOHEAD_ALLOW_PRIVATE_NETWORKS=1` is set deliberately.
+  unless `SEOHEAD_ALLOW_PRIVATE_NETWORKS=1` is set deliberately, or the target host is named in
+  `SEOHEAD_ALLOW_PRIVATE_HOSTS` to authorize just that one staging host.
 - Side effects are explicit. File mutation, service-path probing, DNS bot verification, provider
   production mode, and paid calls never hide behind defaults.
 - Image optimization requires an output directory unless `in_place=true`; backups are enabled for

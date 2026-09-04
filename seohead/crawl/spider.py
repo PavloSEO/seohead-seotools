@@ -33,16 +33,12 @@ from urllib.parse import urlsplit, urlunsplit
 from seohead.crawl import state as crawl_state
 from seohead.crawl.collect import CrawlResult, PageRecord, _is_timeout, _write, fetch_one
 from seohead.crawl.settings import resolve_credential_headers
-from seohead.crawl.throttle import Throttle
+from seohead.crawl.throttle import MAX_CONCURRENCY_CEILING, Throttle
 from seohead.recon.net import http_client, normalize_url, registrable_domain
 from seohead.tools.robots import crawl_delay, is_allowed, match_path, parse_robots
 
 MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
-# A ceiling on the *configured* value, not on what the adaptive throttle will
-# actually use — Throttle.concurrency starts low and earns its way up to
-# whichever of this or the caller's request is smaller.
-MAX_CONCURRENCY_CEILING = 16
 ROBOTS_TOKEN = "SEOHEAD-Tools"
 EMPTY_ROBOTS = {"allow": [], "disallow": [], "groups": [], "crawl_delay": None}
 # Matches Throttle.should_stop / host_is_failing's own default limit — kept as
