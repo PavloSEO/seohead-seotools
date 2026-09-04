@@ -51,9 +51,20 @@ NEEDS_LIVE_INFRASTRUCTURE = {
 }
 
 
+# `sf` subcommands that inspect the local Screaming Frog installation itself rather than an
+# export: they pass on a developer machine that has SF and fail on a runner that does not,
+# which is the difference between an environment and a broken command.
+SF_SUBCOMMANDS_NEEDING_AN_INSTALL = {"doctor", "save-config"}
+
+
 def _is_licensed_sf_mode(argv: list[str]) -> bool:
-    """Mode A (`--crawl`) needs the licensed SF CLI; `--load-crawl` needs a real capture."""
-    return argv[:1] == ["sf"] and any(flag in argv for flag in ("--crawl", "--load-crawl"))
+    """Mode A (`--crawl`) needs the licensed SF CLI; `--load-crawl` needs a real capture;
+    `doctor` and `save-config` need an installed Screaming Frog to report on at all."""
+    if argv[:1] != ["sf"]:
+        return False
+    if any(flag in argv for flag in ("--crawl", "--load-crawl")):
+        return True
+    return argv[1:2] and argv[1] in SF_SUBCOMMANDS_NEEDING_AN_INSTALL
 
 
 def _substitute(raw: str, base_url: str) -> str:
