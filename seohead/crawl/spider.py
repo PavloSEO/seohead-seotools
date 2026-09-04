@@ -31,6 +31,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
+from seohead.crawl.cache import ResponseCache
 from seohead.crawl.collect import CrawlResult, PageRecord, _is_timeout, _write, fetch_one
 from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
@@ -270,9 +271,12 @@ def crawl_site(
     credential_headers: list[dict[str, Any]] | None = None,
     clock: Callable[[], float] = time.monotonic,
     concurrency: int = 1,
+    cache: ResponseCache | None = None,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
+    ``cache``, when given, is consulted for every fetch before any delay or dispatch-gate wait
+    is applied, so a cache hit costs neither a request nor a throttle slot — see ``fetch_one``.
     ``max_seconds`` is a wall-clock budget for the whole call; 0 means none.
     ``state_path``, when given, checkpoints the frontier there so a later call
     with the same path and start URL resumes instead of restarting —
@@ -512,14 +516,14 @@ def crawl_site(
                     continue
 
                 try:
-                    if throttle.delay:
-                        sleeper(throttle.delay)
                     record, parsed = fetch_one(
                         url,
                         client=client,
                         fetcher=fetcher,
                         throttle=throttle,
                         extra_headers=_extra_headers_for(url),
+                        cache=cache,
+                        wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
                     )
                 except KeyboardInterrupt:
                     # Not processed: put it back so a resume retries it rather
@@ -535,13 +539,17 @@ def crawl_site(
 
             def dispatch(item: tuple[str, int]) -> tuple[str, int, PageRecord, dict | None]:
                 url, depth = item
-                gate.wait_turn()
+                # gate.wait_turn is passed as ``wait`` rather than called here directly, so a
+                # cache hit — decided inside fetch_one — never claims a dispatch turn it did not
+                # need. A hit costs no request, so it must not cost a pacing slot either.
                 record, parsed = fetch_one(
                     url,
                     client=client,
                     fetcher=fetcher,
                     throttle=throttle,
                     extra_headers=_extra_headers_for(url),
+                    cache=cache,
+                    wait=gate.wait_turn,
                 )
                 return url, depth, record, parsed
 
@@ -646,6 +654,9 @@ def crawl_site(
     result.excluded = excluded
     result.effective_delay = throttle.delay
     result.effective_concurrency = throttle.concurrency
+    if cache is not None:
+        result.cache_stats = dict(cache.stats)
+        result.cache_replay = cache.mode == "replay"
     result.limitations = [
         f"scope {rules.internal}: links outside it are recorded, never fetched",
         "static HTML only: no JavaScript rendering",

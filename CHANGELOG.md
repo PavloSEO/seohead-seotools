@@ -60,6 +60,21 @@ All notable public changes are documented here.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
 - Require TLS 1.2 or newer and pin direct certificate probes to prevalidated public addresses.
+- Add an HTTP response cache for `crawl-site` (`seohead/crawl/cache.py`, opt-in via
+  `cache.mode` — default `off`, so no side effect appears behind a default): real HTTP freshness
+  semantics (`max-age`/`Expires`, `ETag`/`Last-Modified` revalidation, `Vary`-aware variants,
+  `no-store`/`no-cache` honoured), a `replay` mode for debugging that is stamped in the manifest
+  and never the default, and an `invalidate` flag for an explicit hard refresh. Every fetched
+  page carries `cache_status` (`hit`/`revalidated`/`miss`); the run carries `cache_stats` and
+  `cache_replay` in both the handler output and `audit.json`'s `run` block, so a report built
+  partly from cache says so. A cache hit costs no request and consumes no throttle delay or
+  concurrent dispatch-gate slot either — the wait is issued from inside `fetch_one` itself, only
+  once a real network round trip is actually about to happen.
+- Add journal-driven reuse to `seohead/runlog.py` (`SEOHEAD_REUSE_POLICY`, a per-tool maximum
+  age in seconds; default empty, meaning nothing is ever reused). A configured, still-fresh,
+  successful prior answer is returned instead of calling the tool again, marked `reused: true`
+  with `reused_from_ts` in both the result and the new journal entry it still writes — freshness
+  is always measured against when the value was actually fetched, never extended by reuse itself.
 
 ## 3.0.0 — first public snapshot
 

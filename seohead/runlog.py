@@ -9,9 +9,14 @@ how long they took — and today that is unanswerable after the fact.
 
 **Making repeated work visible before it is repeated.** Every entry carries a
 fingerprint of the call and where its output landed, so a later run can see that
-the same tool ran against the same target minutes ago. This module records; it
-does not yet skip anything. Reuse is a decision for a caller who knows whether a
-stale answer is acceptable, and that is deliberately not decided here.
+the same tool ran against the same target minutes ago.
+
+**Reusing that work, but only where staleness is nobody's problem.** Whether a stale answer is
+acceptable is a property of the *question*, not of the tool: a parse of a page a client just
+fixed must not come back from five minutes ago, but a domain registration lookup almost
+certainly may. So reuse here is opt-in per tool (``reuse_policy`` / ``SEOHEAD_REUSE_POLICY``),
+defaults to never, and is never silent — a reused answer is marked ``reused: true`` in both the
+returned result and the journal entry that answered it. See ``journaled``.
 
 Format is JSONL, one line per call, appended after the call completes so an
 interrupted process cannot corrupt earlier entries. Default path is
@@ -21,6 +26,8 @@ interrupted process cannot corrupt earlier entries. Default path is
 
 from __future__ import annotations
 
+import calendar
+import copy
 import hashlib
 import json
 import os
@@ -36,6 +43,20 @@ DEFAULT_PATH = "~/.config/seohead/runs.jsonl"
 SECRET_HINTS = ("token", "key", "secret", "password", "passwd", "auth", "credential")
 
 MAX_VALUE_CHARS = 300
+
+# Per-tool reuse policy: a JSON object mapping tool name to a maximum age in seconds, e.g.
+# '{"domain_profile": 86400}'. Absent or unparsable means an empty policy, which means what the
+# issue this implements asked for by name: with no policy configured, nothing is ever reused.
+# Whether a stale answer is acceptable is a property of the *question*, not of the tool, so this
+# is deliberately opt-in per tool rather than a single global switch.
+REUSE_POLICY_ENV = "SEOHEAD_REUSE_POLICY"
+
+# A stored result larger than this is not written back into the journal for reuse: the journal
+# is meant to stay a thin, greppable log of calls, not a second copy of every large payload a
+# tool ever returned. A tool whose answers are this large is also a poor fit for journal-driven
+# reuse in the first place (that budget is for a domain profile or a WHOIS lookup, not a parsed
+# page body).
+MAX_REUSABLE_RESULT_BYTES = 20_000
 
 # Which face of the toolkit is running. Set once at process start so a single
 # journaling point can name the caller without every call site passing it.
@@ -151,12 +172,125 @@ def journal(interface: str, tool: str, arguments: dict[str, Any] | None = None):
         )
 
 
+def reuse_policy() -> dict[str, float]:
+    """The configured per-tool maximum reuse age, in seconds. Empty means never reuse.
+
+    Read fresh on every call rather than cached at import time, so a test (or an operator) can
+    change ``SEOHEAD_REUSE_POLICY`` between calls in the same process.
+    """
+    raw = os.environ.get(REUSE_POLICY_ENV)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}  # a malformed policy must disable reuse, not crash the tool
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, float] = {}
+    for name, value in parsed.items():
+        try:
+            age = float(value)
+        except (TypeError, ValueError):
+            continue
+        if age > 0:
+            out[str(name)] = age
+    return out
+
+
+def _parse_ts(ts: str) -> float | None:
+    try:
+        return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError):
+        return None
+
+
+def find_reusable(
+    tool: str, arguments: dict[str, Any] | None, max_age_seconds: float
+) -> dict[str, Any] | None:
+    """The most recent still-fresh, successful, storable answer to this exact call, if any.
+
+    "Exact call" is the journal's own fingerprint — the same tool against arguments that are
+    identical once order and secrets are normalised away, which is what makes this reuse rather
+    than a guess.
+    """
+    if max_age_seconds <= 0:
+        return None
+    target = fingerprint(tool, arguments)
+    now = time.time()
+    for entry in read_entries(limit=2000):
+        if entry.get("tool") != tool or entry.get("fingerprint") != target:
+            continue
+        if not entry.get("ok") or "result" not in entry:
+            continue
+        stored_at = _parse_ts(str(entry.get("ts", "")))
+        if stored_at is None or (now - stored_at) > max_age_seconds:
+            continue
+        return {"ts": entry["ts"], "result": entry["result"]}
+    return None
+
+
+def _redact_secret_keys(value: Any) -> Any:
+    """Secret-named keys replaced, everything else untouched (no length truncation).
+
+    Unlike ``safe_arguments``, this must preserve a reusable result byte-for-byte wherever it is
+    not a secret: a truncated string played back as if it were the real answer would be a second,
+    quieter version of the exact staleness bug this module exists to prevent.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[redacted]"
+                if any(hint in key.lower() for hint in SECRET_HINTS)
+                else _redact_secret_keys(v)
+            )
+            for key, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_secret_keys(v) for v in value]
+    return value
+
+
+def _reusable_payload(result: Any) -> Any | None:
+    """The result, if it is a plain-JSON dict small enough to journal for later reuse."""
+    if not isinstance(result, dict):
+        return None
+    redacted = _redact_secret_keys(result)
+    try:
+        encoded = json.dumps(redacted, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded) > MAX_REUSABLE_RESULT_BYTES:
+        return None
+    return json.loads(encoded)
+
+
 def journaled(tool: str, function):
-    """Wrap a handler so every call through any interface is recorded once."""
+    """Wrap a handler so every call through any interface is recorded once.
+
+    When this tool has an opt-in reuse policy (see ``reuse_policy``) and the journal holds a
+    still-fresh, successful answer to the exact same call, that answer is returned instead of
+    calling ``function`` again — the underlying request (a fetch, a paid lookup) never happens a
+    second time. The reuse is never silent: the returned dict carries ``reused: true`` and
+    ``reused_from_ts``, and a new journal entry records that this call was answered from reuse.
+    """
     import functools
 
     @functools.wraps(function)
     def wrapper(**kwargs):
+        max_age = reuse_policy().get(tool, 0)
+        if max_age:
+            reusable = find_reusable(tool, kwargs, max_age)
+            if reusable is not None:
+                with journal(current_interface(), tool, kwargs) as facts:
+                    facts["reused"] = True
+                    facts["reused_from_ts"] = reusable["ts"]
+                    result = copy.deepcopy(reusable["result"])
+                    if isinstance(result, dict):
+                        result["reused"] = True
+                        result["reused_from_ts"] = reusable["ts"]
+                    return result
+
         with journal(current_interface(), tool, kwargs) as facts:
             result = function(**kwargs)
             if isinstance(result, dict):
@@ -169,6 +303,10 @@ def journaled(tool: str, function):
                         facts[key] = result[key]
                 if "ok" in result:
                     facts["result_ok"] = result["ok"]
+            if max_age:
+                payload = _reusable_payload(result)
+                if payload is not None:
+                    facts["result"] = payload
             return result
 
     return wrapper
