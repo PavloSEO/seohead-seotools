@@ -890,6 +890,36 @@ def markdown_extract(
     }
 
 
+def log_scan(
+    run: str | None = None, images_dir: str | None = None, max_per_rule: int = 20
+) -> dict[str, Any]:
+    """Report claims a finished run makes that cannot all be true at once.
+
+    ``run`` is a directory holding ``audit.json`` and/or ``pages.jsonl`` — whatever
+    ``crawl-site --out-dir`` or ``sf run --out`` wrote. ``images_dir`` is an
+    ``images-download`` output directory, whose manifest lets a recorded size be compared
+    against the file itself.
+
+    This is not a second audit. It reports only pairs of facts from the same run that
+    contradict each other, each with both values and where they came from, so a surprising
+    number can be traced instead of trusted. See ``seohead.tools.logscan`` for the rules and
+    for the defects each one was written from.
+    """
+    from seohead.tools import logscan
+
+    if not run:
+        raise ValueError("log_scan needs a run directory")
+    artifacts = logscan.load_run(run, images_dir)
+    if artifacts.audit is None and not artifacts.pages:
+        return {
+            "ok": False,
+            "error": f"no audit.json or pages.jsonl in {run}",
+            "anomalies": [],
+            "anomaly_count": 0,
+        }
+    return logscan.scan(artifacts, max_per_rule=max_per_rule)
+
+
 def boilerplate_report(pages: list[dict] | None = None) -> dict[str, Any]:
     """Group a crawled corpus by header/nav/footer hash and report minority template groups.
 
@@ -1328,6 +1358,7 @@ _RAW_HANDLERS = {
     "citability_check": citability_check,
     "markdown_extract": markdown_extract,
     "boilerplate_report": boilerplate_report,
+    "log_scan": log_scan,
     "social_meta_check": social_meta_check,
     "soft404_check": soft404_check,
     "log_analyze": log_analyze,

@@ -6,7 +6,7 @@ Generated from the MCP tool definitions in `seohead/servers/mcp_server.py` and `
 python scripts/generate_tool_reference.py
 ```
 
-**48 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 53 in total.
+**49 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 54 in total.
 
 Every tool shares one contract: JSON in, JSON out. A target that could not be reached comes back as `{"ok": false, "error": "..."}` instead of raising, so an unreachable site is data, not a crash.
 
@@ -91,6 +91,20 @@ MCP name: `seo_crawl_describe_settings`
 List every crawl-site config setting: dotted path, type, default value, description, and whether it changes what the audit finds (results-affecting) or only cost/duration. The same source ``crawl-site --config-help`` reads, so an agent can discover the configuration surface without a filesystem.
 
 Takes no arguments.
+
+**Cost** — network: no · writes files: no · idempotent: yes · spends money: no
+
+### `log-scan`
+
+MCP name: `seo_log_scan`
+
+Report claims a finished run makes that cannot all be true at once: a recorded size that disagrees with the file, a check firing more often than there are pages to fire on, a finding about a URL the run never fetched, a summary that disagrees with its own rows. Not a second audit and not a threshold — only contradictions, each naming both values and where each came from, so a surprising number can be traced instead of trusted. ``run`` is a directory holding audit.json and/or pages.jsonl; ``images_dir`` is an images-download directory whose manifest lets a recorded size be checked against the bytes on disk.
+
+| Argument | Type | Default |
+|---|---|---|
+| `run` | `str` | `required` |
+| `images_dir` | `str | None` | `None` |
+| `max_per_rule` | `int` | `20` |
 
 **Cost** — network: no · writes files: no · idempotent: yes · spends money: no
 

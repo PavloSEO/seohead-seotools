@@ -25,6 +25,7 @@ COMMANDS = (
     "parse",
     "crawl-site",
     "crawl-describe-settings",
+    "log-scan",
     "compare-crawls",
     "redirects-generate",
     "redirects-check",
@@ -125,6 +126,7 @@ def _stdin_has_data() -> bool:
 # unread URL and the loop processes only one.
 SOURCE_FLAGS = (
     "url",
+    "run",
     "urls",
     "files",
     "path",
@@ -269,6 +271,11 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["fmt"] = args.format
         if getattr(args, "out", None):
             kw["out"] = args.out
+    elif cmd == "log-scan":
+        if getattr(args, "run", None):
+            kw["run"] = args.run
+        if getattr(args, "images_dir", None):
+            kw["images_dir"] = args.images_dir
     elif cmd == "compare-crawls":
         if getattr(args, "before", None):
             kw["before"] = args.before
@@ -589,6 +596,15 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             help="report format (default xlsx)",
         )
         sub.add_argument("--out", help="output file path")
+    if cmd == "log-scan":
+        sub.add_argument(
+            "--run", required=True, help="directory holding audit.json and/or pages.jsonl"
+        )
+        sub.add_argument(
+            "--images-dir",
+            help="an images-download output directory, so a recorded size can be compared "
+            "against the file on disk",
+        )
     if cmd == "compare-crawls":
         sub.add_argument("--before", required=True, help="path to the earlier audit.json")
         sub.add_argument("--after", required=True, help="path to the later audit.json")
@@ -743,6 +759,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2, default=str)
     sys.stdout.write("\n")
+    if cmd == "log-scan" and isinstance(result, dict) and result.get("anomaly_count"):
+        # A contradiction is a gate, not a report: a pipeline that produced numbers which
+        # disagree with each other should stop rather than publish them. 2, not 1, so a
+        # caller can tell "the run contradicts itself" from "the command failed".
+        return 2
     return 0
 
 

@@ -1,0 +1,421 @@
+"""Find claims a finished run makes that cannot all be true at once.
+
+Every defect this toolkit had on live sites was found by reading a report and noticing an
+impossible number, never by a failing test:
+
+* a 739 KB WebP recorded as 1.27 MB — the file on disk contradicted the report (#99);
+* 392 findings of one check on a site with 124 HTML pages — more findings than pages (#94);
+* 78 pages canonicalising "to a redirect" whose canonical answers 200 (#95);
+* 433 content words on a page whose ``<main>`` holds 429 (#96).
+
+None of them needed a live site to *detect*. Each is arithmetic over what the run already
+wrote down, and each survived sixteen hundred tests, because a test asserts what a fixture
+does and every fixture was clean. This module applies that arithmetic to a real run.
+
+What it reports is deliberately narrow. Not SEO findings — the audit does those. Not
+thresholds — a slow page or a long title is a judgement, not a contradiction. Only pairs of
+facts from the same run that cannot both be right, each anomaly naming both values and where
+each came from, so the reader can check the claim rather than trust it.
+
+Pure and network-free: it reads artifacts a run already produced.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+__all__ = ["RULES", "Anomaly", "RunArtifacts", "load_run", "scan"]
+
+
+@dataclass
+class Anomaly:
+    """One pair of facts from a run that cannot both be true.
+
+    ``observed`` and ``expected`` are the two disagreeing values, and ``sources`` says where
+    each was read from. There is no severity: an anomaly is either proven by the artifacts or
+    it is not reported.
+    """
+
+    rule: str
+    message: str
+    observed: Any = None
+    expected: Any = None
+    target: str = ""
+    sources: dict[str, str] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RunArtifacts:
+    """Everything a scan reads. Any of it may be absent; a rule that needs a missing
+    artifact does not run rather than guessing."""
+
+    audit: dict[str, Any] | None = None
+    pages: list[dict[str, Any]] = field(default_factory=list)
+    files: dict[str, int] = field(default_factory=dict)  # URL -> bytes on disk
+    audit_path: str = ""
+    pages_path: str = ""
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                value = json.loads(line)
+            except ValueError:
+                continue  # a truncated final line from an interrupted run, not a finding
+            if isinstance(value, dict):
+                out.append(value)
+    return out
+
+
+def _downloaded_sizes(images_dir: Path) -> dict[str, int]:
+    """Map each downloaded file back to the URL it came from, by its manifest.
+
+    ``images-download`` writes a manifest beside the files; without one there is no way to
+    say which URL a file on disk came from, and guessing from the path would produce exactly
+    the kind of unfounded claim this module exists to avoid.
+    """
+    manifest = images_dir / "manifest.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    entries = raw.get("images") if isinstance(raw, dict) else raw
+    sizes: dict[str, int] = {}
+    for entry in entries or ():
+        if not isinstance(entry, dict):
+            continue
+        url = entry.get("url")
+        path = entry.get("path") or entry.get("file")
+        if not url or not path:
+            continue
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = images_dir / candidate
+        if candidate.is_file():
+            sizes[str(url)] = candidate.stat().st_size
+    return sizes
+
+
+def load_run(run_dir: str, images_dir: str | None = None) -> RunArtifacts:
+    """Read the artifacts of one finished run from a directory."""
+    base = Path(os.path.expanduser(run_dir))
+    artifacts = RunArtifacts()
+
+    audit_path = base / "audit.json"
+    if audit_path.is_file():
+        try:
+            artifacts.audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            artifacts.audit_path = str(audit_path)
+        except ValueError:
+            artifacts.audit = None
+
+    pages_path = base / "pages.jsonl"
+    if pages_path.is_file():
+        artifacts.pages = _read_jsonl(pages_path)
+        artifacts.pages_path = str(pages_path)
+
+    if images_dir:
+        artifacts.files = _downloaded_sizes(Path(os.path.expanduser(images_dir)))
+    return artifacts
+
+
+# ── rules ────────────────────────────────────────────────────────────────────
+#
+# Each rule takes the artifacts and yields Anomaly objects. A rule that cannot run — the
+# artifact it needs is absent, or the field it compares was never recorded — yields nothing.
+# Silence from a rule means "not checked here", which is why the scan result also reports
+# which rules ran.
+
+
+def rule_recorded_size_matches_the_file(run: RunArtifacts) -> list[Anomaly]:
+    """A page's recorded size against the same URL's bytes on disk (#99)."""
+    out = []
+    for page in run.pages:
+        url = page.get("url")
+        recorded = page.get("size_bytes")
+        actual = run.files.get(str(url))
+        if actual is None or not isinstance(recorded, int) or recorded == actual:
+            continue
+        out.append(
+            Anomaly(
+                rule="size_matches_file",
+                message="recorded size differs from the downloaded file",
+                observed=recorded,
+                expected=actual,
+                target=str(url),
+                sources={"observed": "pages.jsonl:size_bytes", "expected": "downloaded file"},
+            )
+        )
+    return out
+
+
+def rule_text_ratio_is_a_percentage(run: RunArtifacts) -> list[Anomaly]:
+    """Text cannot be more than all of the bytes it came from (#99).
+
+    A ratio above 100 means the numerator and the denominator were measured differently —
+    which is exactly what a decoded-text length over a wire-byte size produces.
+    """
+    out = []
+    for page in run.pages:
+        ratio = page.get("text_ratio")
+        if not isinstance(ratio, (int, float)) or ratio <= 100:
+            continue
+        out.append(
+            Anomaly(
+                rule="text_ratio_is_a_percentage",
+                message="text ratio exceeds 100%: the text and the size were not measured alike",
+                observed=ratio,
+                expected="<= 100",
+                target=str(page.get("url")),
+                sources={"observed": "pages.jsonl:text_ratio"},
+            )
+        )
+    return out
+
+
+def rule_a_200_has_bytes(run: RunArtifacts) -> list[Anomaly]:
+    """A page that answered 2xx with a zero-byte body, or words counted out of no bytes."""
+    out = []
+    for page in run.pages:
+        status = page.get("status_code")
+        size = page.get("size_bytes")
+        words = page.get("word_count") or 0
+        if not isinstance(status, int) or not (200 <= status < 300):
+            continue
+        if size == 0 and words:
+            out.append(
+                Anomaly(
+                    rule="words_without_bytes",
+                    message="words were counted on a page recorded as zero bytes",
+                    observed=words,
+                    expected=0,
+                    target=str(page.get("url")),
+                    sources={
+                        "observed": "pages.jsonl:word_count",
+                        "expected": "pages.jsonl:size_bytes",
+                    },
+                )
+            )
+    return out
+
+
+def _crawled_urls(run: RunArtifacts) -> set[str]:
+    return {str(p.get("url")) for p in run.pages if p.get("url")}
+
+
+def _issues(run: RunArtifacts) -> list[dict[str, Any]]:
+    return list((run.audit or {}).get("issues") or [])
+
+
+def rule_findings_are_about_crawled_urls(run: RunArtifacts) -> list[Anomaly]:
+    """A finding about a URL the run never fetched is evidence of nothing (#94).
+
+    Only applied to checks whose target is a page of this crawl. A check that deliberately
+    reports a URL the crawl did not fetch — a sitemap orphan, a broken destination — names
+    that in its own definition, so those are exempt by id rather than by guesswork.
+    """
+    if not run.pages or not run.audit:
+        return []
+    crawled = _crawled_urls(run)
+    exempt = {
+        "SITEMAP_ORPHAN",  # declared in the sitemap, by definition possibly not crawled
+        "BROKEN_LINK",
+        "HREFLANG_BROKEN_TARGET",
+        "UNLINKED_CANONICAL",
+    }
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for issue in _issues(run):
+        check = str(issue.get("check") or "")
+        target = str(issue.get("target_url") or "")
+        if not target or check in exempt or target in crawled:
+            continue
+        if (check, target) in seen:
+            continue
+        seen.add((check, target))
+        out.append(
+            Anomaly(
+                rule="findings_are_about_crawled_urls",
+                message=f"{check} reports a URL absent from this run's own page list",
+                observed=target,
+                expected="a URL in pages.jsonl",
+                target=target,
+                sources={"observed": "audit.json:issues", "expected": "pages.jsonl:url"},
+            )
+        )
+    return out
+
+
+def rule_a_check_cannot_exceed_its_population(run: RunArtifacts) -> list[Anomaly]:
+    """A per-page check firing more often than there are pages (#94).
+
+    On the crawl that prompted this, one check fired 392 times on 124 HTML pages — three
+    times more findings than there were pages to have them.
+    """
+    if not run.pages or not run.audit:
+        return []
+    html_pages = sum(1 for p in run.pages if "html" in str(p.get("content_type") or "").lower())
+    if not html_pages:
+        return []
+    by_check = (run.audit.get("summary") or {}).get("by_check") or {}
+    out = []
+    for check, count in by_check.items():
+        if not isinstance(count, int) or count <= html_pages:
+            continue
+        out.append(
+            Anomaly(
+                rule="check_within_its_population",
+                message=f"{check} fired more often than there are HTML pages to fire on",
+                observed=count,
+                expected=html_pages,
+                target=str(check),
+                sources={
+                    "observed": "audit.json:summary.by_check",
+                    "expected": "pages.jsonl: pages with an HTML content type",
+                },
+            )
+        )
+    return out
+
+
+def rule_summary_matches_the_issue_rows(run: RunArtifacts) -> list[Anomaly]:
+    """``summary.by_check`` is a count of the rows below it, or it is wrong."""
+    if not run.audit:
+        return []
+    by_check = (run.audit.get("summary") or {}).get("by_check") or {}
+    if not by_check:
+        return []
+    counted: dict[str, int] = {}
+    for issue in _issues(run):
+        check = str(issue.get("check") or "")
+        counted[check] = counted.get(check, 0) + 1
+    out = []
+    for check, claimed in sorted(by_check.items()):
+        actual = counted.get(check, 0)
+        if not isinstance(claimed, int) or claimed == actual:
+            continue
+        out.append(
+            Anomaly(
+                rule="summary_matches_detail",
+                message=f"summary claims {claimed} {check} findings, the issue list holds {actual}",
+                observed=claimed,
+                expected=actual,
+                target=str(check),
+                sources={
+                    "observed": "audit.json:summary.by_check",
+                    "expected": "audit.json:issues",
+                },
+            )
+        )
+    return out
+
+
+def rule_canonical_to_redirect_has_no_answering_twin(run: RunArtifacts) -> list[Anomaly]:
+    """CANONICAL_TO_REDIRECT while a crawled URL differing only by a trailing slash
+    answered 2xx (#95)."""
+    if not run.pages or not run.audit:
+        return []
+    answering = {
+        str(p.get("url")).rstrip("/")
+        for p in run.pages
+        if isinstance(p.get("status_code"), int) and 200 <= p["status_code"] < 300
+    }
+    out = []
+    for issue in _issues(run):
+        if str(issue.get("check")) != "CANONICAL_TO_REDIRECT":
+            continue
+        canonical = str((issue.get("details") or {}).get("canonical") or "")
+        if not canonical or canonical.rstrip("/") not in answering:
+            continue
+        out.append(
+            Anomaly(
+                rule="canonical_to_redirect_has_no_answering_twin",
+                message="canonical reported as a redirect, but that URL answered 2xx in this run",
+                observed="3xx",
+                expected="2xx",
+                target=canonical,
+                sources={
+                    "observed": "audit.json:issues[CANONICAL_TO_REDIRECT]",
+                    "expected": "pages.jsonl:status_code",
+                },
+            )
+        )
+    return out
+
+
+def rule_representation_is_recorded(run: RunArtifacts) -> list[Anomaly]:
+    """Numbers measured two different ways must say which they are.
+
+    A crawl that rendered some pages and not others holds two populations in one table; a
+    page with no representation recorded is a number nobody can compare to anything.
+    """
+    if not run.pages:
+        return []
+    labelled = [p for p in run.pages if p.get("representation")]
+    if not labelled or len(labelled) == len(run.pages):
+        return []
+    return [
+        Anomaly(
+            rule="representation_is_recorded",
+            message="some pages record how they were measured and some do not",
+            observed=len(run.pages) - len(labelled),
+            expected=0,
+            sources={"observed": "pages.jsonl:representation"},
+        )
+    ]
+
+
+RULES = (
+    rule_recorded_size_matches_the_file,
+    rule_text_ratio_is_a_percentage,
+    rule_a_200_has_bytes,
+    rule_findings_are_about_crawled_urls,
+    rule_a_check_cannot_exceed_its_population,
+    rule_summary_matches_the_issue_rows,
+    rule_canonical_to_redirect_has_no_answering_twin,
+    rule_representation_is_recorded,
+)
+
+
+def scan(run: RunArtifacts, max_per_rule: int = 20) -> dict[str, Any]:
+    """Apply every rule and return the anomalies, with what was read and what was not.
+
+    ``max_per_rule`` caps how many examples of one contradiction are listed — a broken chain
+    produces the same anomaly on every page, and the hundredth copy adds nothing — while the
+    count reports how many there were in total.
+    """
+    anomalies: list[dict[str, Any]] = []
+    per_rule: dict[str, int] = {}
+    for rule in RULES:
+        found = rule(run)
+        name = found[0].rule if found else rule.__name__.removeprefix("rule_")
+        per_rule[name] = per_rule.get(name, 0) + len(found)
+        anomalies.extend(a.as_dict() for a in found[:max_per_rule])
+    return {
+        "ok": True,
+        "anomalies": anomalies,
+        "anomaly_count": sum(per_rule.values()),
+        "by_rule": {k: v for k, v in per_rule.items() if v},
+        "read": {
+            "audit": bool(run.audit),
+            "pages": len(run.pages),
+            "downloaded_files": len(run.files),
+        },
+        # Named so a clean result cannot be mistaken for a complete one: a rule that had no
+        # artifact to read is silent for the same reason a rule that found nothing is.
+        "rules_run": [r.__name__.removeprefix("rule_") for r in RULES],
+    }
