@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- `URL_NOT_IN_SITEMAP` now compares pages with pages (#94). It compared a sitemap's URLs
+  against every destination in the crawl's link graph, so on a live 124-page site it fired
+  392 times — 362 image files a gallery links to directly, five off-host links, and 30 URLs
+  the crawl never fetched — which was 74% of that report and buried the findings that were
+  real. The observed side is now the pages a sitemap is supposed to declare: fetched, 2xx,
+  HTML, same-host and indexable. `reconcile_sitemap` takes that population as a separate
+  `comparable` argument, so `SITEMAP_ORPHAN` keeps asking about reachability against every
+  link destination and cannot invent orphans; what was set aside is returned under
+  `linked_not_comparable` rather than dropped.
 - Fix the canonical checks on a site that serves both slash forms of a URL (#95).
   `norm_url` folds a trailing slash away on purpose, so a canonical written without one
   matches the page that has it — but the normalised index kept only one page per key, and

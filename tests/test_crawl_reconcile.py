@@ -68,6 +68,7 @@ def test_empty_inputs_produce_empty_disjoint_sets():
         "in_sitemap_and_linked": [],
         "in_sitemap_not_linked": [],
         "linked_not_in_sitemap": [],
+        "linked_not_comparable": [],
         "in_sitemap_not_in_crawl": 0,
         "in_crawl_not_in_sitemap": 0,
     }
