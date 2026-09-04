@@ -104,7 +104,7 @@ def crawl_site(
     import os
     from datetime import datetime, timezone
 
-    from seohead.crawl import config as crawl_config
+    from seohead.crawl import settings as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
     from seohead.crawl.spider import crawl_site as _spider

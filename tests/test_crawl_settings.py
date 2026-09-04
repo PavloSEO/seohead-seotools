@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from seohead.crawl import config as cfg
+from seohead.crawl import settings as cfg
 
 
 def test_defaults_load_and_validate():

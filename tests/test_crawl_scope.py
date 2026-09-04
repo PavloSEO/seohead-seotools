@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from seohead.crawl.config import ConfigError, load, validate
+from seohead.crawl.settings import ConfigError, load, validate
 from seohead.crawl.spider import Scope, crawl_site
 from tests.test_crawl_spider import FakeResponse, _fetcher, page
 
