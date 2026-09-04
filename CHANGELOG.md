@@ -29,6 +29,8 @@ All notable public changes are documented here.
   header/nav/footer per page and flags minority template groups.
 - Add dependency-free Markdown extraction (`markdown_extract.py`): a
   content-area-only rendering and a full-document one.
+- Write down a naming convention (`docs/NAMING.md`) and resolve the module-basename collisions
+  and process-named test files it found; no CLI command, handler, or MCP tool name changed.
 - Add community, citation, and no-key agent onboarding files.
 - Add the permissioned `analytics-console-review` workflow skill and three practical recipes.
 - Document support for the current `3.x` security line.
