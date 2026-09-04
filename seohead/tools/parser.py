@@ -28,7 +28,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.models import LinkInfo, ParsedPage, ParseResult
+from seohead.models import LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
 from seohead.recon.net import http_client
 from seohead.tools.content_area import extract_area_text, resolve_content_area
 
@@ -670,16 +670,23 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """
     opts = options or {}
     fetched = fetch_html(url, timeout=opts.get("timeout"))
+    # fetch_html builds plain dicts, so the two shapes are asserted here rather
+    # than checked: a transport failure carries url/ok/error, and a completed
+    # request carries the page fields on top of the response metadata. The
+    # runtime guard for both is tests/test_typed_handlers.py.
     if not fetched["ok"]:
-        return fetched
+        return cast("ParseFailed", fetched)
     data = parse_html(fetched["html"], fetched["final_url"], options)
-    return {
-        "url": url,
-        "final_url": fetched["final_url"],
-        "status_code": fetched["status_code"],
-        "ok": 200 <= fetched["status_code"] < 300,
-        **data,
-    }
+    return cast(
+        "ParseFetched",
+        {
+            "url": url,
+            "final_url": fetched["final_url"],
+            "status_code": fetched["status_code"],
+            "ok": 200 <= fetched["status_code"] < 300,
+            **data,
+        },
+    )
 
 
 # ── SMOKE TEST (no network) ───────────────────────────────────────────────────
