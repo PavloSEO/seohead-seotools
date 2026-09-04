@@ -370,6 +370,28 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     return handler_name, kw
 
 
+def _print_config_help() -> None:
+    """List every crawl-site config setting, generated from seohead.crawl.config.
+
+    One source of truth: this reads the same DEFAULTS/DESCRIPTIONS that the
+    config file loader validates against, so a setting cannot be added to the
+    module without becoming visible here.
+    """
+    from seohead.crawl import config as crawl_config
+
+    print(
+        "Crawler config settings (seohead/crawl/config.py). Set these in a JSON file passed to "
+        '--config, e.g. {"limits": {"max_urls": 50}}.'
+    )
+    print()
+    for setting in crawl_config.describe_settings():
+        marker = "*" if setting["results_affecting"] else " "
+        print(f"{marker} {setting['path']} ({setting['type']}, default {setting['default']!r})")
+        print(f"      {setting['description']}")
+    print()
+    print("* changes what the audit finds; recorded in the run manifest.")
+
+
 def _read_donors(path: str) -> list[str]:
     """Read one donor URL per line, ignoring blank lines and ``#`` comments."""
     with open(path, "r", encoding="utf-8") as fh:  # noqa: UP015 - explicit read-only contract
@@ -392,12 +414,6 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         )
     if cmd == "crawl-site":
         sub.add_argument("--max-urls", type=int, help="URL budget (default 200)")
-        sub.add_argument("--max-depth", type=int, help="link depth from the start URL (default 5)")
-        sub.add_argument(
-            "--min-delay",
-            type=float,
-            help="seconds between requests; the floor beneath adaptive back-off (default 0.5)",
-        )
         sub.add_argument("--out-dir", help="directory for pages.jsonl and audit.json")
         sub.add_argument("--config", help="path to a crawler config file (JSON)")
         sub.add_argument(
@@ -405,6 +421,16 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             choices=["respect", "report_only", "ignore"],
             help="respect robots.txt; report what it blocks but crawl anyway; or do not fetch it",
         )
+        sub.add_argument(
+            "--config-help",
+            action="store_true",
+            help="print every crawler config setting (path, type, default, description) and exit",
+        )
+        # Kept working for scripts written before --config existed, but no longer advertised in
+        # --help: depth and delay are exactly the kind of setting #13's config file exists for, and
+        # every flag shown here is one more line standing between a new setting and --config.
+        sub.add_argument("--max-depth", type=int, help=argparse.SUPPRESS)
+        sub.add_argument("--min-delay", type=float, help=argparse.SUPPRESS)
     if cmd == "site-audit":
         sub.add_argument("--url", help="site home page")
         sub.add_argument(
@@ -597,12 +623,22 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         sub.add_argument("--brand", help="brand name that llms.txt should mention")
 
 
+# crawl-site keeps only its most-used settings as direct flags; everything the crawler build-out
+# (#13 onward) has added or will add lives in --config instead, so --help stays short as the
+# surface grows. This note is the pointer from one to the other.
+CRAWL_SITE_HELP_NOTE = (
+    "For anything beyond the basics above, use --config; see 'seohead crawl-site "
+    "--config-help' for every available key."
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="seohead", description="Headless Python SEO toolkit.")
     p.add_argument("--version", action="version", version=f"seohead {__version__}")
     subs = p.add_subparsers(dest="command", metavar="<command>")
     for cmd in COMMANDS:
-        sp = subs.add_parser(cmd, help=f"run the {cmd} tool")
+        epilog = CRAWL_SITE_HELP_NOTE if cmd == "crawl-site" else None
+        sp = subs.add_parser(cmd, help=f"run the {cmd} tool", epilog=epilog)
         _add_flags(sp, cmd)
     sf = subs.add_parser("sf", help="Screaming Frog crawl audit (run | tasks | doctor)")
     sf.add_argument(
@@ -628,6 +664,9 @@ def main(argv: list[str] | None = None) -> int:
         from seohead.servers.mcp_server import main as mcp_main
 
         mcp_main()
+        return 0
+    if cmd == "crawl-site" and getattr(args, "config_help", False):
+        _print_config_help()
         return 0
     try:
         handler_name, kwargs = _build_kwargs(cmd, args)

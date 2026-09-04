@@ -163,6 +163,14 @@ seohead crawl-site --url https://example.com/ --config crawl.json --out-dir ./re
 Resolution order is defaults, then the file, then environment variables, then explicit command-line
 arguments — the most local statement of intent wins.
 
+`crawl-site --help` only shows the handful of settings used directly on the command line
+(`--url`, `--max-urls`, `--out-dir`, `--config`, `--robots`); everything else — the settings above
+and every one the crawler build-out has added since — lives in the config file. Run
+`seohead crawl-site --config-help` for the full list: every key's path, type, default, and
+description, generated from this module rather than hand-maintained. (`--max-depth` and
+`--min-delay` still work as direct flags for scripts written before `--config` existed; they are
+just no longer shown in `--help`.)
+
 Three properties are deliberate:
 
 **An unknown key is an error, not a no-op.** A setting the crawler does not read would promise

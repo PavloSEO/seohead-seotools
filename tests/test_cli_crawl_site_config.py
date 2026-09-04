@@ -1,0 +1,127 @@
+"""crawl-site's flag surface: --help stays short, --config-help covers the rest.
+
+See issue #27: every subsequent crawler build-out issue was adding a new direct
+CLI flag, putting crawl-site on track for 25+ flags and an unreadable --help.
+The fix is not fewer settings, it is fewer of them as *flags* — --config carries
+the rest, and --config-help makes that config surface discoverable.
+"""
+
+import io
+
+import pytest
+
+from seohead import cli
+from seohead.crawl import config as crawl_config
+from seohead.servers import handlers
+
+# A generous but real ceiling: CI fails if crawl-site --help grows past this,
+# which is the point — a new setting from here on must go through --config
+# rather than becoming another direct flag.
+HELP_LINE_CEILING = 25
+
+
+def _help_lines(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["crawl-site", "--help"])
+    return capsys.readouterr().out.splitlines()
+
+
+def test_help_output_stays_under_the_line_ceiling(capsys):
+    lines = _help_lines(capsys)
+    assert len(lines) <= HELP_LINE_CEILING, "\n".join(lines)
+
+
+def test_help_points_at_config_and_config_help(capsys):
+    lines = "\n".join(_help_lines(capsys))
+    assert "--config" in lines
+    assert "--config-help" in lines
+
+
+def test_help_no_longer_advertises_max_depth_or_min_delay(capsys):
+    """Depth and delay are exactly the settings #27 asks to move off --help.
+
+    They must still *work* as flags (see the back-compat test below) — only
+    their visibility in --help goes away.
+    """
+    lines = "\n".join(_help_lines(capsys))
+    assert "--max-depth" not in lines
+    assert "--min-delay" not in lines
+
+
+def test_config_help_lists_every_setting_from_the_config_module(capsys):
+    rc = cli.main(["crawl-site", "--config-help"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for row in crawl_config.describe_settings():
+        assert row["path"] in out, row["path"]
+
+
+def test_config_help_does_not_require_a_url_or_read_stdin(monkeypatch, capsys):
+    class _NeverReadStdin(io.StringIO):
+        def read(self, *a, **k):  # pragma: no cover - defensive guard
+            raise AssertionError("--config-help must not touch stdin")
+
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(cli.sys, "stdin", _NeverReadStdin())
+    rc = cli.main(["crawl-site", "--config-help"])
+    assert rc == 0
+    assert capsys.readouterr().out
+
+
+# ── back-compat: flags that predate --config-help keep working ──────────────
+
+
+def test_max_depth_and_min_delay_still_work_as_direct_flags(monkeypatch, capsys):
+    """Old spellings are hidden from --help but not removed.
+
+    Scripts written against crawl-site before this change pass --max-depth and
+    --min-delay directly; #27 asks for a quieter --help, not a breaking change.
+    """
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, "crawl_site", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(
+        [
+            "crawl-site",
+            "--url",
+            "https://example.com/",
+            "--max-depth",
+            "3",
+            "--min-delay",
+            "1.5",
+        ]
+    )
+    assert rc == 0
+    echo = _read_echo(capsys)
+    assert echo["max_depth"] == 3
+    assert echo["min_delay"] == 1.5
+
+
+def test_max_urls_out_dir_and_robots_still_work_as_direct_flags(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, "crawl_site", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(
+        [
+            "crawl-site",
+            "--url",
+            "https://example.com/",
+            "--max-urls",
+            "50",
+            "--out-dir",
+            "/tmp/out",
+            "--robots",
+            "ignore",
+        ]
+    )
+    assert rc == 0
+    echo = _read_echo(capsys)
+    assert echo["max_urls"] == 50
+    assert echo["out_dir"] == "/tmp/out"
+    assert echo["robots"] == "ignore"
+
+
+def _read_echo(capsys):
+    import json
+
+    return json.loads(capsys.readouterr().out)["echo"]

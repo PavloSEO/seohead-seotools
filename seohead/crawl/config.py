@@ -123,6 +123,51 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
     }
 )
 
+# One-line descriptions, keyed by the same dotted paths as DEFAULTS/RESULTS_AFFECTING. This is the
+# single source for every surface that lists settings for a human or an agent — the CLI's
+# --config-help and, eventually, an MCP "describe settings" tool (#23) — so the three cannot drift
+# into different descriptions of the same setting. A test fails if a DEFAULTS path has no entry here.
+DESCRIPTIONS: dict[str, str] = {
+    "scope.internal": (
+        "Which discovered URLs count as internal: 'host' (conservative) or "
+        "'registrable_domain' (also accepts subdomains)."
+    ),
+    "scope.include_patterns": "Regexes; a discovered link must match at least one to be followed.",
+    "scope.exclude_patterns": "Regexes; a discovered link matching any of these is not followed.",
+    "scope.exclude_hosts": "Hosts never fetched regardless of what links to them.",
+    "discovery.hyperlinks.store": "Keep discovered hyperlinks in the report.",
+    "discovery.hyperlinks.crawl": "Request discovered hyperlinks (fetch them).",
+    "discovery.canonicals.store": "Keep discovered canonical links in the report.",
+    "discovery.canonicals.crawl": "Request discovered canonical links (fetch them).",
+    "discovery.redirects.store": "Keep discovered redirect targets in the report.",
+    "discovery.redirects.crawl": "Request discovered redirect targets (fetch them).",
+    "discovery.external.store": "Keep discovered external links in the report.",
+    "discovery.external.crawl": "Request discovered external links (fetch them).",
+    "discovery.follow_nofollow": "Follow links marked rel=nofollow instead of skipping them.",
+    "limits.max_urls": "Maximum number of URLs the crawl will fetch.",
+    "limits.max_depth": "Maximum link depth from the start URL.",
+    "limits.max_query_variants_per_path": "Maximum distinct query strings kept per URL path.",
+    "limits.max_response_bytes": "Response bodies larger than this are truncated before parsing.",
+    "limits.max_url_length": "URLs longer than this are not fetched.",
+    "limits.max_crawl_seconds": "Wall-clock budget for the whole crawl; 0 means no limit.",
+    "http.timeout_seconds": "Per-request timeout in seconds.",
+    "http.user_agent": "Request User-Agent string; empty uses the toolkit's identifiable default.",
+    "http.headers": "Extra request headers to send with every fetch.",
+    "http.retry_on_timeout": "Number of retries after a request times out.",
+    "robots.policy": (
+        "'respect' (obey), 'report_only' (fetch, report what would be blocked, crawl "
+        "anyway), or 'ignore' (do not fetch robots.txt)."
+    ),
+    "robots.user_agent_token": "The User-Agent token matched against robots.txt rules.",
+    "robots.unavailable_means_stop": "Stop the crawl if robots.txt cannot be fetched at all.",
+    "speed.min_delay_seconds": "Minimum delay between requests; the floor beneath adaptive back-off.",
+    "speed.max_delay_seconds": "Maximum delay adaptive back-off may reach.",
+    "speed.adaptive": "Increase the delay automatically when the target slows down or times out.",
+    "speed.stop_after_consecutive_timeouts": "Stop the crawl after this many timeouts in a row.",
+    "output.dir": "Directory to write pages.jsonl and audit.json into; empty writes nothing to disk.",
+    "output.write_pages_jsonl": "Write one JSON line per fetched page to pages.jsonl.",
+}
+
 # Environment overrides, applied between the file and explicit arguments.
 ENV_OVERRIDES: dict[str, str] = {
     "SEOHEAD_CRAWL_MAX_URLS": "limits.max_urls",
@@ -266,6 +311,30 @@ def manifest(config: dict[str, Any]) -> dict[str, Any]:
     """
     flat = _flatten(config)
     return {path: flat[path] for path in sorted(RESULTS_AFFECTING) if path in flat}
+
+
+def describe_settings() -> list[dict[str, Any]]:
+    """Every configurable setting: its dotted path, type, default, and description.
+
+    This is the one source that a CLI ``--config-help`` and an eventual MCP
+    "describe settings" tool (#23) both read, so the two cannot drift into
+    different descriptions of the same setting. Generated from ``DEFAULTS`` and
+    ``DESCRIPTIONS`` rather than hand-maintained per surface.
+    """
+    flat = _flatten(DEFAULTS)
+    out = []
+    for path in sorted(flat):
+        default = flat[path]
+        out.append(
+            {
+                "path": path,
+                "type": type(default).__name__,
+                "default": default,
+                "results_affecting": path in RESULTS_AFFECTING,
+                "description": DESCRIPTIONS[path],
+            }
+        )
+    return out
 
 
 def effective_request_rate(config: dict[str, Any]) -> float:
