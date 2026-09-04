@@ -23,13 +23,21 @@ from seohead.tools.sitemap import normalize_url
 __all__ = ["reconcile_sitemap"]
 
 
-def _normalized_set(urls: Iterable[str]) -> set[str]:
-    out: set[str] = set()
+def _normalized_index(urls: Iterable[str]) -> dict[str, str]:
+    """Normalised key -> the URL as it was actually written, first occurrence wins.
+
+    Comparison has to happen on the normalised key, or a canonical written without a trailing
+    slash would never match the page that has one. Reporting has to happen on the original,
+    or a finding names a URL that appears nowhere in the crawl — which is both unactionable
+    and indistinguishable, to a reader or to the anomaly scanner, from a finding about a page
+    that was never fetched.
+    """
+    out: dict[str, str] = {}
     for url in urls:
         if not url:
             continue
         try:
-            out.add(normalize_url(url))
+            out.setdefault(normalize_url(url), url)
         except ValueError:
             continue  # not an absolute URL; cannot be compared, so it is dropped
     return out
@@ -70,17 +78,34 @@ def reconcile_sitemap(
     When it is ``None`` the caller has no such classification and every observed URL is treated
     as comparable, which is the original behaviour.
     """
-    declared_set = _normalized_set(declared)
-    observed_set = _normalized_set(observed)
-    comparable_set = observed_set if comparable is None else _normalized_set(comparable)
+    declared_index = _normalized_index(declared)
+    observed_index = _normalized_index(observed)
+    comparable_index = dict(observed_index) if comparable is None else _normalized_index(comparable)
+    declared_set = set(declared_index)
+    observed_set = set(observed_index)
     # A URL can only be judged against the sitemap if the crawl actually reached it by a link;
     # anything else in the caller's comparable population was not observed and says nothing.
-    comparable_set &= observed_set
+    comparable_set = set(comparable_index) & observed_set
 
-    healthy = sorted(declared_set & observed_set)
-    orphaned = sorted(declared_set - observed_set)
-    missing_from_sitemap = sorted(comparable_set - declared_set)
-    not_comparable = sorted(observed_set - comparable_set - declared_set)
+    def _names(keys: set[str], *indexes: dict[str, str]) -> list[str]:
+        out = []
+        for key in sorted(keys):
+            for index in indexes:
+                if key in index:
+                    out.append(index[key])
+                    break
+            else:
+                out.append(key)
+        return out
+
+    # Named from the crawl: for a URL that is both declared and reached, the form the
+    # crawler fetched is the one a reader can look up.
+    healthy = _names(declared_set & observed_set, observed_index, declared_index)
+    orphaned = _names(declared_set - observed_set, declared_index)
+    # Named from the comparable population first: that is the crawl's own record of the URL,
+    # which is the form a reader can look up and a scanner can match.
+    missing_from_sitemap = _names(comparable_set - declared_set, comparable_index, observed_index)
+    not_comparable = _names(observed_set - comparable_set - declared_set, observed_index)
 
     return {
         "urls_in_sitemap": len(declared_set),
