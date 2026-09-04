@@ -161,7 +161,7 @@ def audit_workflow(audit: dict, tasks: dict) -> str:
         <article class="card stage command-card">
           <div class="step">02</div><h2>Analyze</h2>
           <pre class="mono"><span>$</span> seohead sf run<br>  --exports-dir ./exports<br>  --out ./report --tasks</pre>
-          <p>Applicable checks from a 96-check registry</p>
+          <p>Applicable checks from a 104-check registry</p>
         </article>
         <div class="arrow">→</div>
         <article class="card stage audit-card">

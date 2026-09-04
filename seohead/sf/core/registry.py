@@ -499,6 +499,18 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "Redirect is implemented with meta refresh",
         "fix": "Replace meta refresh with a server-side 301 redirect when the move is permanent.",
     },
+    "NOTRANSLATE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Page contains a notranslate directive",
+        "fix": "Confirm that blocking the browser's offer-to-translate prompt is intentional.",
+    },
+    "UNAVAILABLE_AFTER": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Page carries an unavailable_after directive with a deindex date",
+        "fix": "Confirm the date is intentional and in the future; once it passes, the page is removed from the index automatically.",
+    },
     # --- extension: canonicals ---
     "CANONICAL_RELATIVE": {
         "severity": "notice",
@@ -511,6 +523,12 @@ CHECKS: dict[str, dict[str, Any]] = {
         "source": "SF:Canonicals:Multiple",
         "message": "Page declares multiple canonical URLs",
         "fix": "Declare exactly one canonical URL for the page.",
+    },
+    "CANONICAL_FRAGMENT": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Canonical URL contains a #fragment",
+        "fix": "Drop the fragment; the server never receives it, so a canonical pointing at one is meaningless.",
     },
     # --- extension: canonical graph (Mode B, built from Internal:All) ---
     "CANONICAL_CHAIN": {
@@ -530,6 +548,36 @@ CHECKS: dict[str, dict[str, Any]] = {
         "source": "inlinks:All Hreflang",
         "message": "Hreflang points to a redirecting or broken URL (3xx, 4xx, or 5xx)",
         "fix": "Update hreflang to reference the final 200-status URL; redirecting or broken targets undermine localization signals and crawling.",
+    },
+    "HREFLANG_INVALID_CODE": {
+        "severity": "warning",
+        "source": "inlinks:All Hreflang",
+        "message": "Hreflang value is not a valid ISO 639-1 language / ISO 3166-1 region code",
+        "fix": "Use a valid language code, optionally followed by a valid region (e.g. en-GB, not en-UK).",
+    },
+    "HREFLANG_MULTIPLE_ENTRIES": {
+        "severity": "warning",
+        "source": "inlinks:All Hreflang",
+        "message": "The same hreflang value is declared more than once on the page",
+        "fix": "Declare each language/region combination exactly once; conflicting duplicates make the annotation ambiguous.",
+    },
+    "HREFLANG_MISSING_SELF_REFERENCE": {
+        "severity": "warning",
+        "source": "inlinks:All Hreflang",
+        "message": "Page declares hreflang alternates but does not reference itself",
+        "fix": "Every page in an hreflang set must include a self-referencing annotation for its own URL and language.",
+    },
+    "HREFLANG_MISSING_XDEFAULT": {
+        "severity": "notice",
+        "source": "inlinks:All Hreflang",
+        "message": "Hreflang set has no x-default fallback",
+        "fix": "Add an x-default annotation to catch users whose language/region does not match any declared alternate.",
+    },
+    "HREFLANG_NOT_CANONICAL": {
+        "severity": "warning",
+        "source": "inlinks:All Hreflang",
+        "message": "Hreflang points to a URL that is not itself the canonical version",
+        "fix": "Point hreflang annotations at each target's canonical URL, not at a duplicate that canonicalizes elsewhere.",
     },
     # --- extension: pagination ---
     "PAGINATION_NONINDEXABLE": {

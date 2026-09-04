@@ -12,7 +12,7 @@ seohead/
   sf/                 CRAWL AUDIT (Screaming Frog)
     cli.py            own argument parser: run | tasks | doctor
     config.py         config.json loading (thresholds, severity overrides)
-    core/             loader -> context -> rules (registry, 96 checks)
+    core/             loader -> context -> rules (registry, 104 checks)
                       -> inlinks -> heuristics -> sitemap -> aggregate;
                       auth_proxy for protected staging sites,
                       runner for SF CLI mode A
@@ -82,7 +82,7 @@ For the crawl audit the flow stays inside the core:
 SF exports (mode B) or SF CLI crawl (mode A)
     -> loader (pandas, vectorized normalization)
     -> context (per-run state, ctx.skip(id, reason) for missing data)
-    -> rules/inlinks/heuristics/sitemap (checks, 96 ids in registry.py)
+    -> rules/inlinks/heuristics/sitemap (checks, 104 ids in registry.py)
     -> aggregate (summary, health score, by_check)
     -> reporters (audit.json + audit.md, schema-validated)
     -> tasks.py (prioritized backlog)

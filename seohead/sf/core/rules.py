@@ -517,6 +517,15 @@ def check_directives_extra(ctx: AuditContext) -> None:
             ctx.add("NOSNIPPET", target_url=page.url)
         if "noimageindex" in robots:
             ctx.add("NOIMAGEINDEX", target_url=page.url)
+        if "notranslate" in robots:
+            ctx.add("NOTRANSLATE", target_url=page.url)
+        unavailable_after = next((t for t in robots if t.startswith("unavailable_after")), None)
+        if unavailable_after:
+            ctx.add(
+                "UNAVAILABLE_AFTER",
+                target_url=page.url,
+                details={"directive": unavailable_after},
+            )
         if rec.get("meta_refresh"):
             ctx.add(
                 "META_REFRESH_REDIRECT",
@@ -537,6 +546,8 @@ def check_canonical_extra(ctx: AuditContext) -> None:
                 target_url=page.url,
                 details={"canonical_1": canonical, "canonical_2": rec.get("canonical_2")},
             )
+        if canonical and urllib.parse.urlsplit(canonical).fragment:
+            ctx.add("CANONICAL_FRAGMENT", target_url=page.url, details={"canonical": canonical})
 
 
 # --------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import urllib.parse
 from collections import Counter, OrderedDict
 from typing import Any
 
+from seohead.tools.hreflang import code_error
+
 from .context import AuditContext
 from .models import Link
 from .normalize import HREFLANG_FIELD_MAP, INLINKS_FIELD_MAP, is_true, norm_url, records_from_df
@@ -279,9 +281,148 @@ def check_hreflang_targets(ctx: AuditContext) -> None:
         )
 
 
+def _rec(page: Any) -> dict[str, Any]:
+    return page.metrics.get("_record", {})
+
+
+# ---------------------------------------------------------------------------
+# hreflang -> code/self-reference/x-default/duplicate/canonical quality
+# ---------------------------------------------------------------------------
+_HREFLANG_QUALITY_CHECKS = (
+    "HREFLANG_INVALID_CODE",
+    "HREFLANG_MULTIPLE_ENTRIES",
+    "HREFLANG_MISSING_SELF_REFERENCE",
+    "HREFLANG_MISSING_XDEFAULT",
+    "HREFLANG_NOT_CANONICAL",
+)
+
+
+def check_hreflang_quality(ctx: AuditContext) -> None:
+    """Validate each page's own hreflang set: codes, duplicates, self, x-default, canonical.
+
+    Reads the same Bulk Export → Links → ``All Hreflang`` report as
+    :func:`check_hreflang_targets` (one row per source → destination + lang
+    annotation) and reuses the ISO 639-1/3166-1 validator already shipped for
+    the single-URL ``seo_hreflang_check`` tool (:func:`seohead.tools.hreflang.
+    code_error`) instead of re-implementing it. Every check here groups by the
+    declaring page (source), matching how a browser or crawler reads one
+    page's hreflang set. If the export is absent, all five checks skip
+    honestly rather than emit dead zeros.
+    """
+    df = ctx.exports.get("all_hreflang")
+    if df is None or df.empty:
+        for check_id in _HREFLANG_QUALITY_CHECKS:
+            ctx.skip(
+                check_id, "no all_hreflang export (export Bulk Export -> Links -> All Hreflang)"
+            )
+        return
+
+    by_source: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    for rec in records_from_df(df, HREFLANG_FIELD_MAP):
+        src = rec.get("source_url")
+        if not src or not rec.get("destination_url"):
+            continue
+        by_source.setdefault(src, []).append(rec)
+
+    evidence = {"export": ctx.exports.files.get("all_hreflang")}
+    for source, entries in by_source.items():
+        _check_invalid_codes(ctx, source, entries, evidence)
+        _check_duplicate_entries(ctx, source, entries, evidence)
+        _check_self_reference(ctx, source, entries, evidence)
+        _check_xdefault(ctx, source, entries, evidence)
+        _check_not_canonical(ctx, source, entries, evidence)
+
+
+def _check_invalid_codes(
+    ctx: AuditContext, source: str, entries: list[dict[str, Any]], evidence: dict[str, Any]
+) -> None:
+    invalid = []
+    for rec in entries:
+        lang = rec.get("hreflang")
+        if not lang:
+            continue
+        reason = code_error(lang)
+        if reason:
+            invalid.append(
+                {"hreflang": lang, "destination": rec.get("destination_url"), "reason": reason}
+            )
+    if invalid:
+        ctx.add(
+            "HREFLANG_INVALID_CODE",
+            target_url=source,
+            occurrences_count=len(invalid),
+            details={"invalid": invalid},
+            evidence=evidence,
+        )
+
+
+def _check_duplicate_entries(
+    ctx: AuditContext, source: str, entries: list[dict[str, Any]], evidence: dict[str, Any]
+) -> None:
+    # Language tags are case-insensitive: "en-US" declared twice (even with
+    # different casing) is the same annotation twice, not two annotations.
+    folded = [str(rec["hreflang"]).strip().lower() for rec in entries if rec.get("hreflang")]
+    duplicates = sorted({lang for lang in folded if folded.count(lang) > 1})
+    if duplicates:
+        ctx.add(
+            "HREFLANG_MULTIPLE_ENTRIES",
+            target_url=source,
+            occurrences_count=len(duplicates),
+            details={"duplicate_values": duplicates},
+            evidence=evidence,
+        )
+
+
+def _check_self_reference(
+    ctx: AuditContext, source: str, entries: list[dict[str, Any]], evidence: dict[str, Any]
+) -> None:
+    source_norm = norm_url(source)
+    destinations = {norm_url(rec.get("destination_url")) for rec in entries}
+    if source_norm not in destinations:
+        ctx.add(
+            "HREFLANG_MISSING_SELF_REFERENCE",
+            target_url=source,
+            details={"declared_targets": sorted({rec["destination_url"] for rec in entries})},
+            evidence=evidence,
+        )
+
+
+def _check_xdefault(
+    ctx: AuditContext, source: str, entries: list[dict[str, Any]], evidence: dict[str, Any]
+) -> None:
+    folded = {str(rec["hreflang"]).strip().lower() for rec in entries if rec.get("hreflang")}
+    if "x-default" not in folded:
+        ctx.add("HREFLANG_MISSING_XDEFAULT", target_url=source, evidence=evidence)
+
+
+def _check_not_canonical(
+    ctx: AuditContext, source: str, entries: list[dict[str, Any]], evidence: dict[str, Any]
+) -> None:
+    offenders = []
+    for rec in entries:
+        dest = rec.get("destination_url")
+        target = ctx.page_by_norm.get(norm_url(dest))
+        if target is None:
+            continue  # external / not crawled — cannot classify
+        canonical = _rec(target).get("canonical")
+        if canonical and norm_url(canonical) != norm_url(target.url):
+            offenders.append(
+                {"hreflang": rec.get("hreflang"), "destination": dest, "canonical": canonical}
+            )
+    if offenders:
+        ctx.add(
+            "HREFLANG_NOT_CANONICAL",
+            target_url=source,
+            occurrences_count=len(offenders),
+            details={"non_canonical_targets": offenders},
+            evidence=evidence,
+        )
+
+
 def run_inlinks(ctx: AuditContext) -> None:
     site_host = _site_host(ctx)
     for key, (internal_check, external_check) in INLINK_SOURCES.items():
         _process_export(ctx, key, internal_check, external_check, site_host)
     check_anchor_text(ctx)
     check_hreflang_targets(ctx)
+    check_hreflang_quality(ctx)

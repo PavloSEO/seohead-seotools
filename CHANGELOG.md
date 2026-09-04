@@ -4,6 +4,11 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
+  verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
+  missing x-default, duplicate entries, non-canonical targets), two robots directives
+  (`notranslate`, `unavailable_after`), and canonical URLs containing a fragment. Registry grows
+  from 96 to 104 checks. See `docs/CHECKLIST_AUDIT.md`.
 - Add `crawl-site --config-help`, generated from `seohead/crawl/config.py`, and hide `--max-depth`
   and `--min-delay` from `--help` (still accepted) so the flag surface stops growing with every
   crawler setting.

@@ -1,7 +1,7 @@
 # Audit coverage — the gap map
 
 **Purpose.** The list of SEO checks our SF audit
-(`seohead/sf/core/registry.py`, 96 checks) still **lacks**. For every gap:
+(`seohead/sf/core/registry.py`, 104 checks) still **lacks**. For every gap:
 value, implementation mode, likely home in the code. This is a filling plan,
 not a bug report. Items implemented since this map was written are marked
 **DONE**.
@@ -20,6 +20,12 @@ not a bug report. Items implemented since this map was written are marked
 **Value** — a subjective SEO-effect estimate (high/medium/low), not
 implementation complexity.
 
+**Related.** [`CHECKLIST_AUDIT.md`](CHECKLIST_AUDIT.md) checks this same
+registry against an external ~320-item technical-SEO catalogue, organized by
+that catalogue's own categories rather than by implementation cost. The two
+documents overlap (hreflang and canonical items in particular) but were built
+from different starting lists; read both before filing a new gap.
+
 > Already covered — keep these out of new-feature proposals
 > again: `NEAR_DUPLICATE` (native SF column), `READABILITY_DIFFICULT` +
 > `LONG_SENTENCES` (Flesch), `META_KEYWORDS_PRESENT`,
@@ -30,7 +36,11 @@ implementation complexity.
 > `CANONICAL_MULTIPLE`, `PAGINATION_NONINDEXABLE`, `HTTP1_ONLY` —
 > and, added after this map was first written: `CANONICAL_CHAIN`,
 > `CANONICAL_TO_REDIRECT`, `HREFLANG_BROKEN_TARGET`,
-> `GENERIC_ANCHOR_TEXT`, `URL_TRACKING_PARAMS`, `OG_MISSING`.
+> `GENERIC_ANCHOR_TEXT`, `URL_TRACKING_PARAMS`, `OG_MISSING`,
+> `CANONICAL_FRAGMENT`, `HREFLANG_INVALID_CODE`,
+> `HREFLANG_MISSING_SELF_REFERENCE`, `HREFLANG_MISSING_XDEFAULT`,
+> `HREFLANG_MULTIPLE_ENTRIES`, `HREFLANG_NOT_CANONICAL`, `NOTRANSLATE`,
+> `UNAVAILABLE_AFTER` (issue #30).
 
 ---
 
@@ -134,6 +144,9 @@ separate class (they need the full page set, which mode B already has).
 | 6.3 | Canonical -> 4xx/5xx | Canonical points at a broken URL | **high** | B (canonical x status) | id `CANONICAL_TO_ERROR` |
 | 6.4 | Canonical -> homepage (stamp) | All canonicals collapse onto `/` instead of the relevant page | medium | B (grouping by canonical) | id `CANONICAL_TO_HOMEPAGE` |
 | 6.5 | Canonical header vs tag | `<link rel=canonical>` disagrees with the HTTP `Link: rel=canonical` | medium | B+ (SF catches HTTP canonical when configured) / A | id `CANONICAL_HEADER_MISMATCH` |
+| 6.6 | Canonical contains a fragment | `<link rel=canonical>` points at a `#fragment`, which the server never sees | low | **DONE** (issue #30) — `CANONICAL_FRAGMENT` | `check_canonical_extra` |
+| 6.7 | Canonical outside `<head>` | The tag is placed in `<body>` and is silently ignored | medium | **A only** — not in the CSV columns SF's `Internal:All` export carries; needs a raw-HTML/DOM pass, out of scope for the registry as built (issue #30) | new live check |
+| 6.8 | Invalid attribute in canonical annotation | Malformed `rel=canonical` markup (e.g. `rel="canonical "`, missing `href`) | low | **A only** — same reason as 6.7 (issue #30) | new live check |
 
 ---
 
@@ -144,19 +157,25 @@ into separate ids pays off in precise fix scenarios in the report.
 
 | # | Name | Checks | Value | Mode | Home |
 |---|---|---|---|---|---|
-| 7.1 | No x-default | hreflang present, no `x-default` entry | medium | B+ (hreflang export parsing) | new `hreflang.py`, id `HREFLANG_NO_XDEFAULT` |
-| 7.2 | No self-reference | No hreflang link to the page itself | medium | B+ | `HREFLANG_NO_SELF` |
-| 7.3 | lang ≠ page language | Self-reference hreflang disagrees with `<html lang>` | medium | B+ | `HREFLANG_LANG_MISMATCH` |
-| 7.4 | Relative URL in hreflang | `href` not absolute | low | B+ | `HREFLANG_RELATIVE` |
-| 7.5 | No return link | A->B exists, B->A does not | **high** | B (graph over the hreflang export) | `HREFLANG_NO_RETURN` |
-| 7.6 | hreflang -> non-canonical | The target is itself canonicalized elsewhere | medium | B (graph) | `HREFLANG_TO_NONCANONICAL` |
-| 7.7 | hreflang -> noindex | The target is closed from indexing | medium | B (graph) | `HREFLANG_TO_NOINDEX` |
+| 7.1 | No x-default | hreflang present, no `x-default` entry | medium | **DONE** (issue #30) — `HREFLANG_MISSING_XDEFAULT` | `inlinks.py` |
+| 7.2 | No self-reference | No hreflang link to the page itself | medium | **DONE** (issue #30) — `HREFLANG_MISSING_SELF_REFERENCE` | `inlinks.py` |
+| 7.3 | lang ≠ page language | Self-reference hreflang disagrees with `<html lang>` | medium | B+ — still open; `<html lang>` is not a column `Internal:All` exports | `HREFLANG_LANG_MISMATCH` |
+| 7.4 | Relative URL in hreflang | `href` not absolute | low | B+ — still open; the bulk hreflang export resolves `href` before SF writes it, so a relative-vs-absolute check needs the raw markup | `HREFLANG_RELATIVE` |
+| 7.5 | No return link | A->B exists, B->A does not | **high** | B (graph over the hreflang export) — still open, tracked under reciprocity in #15, not duplicated here | `HREFLANG_NO_RETURN` |
+| 7.6 | hreflang -> non-canonical | The target is itself canonicalized elsewhere | medium | **DONE** (issue #30) — `HREFLANG_NOT_CANONICAL` | `inlinks.py` |
+| 7.7 | hreflang -> noindex | The target is closed from indexing | medium | B (graph) — still open | `HREFLANG_TO_NOINDEX` |
 | 7.8 | hreflang -> redirect/4xx | The target is broken or redirecting | **high** | **DONE** — `HREFLANG_BROKEN_TARGET` | `inlinks.py` |
-| 7.9 | Duplicate lang per target | One URL listed with different `lang`s | medium | B (graph) | `HREFLANG_MULTI_LANG` |
+| 7.9 | Duplicate lang per target | One URL listed with different `lang`s from different sources | medium | B (graph) — still open (distinct from 7.10: this is one *target* with conflicting incoming langs, not one *source* repeating a lang) | `HREFLANG_MULTI_LANG` |
+| 7.10 | Duplicate lang per source | One page declares the same hreflang value more than once | medium | **DONE** (issue #30) — `HREFLANG_MULTIPLE_ENTRIES` | `inlinks.py` |
+| 7.11 | Malformed language/region code | hreflang value fails ISO 639-1/3166-1 (e.g. `en-UK`) | medium | **DONE** (issue #30) — `HREFLANG_INVALID_CODE`, reusing `seohead/tools/hreflang.py`'s `code_error` | `inlinks.py` |
+| 7.12 | Outside `<head>` | The `<link rel=alternate hreflang>` tag is placed in `<body>` | medium | **A only** — not in the CSV columns SF's bulk hreflang export carries; needs a raw-HTML/DOM pass, out of scope for the registry as built (issue #30) | new live check |
 
-**Context.** Cross-check the depth of the live `seo_hreflang_check`
-(x-default, self-reference, duplicates, malformed codes are already there)
-against this list — part may only need the id registered.
+**Context.** The live `seo_hreflang_check` (x-default, self-reference,
+duplicates, malformed codes) validates one URL's own markup by live fetch;
+7.1/7.2/7.6/7.10/7.11 above now cover the equivalent ground for a whole
+crawl from the bulk hreflang export, reusing that tool's ISO validator
+instead of re-implementing it (issue #30). 7.3/7.4/7.5/7.7/7.9/7.12 remain
+open.
 
 ---
 
