@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
@@ -122,6 +122,12 @@ class EscalationResult:
     representations: dict[str, str] = field(default_factory=dict)
     # url -> whatever render_fetch() returned for it (html, final_url, ...).
     rendered: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # URLs where render_fetch() returned ok:True but the parsed body cleared
+    # none of apply_rendered_evidence()'s floor -- a client-side crash after
+    # load, a cookie wall, a script blocked by an extension, an app that
+    # never hydrates. The raw record is kept for these (#143); this list is
+    # what makes the downgrade-that-didn't-happen auditable instead of silent.
+    degenerate_render_urls: list[str] = field(default_factory=list)
 
 
 def escalate(
@@ -191,6 +197,47 @@ def escalate(
     return result
 
 
+def _clears_content_floor(record: Any) -> bool:
+    """A non-trivial word count, or at least one of title/h1/canonical present.
+
+    The same ``EMPTY_BODY_WORDS``-style reasoning
+    ``seohead.tools.render.detect_empty_shell`` already applies to an empty
+    SPA shell, reused here as the minimum signal that a ``PageRecord`` (raw
+    or freshly re-derived from a render) describes a real page rather than a
+    blank one -- see ``apply_rendered_evidence``.
+    """
+    from seohead.tools.render import EMPTY_BODY_WORDS
+
+    return bool(
+        record.word_count >= EMPTY_BODY_WORDS or record.title or record.h1 or record.canonical
+    )
+
+
+# PageRecord fields apply_rendered_evidence must never touch: identity/transport
+# facts of the *static* fetch (url, status_code, ...), the two outlink counts
+# (recomputed below as the raw/rendered union, never a plain overwrite), and
+# the bookkeeping fields this function itself decides (error, cache_status,
+# representation). Every other field is body-derived and belongs to whichever
+# body last produced it -- see _apply_body.
+_RENDER_UNTOUCHED_FIELDS = frozenset(
+    {
+        "url",
+        "status_code",
+        "content_type",
+        "response_time",
+        "redirect_url",
+        "x_robots",
+        "content_encoding",
+        "crawl_depth",
+        "outlinks",
+        "external_outlinks",
+        "error",
+        "cache_status",
+        "representation",
+    }
+)
+
+
 def apply_rendered_evidence(
     pages: list[Any],
     raw_links: Iterable[Any],
@@ -198,15 +245,52 @@ def apply_rendered_evidence(
 ) -> None:
     """Fold each re-fetched page's fuller HTML back into its ``PageRecord``.
 
+    Every body-derived field is filled in by ``_apply_body`` -- the same
+    function a live fetch and a cache hit already share (#99) -- instead of
+    a second, hand-rolled copy of what it does. That is what #139 found
+    missing: calling ``_record_from_parsed`` directly here left `size_bytes`,
+    `text_ratio`, `jsonld_blocks_found` and `jsonld_blocks_parsed` at the
+    static fetch's values while `title` and `word_count` moved on.
+
+    ``size_bytes`` for a rendered page is the length of the DOM Playwright
+    serialized back to us, not "bytes on the wire" (#99's original sense) --
+    a rendered document was never transferred as this string, so there is no
+    wire size to report for it. The serialized length is the only honest
+    stand-in, and it is exactly what ``_apply_body`` already falls back to
+    whenever no real byte count is supplied, so no ``size_bytes`` argument is
+    passed through here on purpose.
+
+    A render is only rejected as failed when it takes a record that already
+    showed a real page -- a non-trivial word count, or at least one of
+    title/h1/canonical present, the same ``EMPTY_BODY_WORDS``-style
+    reasoning ``seohead.tools.render.detect_empty_shell`` already applies to
+    an empty SPA shell -- and produces a body that clears none of those
+    signals. That comparison is deliberately one-sided: a raw record that
+    was already an empty shell has nothing left to lose, so its rendered
+    replacement is applied even when it too is thin (that is exactly #139's
+    case -- rendering an empty static shell into a real, if imperfect,
+    document). What must never happen is the other direction: a raw record
+    that already carried real content being overwritten by an emptier
+    rendered one (#143). A page that is merely thinner after rendering while
+    still clearing the floor is not failed -- it is a real finding (JS
+    hydration removing content a non-rendering crawler cannot see), and it
+    must still reach the report as the rendered numbers, not be silently
+    kept as the raw ones. A render that fails this test, or whose body fails
+    to parse at all (``_apply_body`` returns ``None``), is treated as
+    failed: `representation` and every raw field are left exactly as the
+    static fetch produced them, and the URL is recorded in
+    ``degenerate_render_urls`` so the downgrade-that-didn't-happen is
+    auditable instead of silent.
+
     Outlinks are the union of what the raw HTML and the fuller fetch each
     found, never the fuller fetch alone: a link hydration removes is a real
     finding (#18), not a link that never existed, and dropping it here would
     make that finding invisible to every check built on outlink counts.
     """
+    from dataclasses import replace
     from urllib.parse import urlsplit
 
-    from seohead.crawl.collect import _record_from_parsed
-    from seohead.tools.parser import parse_html
+    from seohead.crawl.collect import _apply_body
 
     raw_links_by_page: dict[str, set[str]] = {}
     for edge in raw_links:
@@ -218,13 +302,30 @@ def apply_rendered_evidence(
         html = fetched.get("html")
         if record is None or not html:
             continue
-        record.representation = escalation.representations.get(target_url, "static")
         final_url = fetched.get("final_url") or target_url
-        parsed = parse_html(html, final_url)
-        for key, value in _record_from_parsed(parsed).items():
-            if key in ("outlinks", "external_outlinks"):
-                continue  # computed below as the raw/rendered union
-            setattr(record, key, value)
+
+        # Judge the render on a scratch copy first -- _apply_body mutates in
+        # place, and whether a render clears the floor can only be known
+        # after deriving it. The real record is touched only once accepted.
+        scratch = replace(record)
+        # render_fetch always hands back a rendered DOM, HTML by definition;
+        # a fresh PageRecord (as in a test fixture, or a page never given a
+        # content-type by its raw fetch) may still have content_type == "",
+        # which would make _apply_body's is_html guard reject it wrongly.
+        scratch.content_type = scratch.content_type or "text/html"
+
+        raw_had_content = _clears_content_floor(record)
+        parsed = _apply_body(scratch, final_url, html)
+        rendered_has_content = parsed is not None and _clears_content_floor(scratch)
+        if raw_had_content and not rendered_has_content:
+            escalation.degenerate_render_urls.append(target_url)
+            continue
+
+        record.representation = escalation.representations.get(target_url, "static")
+        for f in fields(record):
+            if f.name not in _RENDER_UNTOUCHED_FIELDS:
+                setattr(record, f.name, getattr(scratch, f.name))
+
         rendered_hrefs = {link["href"] for link in parsed.get("links") or []}
         merged = raw_links_by_page.get(target_url, set()) | rendered_hrefs
         host = (urlsplit(final_url).hostname or "").lower()
