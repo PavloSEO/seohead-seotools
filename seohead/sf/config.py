@@ -110,6 +110,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "avg_words_per_sentence_max": 25,
         "high_external_outlinks": 100,
         "high_outlinks": 300,
+        "redirect_hop_cap": 20,
     },
     "requirements": {
         "require_canonical": True,

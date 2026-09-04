@@ -737,13 +737,42 @@ _NATIVE_EXPORT_CHECKS = {
 
 
 def check_redirect_chains(ctx: AuditContext) -> None:
-    """Consume the Redirects:Redirect Chains report (full profile)."""
+    """Resolve redirect chains and loops.
+
+    Prefers the native Redirects:Redirect Chains report (full-profile export)
+    when present. Otherwise it walks ``ctx.redirect_map`` itself — the
+    per-URL Location header every input mode already collects into
+    Internal:All — so a light-profile export or a native seohead crawl gets
+    the same findings without a second crawl. Only when Internal:All carries
+    no redirect data at all is the pair skipped by name.
+    """
     from .normalize import find_column, normalize_value, to_int
 
     df = ctx.exports.get("redirect_chains")
     if df is None or df.empty:
-        ctx.skip("REDIRECT_CHAIN", "no Redirect Chains report (export Redirects:Redirect Chains)")
-        ctx.skip("REDIRECT_LOOP", "no Redirect Chains report (export Redirects:Redirect Chains)")
+        if (
+            ctx.internal_df is None
+            or find_column(ctx.internal_df, ["Redirect URL", "Redirect URI"]) is None
+        ):
+            ctx.skip("REDIRECT_CHAIN", "no redirect data (Internal:All has no Redirect URL column)")
+            ctx.skip("REDIRECT_LOOP", "no redirect data (Internal:All has no Redirect URL column)")
+            return
+        from .redirect_chains import DEFAULT_HOP_CAP, resolve_redirect_chains
+
+        hop_cap = ctx.thresholds.get("redirect_hop_cap", DEFAULT_HOP_CAP)
+        for start, outcome in resolve_redirect_chains(ctx.redirect_map, hop_cap).items():
+            if outcome["kind"] == "loop":
+                ctx.add(
+                    "REDIRECT_LOOP",
+                    target_url=start,
+                    details={"hops": outcome["hops"], "final_url": None},
+                )
+            elif outcome["kind"] == "chain":
+                ctx.add(
+                    "REDIRECT_CHAIN",
+                    target_url=start,
+                    details={"hops": outcome["hops"], "final_url": outcome["final_url"]},
+                )
         return
     addr = find_column(df, ["Address", "URL"])
     hops = find_column(
