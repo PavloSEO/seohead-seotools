@@ -6,6 +6,7 @@ import json
 
 from seohead.sf.reporters import write_json, write_markdown
 from seohead.sf.reporters.jsonfile import validate
+from seohead.sf.reporters.md import _esc
 
 
 def test_json_validates_against_schema(result):
@@ -44,3 +45,9 @@ def test_markdown_h1_multiple_texts(result, tmp_path):
     with open(path, encoding="utf-8") as stream:
         text = stream.read()
     assert "Second H1 Heading" in text
+
+
+def test_md_escape_backslash_then_pipe():
+    assert _esc(r"foo\bar") == r"foo\\bar"
+    assert _esc("a|b") == r"a\|b"
+    assert _esc(r"c\|d") == r"c\\\|d"

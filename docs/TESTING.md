@@ -37,18 +37,19 @@ thin network/browser wrappers themselves are only covered indirectly.
 Grouped by area (file names under `tests/`):
 
 - **SF audit core**: `test_loader.py` (export discovery/normalization),
-  `test_rules.py`, `test_extended_checks.py`, `test_inlinks.py`,
-  `test_heuristics.py`, `test_sitemap.py`, `test_sitemap_txt.py` — the 104
-  checks over the synthetic crawl in `tests/fixtures/`.
+  `test_rules.py`, `test_check_coverage.py`, `test_inlinks.py`,
+  `test_heuristics.py`, `test_normalize.py`, `test_context.py`,
+  `test_aggregate.py`, `test_sitemap_coverage.py`, `test_sitemap_txt.py` —
+  the 104 checks over the synthetic crawl in `tests/fixtures/`.
 - **Audit outputs**: `test_reporters.py` (audit.json validates against
-  `sf/schema/audit.schema.json` — the contract test), `test_tasks.py`
-  (backlog building).
+  `sf/schema/audit.schema.json` — the contract test), `test_sf_config.py`
+  (threshold/profile resolution), `test_tasks.py` (backlog building).
 - **Mode A plumbing**: `test_sf_discovery.py`, `test_runner_throttle.py`
   (the generated `.seospiderconfig` rate limit), `test_url_sources.py`.
 - **Live tools**: `test_tools_core.py` (parse/robots/redirects/…),
-  `test_schema.py` + `test_schema_build.py` + `test_page_facts.py` +
-  `test_page_type.py` + `test_page_type_regressions.py` (the Schema.org
-  stack incl. the 1010-type vocabulary and the page classifier),
+  `test_schema_org.py` + `test_schema_build.py` + `test_page_facts.py` +
+  `test_page_type.py` (the Schema.org stack incl. the 1010-type
+  vocabulary and the page classifier),
   `test_duplicate.py` (simhash + LSH), `test_logs.py`, `test_render.py`
   (raw-vs-DOM `compare()`), `test_soft404.py`, `test_social_meta.py`,
   `test_llms_txt.py`, `test_citability.py`.
@@ -69,9 +70,8 @@ Grouped by area (file names under `tests/`):
 - **Docs**: `test_docs_drift.py` — recounts tool/skill/check numbers in
   README, skills, and docs, and fails on references to
   non-existent commands. Documentation must rot loudly.
-- **Safety and regression nets**: `test_public_safety.py`, `test_edgecases.py`,
-  `test_review_fixes.py`, and `test_page_type_regressions.py` cover private-network URL blocking,
-  image mutation safeguards, and bugs found in review.
+- **Safety nets**: `test_public_safety.py` covers private-network URL
+  blocking and image mutation safeguards.
 
 ## CI gates beyond pytest
 

@@ -1,4 +1,6 @@
-"""Coverage for the extended (max-extraction) checks added on top of the base 60."""
+"""Coverage for max-extraction checks: firing on native SF exports and skipping cleanly
+without them (URL_TRACKING_PARAMS, OG_MISSING, GENERIC_ANCHOR_TEXT, CANONICAL_CHAIN,
+CANONICAL_TO_REDIRECT, HREFLANG_BROKEN_TARGET, and related registry checks)."""
 
 from __future__ import annotations
 

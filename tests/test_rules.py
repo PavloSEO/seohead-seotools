@@ -74,3 +74,10 @@ def test_skipped_recorded_when_source_absent(internal_only_dir):
     skipped = {s.id for s in res.skipped}
     assert "BROKEN_INTERNAL_LINK" in skipped  # no inlinks export here
     assert "BROKEN_INTERNAL_LINK" not in checks_in(res)
+
+
+def test_path_of_strips_query_and_fragment():
+    from seohead.sf.core.rules import _path_of
+
+    assert _path_of("https://example.com/Path/Page?Q=UPPER#Frag") == "/Path/Page"
+    assert _path_of("https://example.com/") == "/"
