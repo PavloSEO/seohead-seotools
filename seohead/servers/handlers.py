@@ -350,6 +350,12 @@ def crawl_site(
             classify_links=settings["link_position"]["classify"],
             link_position_rules=settings["link_position"]["rules"] or None,
             cache=cache,
+            extra_request_headers=settings["http"]["headers"] or None,
+            adaptive=settings["speed"]["adaptive"],
+            store_hyperlinks=settings["discovery"]["hyperlinks"]["store"],
+            crawl_hyperlinks=settings["discovery"]["hyperlinks"]["crawl"],
+            store_external_links=settings["discovery"]["external"]["store"],
+            crawl_redirects=settings["discovery"]["redirects"]["crawl"],
         )
         discovery = {
             "mode": "spider",
@@ -381,6 +387,8 @@ def crawl_site(
             stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
             max_delay_seconds=settings["speed"]["max_delay_seconds"],
             cache=cache,
+            extra_request_headers=settings["http"]["headers"] or None,
+            adaptive=settings["speed"]["adaptive"],
         )
         discovery = {"mode": "list"}
 

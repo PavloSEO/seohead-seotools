@@ -56,6 +56,7 @@ class Throttle:
         min_delay: float = 0.0,
         max_delay: float = MAX_DELAY_S,
         max_concurrency: int = 1,
+        adaptive: bool = True,
     ) -> None:
         self.min_delay = max(0.0, float(min_delay))
         self.max_delay = max(self.min_delay, float(max_delay))
@@ -67,6 +68,14 @@ class Throttle:
         self.max_concurrency = max(1, min(int(max_concurrency), MAX_CONCURRENCY_CEILING))
         self.concurrency = min(2, self.max_concurrency)
         self._consecutive_ok = 0
+        # speed.adaptive. When False the delay stays exactly where it was configured and the
+        # concurrency stays at the earned starting level: the crawl is paced by the operator,
+        # not by the origin. The timeout and server-error counters keep running either way —
+        # they are a separate "give up" mechanism, and a non-adaptive crawl still has to stop
+        # when the origin stops answering rather than keep hammering it.
+        self.adaptive = bool(adaptive)
+        if not self.adaptive:
+            self.concurrency = self.max_concurrency
         self._lock = threading.Lock()
 
     def record_response(self, latency_s: float, ok: bool) -> None:
@@ -76,6 +85,8 @@ class Throttle:
         not evidence that the origin is healthy.
         """
         with self._lock:
+            if not self.adaptive:
+                return
             target = max(latency_s, 0.0) / self.concurrency
             new_delay = (self.delay + target) / 2
             if not ok:
@@ -96,6 +107,8 @@ class Throttle:
         """A connection, TLS or read timeout: the origin is failing, back off hard."""
         with self._lock:
             self.timeouts += 1
+            if not self.adaptive:
+                return
             base = max(self.delay, self.min_delay, 0.5)
             self.delay = min(self.max_delay, base * TIMEOUT_PENALTY)
             self._consecutive_ok = 0
@@ -125,6 +138,8 @@ class Throttle:
         """
         with self._lock:
             self.server_errors += 1
+            if not self.adaptive:
+                return
             base = max(self.delay, self.min_delay, 0.5)
             widened = base * TIMEOUT_PENALTY if status_code == 429 else base * 2
             if retry_after is not None:

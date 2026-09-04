@@ -47,11 +47,17 @@ DEFAULTS: dict[str, Any] = {
         "auto_discover": False,
     },
     "discovery": {
-        # Each link type is a pair: store it in the report, and/or request it.
+        # Each link type is a pair: store it in the report, and/or request it. Only the pairs
+        # that actually change an outcome are here. discovery.canonicals.* and
+        # discovery.external.crawl were removed in the #91 pass: chasing canonicals as a
+        # discovery source and crawling a second host are capabilities the spider does not
+        # have, and a setting that names behaviour nothing implements is worse than no setting
+        # — it reads as a supported option in --config-help and in the run manifest.
         "hyperlinks": {"store": True, "crawl": True},
-        "canonicals": {"store": True, "crawl": False},
-        "redirects": {"store": True, "crawl": True},
-        "external": {"store": True, "crawl": False},
+        "redirects": {"crawl": True},
+        # A redirect has no LinkEdge of its own to withhold, so there is no redirects.store to
+        # honour: the redirect target is recorded on the page record either way.
+        "external": {"store": True},
         "follow_nofollow": False,
     },
     "limits": {
@@ -205,12 +211,8 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "sitemaps.auto_discover",
         "discovery.hyperlinks.store",
         "discovery.hyperlinks.crawl",
-        "discovery.canonicals.store",
-        "discovery.canonicals.crawl",
-        "discovery.redirects.store",
         "discovery.redirects.crawl",
         "discovery.external.store",
-        "discovery.external.crawl",
         "discovery.follow_nofollow",
         # Every limit truncates the corpus, and a truncated crawl produces false
         # "not linked from anywhere" conclusions.
@@ -291,12 +293,8 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "discovery.hyperlinks.store": "Keep discovered hyperlinks in the report.",
     "discovery.hyperlinks.crawl": "Request discovered hyperlinks (fetch them).",
-    "discovery.canonicals.store": "Keep discovered canonical links in the report.",
-    "discovery.canonicals.crawl": "Request discovered canonical links (fetch them).",
-    "discovery.redirects.store": "Keep discovered redirect targets in the report.",
     "discovery.redirects.crawl": "Request discovered redirect targets (fetch them).",
     "discovery.external.store": "Keep discovered external links in the report.",
-    "discovery.external.crawl": "Request discovered external links (fetch them).",
     "discovery.follow_nofollow": "Follow links marked rel=nofollow instead of skipping them.",
     "limits.max_urls": "Maximum number of URLs the crawl will fetch.",
     "limits.max_depth": "Maximum link depth from the start URL.",

@@ -307,6 +307,12 @@ def crawl_site(
     link_position_rules: list[dict[str, Any]] | None = None,
     content_area_config: dict[str, Any] | None = None,
     cache: ResponseCache | None = None,
+    extra_request_headers: dict[str, str] | None = None,
+    adaptive: bool = True,
+    store_hyperlinks: bool = True,
+    crawl_hyperlinks: bool = True,
+    store_external_links: bool = True,
+    crawl_redirects: bool = True,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
@@ -382,7 +388,10 @@ def crawl_site(
 
     result = SpiderResult()
     throttle = Throttle(
-        min_delay=min_delay, max_delay=max_delay_seconds, max_concurrency=max_concurrency
+        min_delay=min_delay,
+        max_delay=max_delay_seconds,
+        max_concurrency=max_concurrency,
+        adaptive=adaptive,
     )
     excluded: dict[str, int] = {}
     # Distinct query strings already enqueued for a given path, so the Nth+1
@@ -489,9 +498,16 @@ def crawl_site(
             # last one — that is what keeps a credential off a cross-host
             # redirect target. Called with each URL's own host regardless of
             # concurrency, so nothing is ever carried between hops or workers.
-            if not credential_headers:
-                return None
-            return resolve_credential_headers(credential_headers, urlsplit(url).hostname or "")
+            # http.headers applies to every request; a credential applies only to the host it
+            # was bound to. Merging here rather than at client construction keeps both in one
+            # place and keeps the per-host resolution the credential rule depends on.
+            headers = dict(extra_request_headers or {})
+            if credential_headers:
+                headers.update(
+                    resolve_credential_headers(credential_headers, urlsplit(url).hostname or "")
+                    or {}
+                )
+            return headers or None
 
         def robots_blocks(url: str) -> bool:
             """True when this URL must not be fetched under the current policy."""
@@ -503,7 +519,11 @@ def crawl_site(
             return False
 
         def handle_redirect(record: PageRecord, depth: int) -> None:
-            # A redirect is a discovery too, and it stays inside the budget.
+            # A redirect is a discovery too, and it stays inside the budget — unless
+            # discovery.redirects.crawl says a redirect target is not a discovery source,
+            # in which case the redirect is still recorded on the page, just never followed.
+            if not crawl_redirects:
+                return
             if record.redirect_url and depth < depth_limit:
                 target = record.redirect_url
                 reason = rules.rejection(target, host) or extra_rejection(target)
@@ -528,22 +548,28 @@ def crawl_site(
                 if not href:
                     continue
                 nofollow = bool(link.get("nofollow"))
-                # Recorded regardless: "store" and "crawl" are independent
-                # questions, and an edge that will not be enqueued below is
-                # still real evidence of what the page links to.
-                result.links.append(
-                    LinkEdge(
-                        source=url,
-                        destination=href,
-                        anchor=(link.get("text") or "")[:200],
-                        nofollow=nofollow,
-                        position=link.get("position") or "",
+                reason = rules.rejection(href, host) or extra_rejection(href)
+                is_external = reason == "outside_host"
+                # "store" and "crawl" are independent questions: an edge that will not be
+                # enqueued below is still real evidence of what the page links to. Both are
+                # on by default; turning a store off makes the report smaller, not different.
+                store_this = store_external_links if is_external else store_hyperlinks
+                if store_this:
+                    result.links.append(
+                        LinkEdge(
+                            source=url,
+                            destination=href,
+                            anchor=(link.get("text") or "")[:200],
+                            nofollow=nofollow,
+                            position=link.get("position") or "",
+                        )
                     )
-                )
+                if not crawl_hyperlinks:
+                    exclude("hyperlink_discovery_off")
+                    continue
                 if nofollow and not follow_nofollow:
                     exclude("nofollow")
                     continue
-                reason = rules.rejection(href, host) or extra_rejection(href)
                 if reason:
                     exclude(reason)
                     continue

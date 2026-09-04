@@ -4,6 +4,17 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Close the second half of the unwired-settings audit (#91). `http.headers` is merged into
+  every request beside the credential headers; `speed.adaptive` gates the throttle's delay
+  and concurrency adjustment (the timeout and server-error counters keep running — giving
+  up is a separate mechanism from backing off); `discovery.hyperlinks.store` / `.crawl`,
+  `discovery.external.store` and `discovery.redirects.crawl` now decide what the crawl
+  records and what it follows. `discovery.canonicals.*`, `discovery.external.crawl` and
+  `discovery.redirects.store` are removed rather than wired: they named capability the
+  spider does not have (canonical-chasing, cross-host crawling) or state it cannot
+  withhold, and a setting that appears in `--config-help` and the run manifest while
+  changing nothing is worse than no setting. The coverage canary's exemption set is now
+  empty: every `DEFAULTS` path changes an observable outcome and is named by a test.
 - Detect the content area from the document's own semantics when nothing is configured
   (#96): `main`, then `[role="main"]`, then `article`, recording which one matched as
   `auto_main` / `auto_role_main` / `auto_article`. The previous default — the whole body
