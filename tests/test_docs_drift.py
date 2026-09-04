@@ -16,6 +16,12 @@ from seohead.sf.core.registry import CHECKS
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TECHNICAL_SKILLS = sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md"))
+# A skill directory may carry sub-skills and a reference archive beside its SKILL.md (the
+# controller does). They are not skills in their own right — nothing loads them by name — but
+# they are public Markdown, so the English-only gate applies to them like anything else.
+SKILL_SUPPORTING_MARKDOWN = sorted(
+    p for p in (ROOT / ".claude" / "skills").glob("*/**/*.md") if p.name != "SKILL.md"
+)
 PACKAGED_SKILLS = sorted((ROOT / "seohead" / "skills").glob("*/SKILL.md"))
 # Every level: docs/scenarios/ is part of the public contract too, so the English-only
 # gate and the count checks apply to it like anything else under docs/.
@@ -31,6 +37,7 @@ PUBLIC_MARKDOWN = [
     ROOT / "THIRD_PARTY_NOTICES.md",
     ROOT / "TRADEMARKS.md",
     *TECHNICAL_SKILLS,
+    *SKILL_SUPPORTING_MARKDOWN,
     *PACKAGED_SKILLS,
     *DOCS,
 ]

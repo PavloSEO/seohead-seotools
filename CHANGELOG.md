@@ -4,6 +4,15 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Restructure the operator skill into a controller directory (#111). `.claude/skills/`
+  now has two tiers: 21 method skills, each covering one thing well, and `control/`,
+  which decides which of them to run on a site nobody has looked at yet. The controller
+  routes rather than restating, and carries five loadable sub-skills (scoping, rate and
+  load, reading an audit, verifying, deliverables) and a three-file reference archive
+  (defects found on live sites and what gave each away, which population each check
+  describes, and what the toolkit cannot answer at all). The English-only gate and the
+  doc-command gate now cover every Markdown file under a skill directory, not only
+  `SKILL.md`.
 - Add `tests/chains/`: a fixture site built out of the shapes that actually break chains —
   both slash forms of one URL, a body that is not valid UTF-8, a windows-1251 page, a
   masthead outside `<main>`, an off-host link, a robots-disallowed path — crawled over
