@@ -97,6 +97,8 @@ def test_link_position_classify_config_reaches_the_spider_and_the_output(tmp_pat
     assert boilerplate_only == ["https://example.com/orphan"]
     # The same fact also reaches the audit as a registered finding.
     assert out["summary"]["by_check"].get("INLINK_BOILERPLATE_ONLY") == 1
+
+
 def test_cache_replay_and_stats_reach_the_handler_output_and_the_audit_manifest(
     tmp_path, monkeypatch
 ):
