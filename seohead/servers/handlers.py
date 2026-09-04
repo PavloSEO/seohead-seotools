@@ -112,6 +112,7 @@ def crawl_site(
     max_urls: int | None = None,
     max_depth: int | None = None,
     min_delay: float | None = None,
+    concurrency: int | None = None,
     robots: str | None = None,
     out_dir: str | None = None,
     sitemap: str | None = None,
@@ -156,6 +157,7 @@ def crawl_site(
             "limits.max_urls": max_urls,
             "limits.max_depth": max_depth,
             "speed.min_delay_seconds": min_delay,
+            "speed.concurrency": concurrency,
             "robots.policy": robots,
             "output.dir": out_dir,
         },
@@ -191,6 +193,7 @@ def crawl_site(
             # crawl with no out_dir has nothing to resume into anyway.
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
+            concurrency=settings["speed"]["concurrency"],
         )
         discovery = {
             "mode": "spider",
@@ -201,6 +204,7 @@ def crawl_site(
             "robots_blocked": len(result.robots_blocked),
             "crawl_delay_applied": result.crawl_delay_applied,
             "effective_delay_seconds": round(result.effective_delay, 3),
+            "effective_concurrency": result.effective_concurrency,
             "resume_note": result.resume_note,
             "sitemap_url": sitemap_seed["sitemap_url"],
             "sitemap_seeded": len(result.seed_urls),

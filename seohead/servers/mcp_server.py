@@ -79,6 +79,7 @@ def build_server():  # -> FastMCP
         max_depth: int = 5,
         min_delay: float = 0.5,
         robots: str = "respect",
+        concurrency: int = 1,
         out_dir: str | None = None,
     ) -> dict[str, Any]:
         """Crawl a site from a start URL by following links, then audit the result
@@ -88,13 +89,15 @@ def build_server():  # -> FastMCP
 
         ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
         anyway, and report what a compliant crawler would have missed) or
-        "ignore" (do not fetch it at all)."""
+        "ignore" (do not fetch it at all). ``concurrency`` is a per-origin
+        ceiling the adaptive throttle grows into, not a fixed thread count."""
         return handlers.crawl_site(
             url=url,
             max_urls=max_urls,
             max_depth=max_depth,
             min_delay=min_delay,
             robots=robots,
+            concurrency=concurrency,
             out_dir=out_dir,
         )
 
