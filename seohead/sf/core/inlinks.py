@@ -9,6 +9,7 @@ destination URL, with every source as a location.
 from __future__ import annotations
 
 import re
+import statistics
 import urllib.parse
 from collections import Counter, OrderedDict
 from typing import Any
@@ -16,6 +17,8 @@ from typing import Any
 from seohead.tools.hreflang import code_error
 
 from .context import AuditContext
+from .crawl_path import shortest_paths_from_seed
+from .link_score import compute_link_scores
 from .models import Link
 from .normalize import HREFLANG_FIELD_MAP, INLINKS_FIELD_MAP, is_true, norm_url, records_from_df
 
@@ -36,6 +39,20 @@ def _site_host(ctx: AuditContext) -> str:
         if host:
             counts[host] += 1
     return counts.most_common(1)[0][0] if counts else ""
+
+
+def _all_inlink_records(ctx: AuditContext) -> list[dict[str, Any]] | None:
+    """The complete inlink inventory, or ``None`` when it was never exported.
+
+    ``all_inlinks`` (Bulk Export → Links → All Inlinks) is the only export that
+    carries every link on the site rather than only the broken ones, so it is
+    the one input the whole-graph passes below (link score, inlink
+    composition, the discovery path, and the resource inventory) all share.
+    """
+    df = ctx.exports.get("all_inlinks")
+    if df is None or df.empty:
+        return None
+    return records_from_df(df, INLINKS_FIELD_MAP)
 
 
 def _link_from_record(rec: dict[str, Any]) -> Link:
@@ -419,6 +436,306 @@ def _check_not_canonical(
         )
 
 
+def check_hreflang_reciprocity(ctx: AuditContext) -> None:
+    """HREFLANG_MISSING_RETURN_LINK — A names B, but B never names A back.
+
+    Google's hreflang contract requires every annotation to be reciprocal:
+    if A points to B, B must point back to A. Whether B reciprocates is a
+    property of the *pair* and depends on B's own hreflang set, which is only
+    on hand once B itself has been crawled — provable only once the crawl of
+    both sides is complete (issue #15, item 6).
+    """
+    df = ctx.exports.get("all_hreflang")
+    if df is None or df.empty:
+        ctx.skip(
+            "HREFLANG_MISSING_RETURN_LINK",
+            "no all_hreflang export (export Bulk Export -> Links -> All Hreflang)",
+        )
+        return
+
+    edges: set[tuple[str, str]] = set()
+    for rec in records_from_df(df, HREFLANG_FIELD_MAP):
+        src, dest = rec.get("source_url"), rec.get("destination_url")
+        if not src or not dest:
+            continue
+        src_norm, dest_norm = norm_url(src), norm_url(dest)
+        if src_norm == dest_norm:
+            continue  # a self-reference is not a reciprocity pair
+        edges.add((src_norm, dest_norm))
+
+    missing_by_target: OrderedDict[str, list[str]] = OrderedDict()
+    for src_norm, dest_norm in sorted(edges):
+        if (dest_norm, src_norm) in edges:
+            continue  # B already names A back
+        target = ctx.page_by_norm.get(dest_norm)
+        if target is None:
+            continue  # external / not crawled — cannot fault it for not reciprocating
+        missing_by_target.setdefault(dest_norm, []).append(src_norm)
+
+    for dest_norm, source_norms in missing_by_target.items():
+        target = ctx.page_by_norm[dest_norm]
+        expected_from = sorted(
+            ctx.page_by_norm[n].url if n in ctx.page_by_norm else n for n in source_norms
+        )
+        ctx.add(
+            "HREFLANG_MISSING_RETURN_LINK",
+            target_url=target.url,
+            occurrences_count=len(expected_from),
+            details={"expected_return_to": expected_from},
+            evidence={"export": ctx.exports.files.get("all_hreflang")},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Whole-graph passes over the complete inlink inventory (issue #15, items
+# 1, 7, 10, 11): each needs every link on the site, not only the broken ones,
+# so all four honestly skip without ``all_inlinks``.
+# ---------------------------------------------------------------------------
+def _internal_hyperlink_edges(
+    records: list[dict[str, Any]], site_host: str
+) -> list[tuple[str, str]]:
+    """(source, destination) pairs for internal, followed ``Hyperlink`` rows.
+
+    Excludes external destinations (a different host) and rows Screaming Frog
+    marks ``Follow: false`` — neither carries internal link equity or forms
+    part of internal navigation. A row with no Type value at all (an older
+    export) is kept rather than dropped, since assuming it is a hyperlink is
+    the safer default for this filter.
+    """
+    edges: list[tuple[str, str]] = []
+    for rec in records:
+        source, dest = rec.get("source_url"), rec.get("destination_url")
+        if not source or not dest:
+            continue
+        link_type = rec.get("type")
+        if link_type is not None and str(link_type).strip().lower() != "hyperlink":
+            continue
+        follow = rec.get("follow")
+        if follow is not None and not is_true(follow):
+            continue
+        dest_host = urllib.parse.urlparse(dest).netloc.lower()
+        if dest_host and dest_host != site_host:
+            continue
+        edges.append((norm_url(source), norm_url(dest)))
+    return edges
+
+
+def check_link_score(ctx: AuditContext) -> None:
+    """LOW_LINK_SCORE — an iterative internal-PageRank pass (issue #15, item 1).
+
+    One new edge changes every page's score, so this can only run once the
+    crawl's own edge list is complete. It reads the same ``all_inlinks``
+    export the checks below share, restricted to internal, followed hyperlink
+    edges, and flags indexable pages scoring far below the site's own median
+    — a signal a raw inlink *count* misses, since a page can hold several
+    inlinks and still be starved of link equity if every one is nofollow or
+    itself comes from a poorly linked page.
+    """
+    records = _all_inlink_records(ctx)
+    if records is None:
+        ctx.skip(
+            "LOW_LINK_SCORE", "no all_inlinks export (needed for the complete internal edge list)"
+        )
+        return
+    site_host = _site_host(ctx)
+    edges = _internal_hyperlink_edges(records, site_host)
+    if not edges:
+        ctx.skip("LOW_LINK_SCORE", "all_inlinks export has no internal followed hyperlinks")
+        return
+
+    urls = {norm_url(p.url) for p in ctx.pages}
+    scores = compute_link_scores(edges, urls)
+    for page in ctx.pages:
+        score = scores.get(norm_url(page.url))
+        if score is not None:
+            page.metrics["link_score_computed"] = round(score, 6)
+
+    values = sorted(scores.values())
+    if len(values) < 5:
+        return  # too few scored pages for a median comparison to mean anything
+    median = statistics.median(values)
+    if median <= 0:
+        return
+    ratio = ctx.thresholds.get("link_score_low_ratio", 0.25)
+    for page in ctx.indexable_html_pages():
+        if _rec(page).get("crawl_depth") == 0:
+            continue  # the homepage's own score is not comparable to the rest
+        score = scores.get(norm_url(page.url))
+        if score is None or score >= median * ratio:
+            continue
+        ctx.add(
+            "LOW_LINK_SCORE",
+            target_url=page.url,
+            details={
+                "link_score": round(score, 6),
+                "site_median": round(median, 6),
+                "ratio_to_median": round(score / median, 3),
+            },
+        )
+
+
+def check_inlink_composition(ctx: AuditContext) -> None:
+    """ONLY_NOFOLLOW_INLINKS / ONLY_NONINDEXABLE_SOURCE_INLINKS.
+
+    Both are aggregates over *every* inlink a URL has: "only nofollow" is
+    false the moment one more, follow inlink turns up, and the same is true of
+    "only from non-indexable sources" — so neither is provable before the
+    crawl (and the complete ``all_inlinks`` export) is finished (issue #15,
+    item 7). Crawl depth, the aggregate item 7 also names, is already answered
+    by ``DEEP_CRAWL_DEPTH`` from Internal:All's own Crawl Depth column, which
+    Screaming Frog only finalizes once the crawl ends.
+    """
+    records = _all_inlink_records(ctx)
+    if records is None:
+        for check_id in ("ONLY_NOFOLLOW_INLINKS", "ONLY_NONINDEXABLE_SOURCE_INLINKS"):
+            ctx.skip(check_id, "no all_inlinks export (needed for the complete inlink list)")
+        return
+
+    site_host = _site_host(ctx)
+    by_dest: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    for rec in records:
+        source, dest = rec.get("source_url"), rec.get("destination_url")
+        if not source or not dest:
+            continue
+        link_type = rec.get("type")
+        if link_type is not None and str(link_type).strip().lower() != "hyperlink":
+            continue
+        dest_host = urllib.parse.urlparse(dest).netloc.lower()
+        if dest_host and dest_host != site_host:
+            continue  # external destination — not this page's own composition
+        by_dest.setdefault(dest, []).append(rec)
+
+    for dest, links in by_dest.items():
+        target = ctx.page_by_norm.get(norm_url(dest))
+        if target is None or not target.is_indexable:
+            continue
+        if _rec(target).get("crawl_depth") == 0:
+            continue  # the homepage's inlink composition is not the whole story
+
+        follows = [
+            is_true(link["follow"]) if link.get("follow") is not None else True for link in links
+        ]
+        if not any(follows):
+            ctx.add(
+                "ONLY_NOFOLLOW_INLINKS",
+                target_url=target.url,
+                occurrences_count=len(links),
+                details={"inlink_count": len(links)},
+            )
+
+        source_indexability = []
+        for link in links:
+            source_page = ctx.page_by_norm.get(norm_url(link.get("source_url")))
+            if source_page is not None:
+                source_indexability.append(source_page.is_indexable)
+        if source_indexability and not any(source_indexability):
+            ctx.add(
+                "ONLY_NONINDEXABLE_SOURCE_INLINKS",
+                target_url=target.url,
+                occurrences_count=len(links),
+                details={
+                    "inlink_count": len(links),
+                    "sources": sorted({link["source_url"] for link in links})[:20],
+                },
+            )
+
+
+def check_discovery_path(ctx: AuditContext) -> None:
+    """DEEP_DISCOVERY_PATH — the concrete shortest click path from the seed.
+
+    Internal:All's Crawl Depth column already reports each page's distance
+    from the start URL, but not the route that produces it, and only a
+    breadth-first walk over the *finished* internal hyperlink graph can
+    reconstruct one (issue #15, item 10). Flags indexable pages whose
+    shortest route exceeds the same ``crawl_depth_max`` threshold
+    ``DEEP_CRAWL_DEPTH`` already uses, this time with the actual path attached.
+    """
+    records = _all_inlink_records(ctx)
+    if records is None:
+        ctx.skip(
+            "DEEP_DISCOVERY_PATH",
+            "no all_inlinks export (needed for the complete internal edge list)",
+        )
+        return
+    site_host = _site_host(ctx)
+    edges = _internal_hyperlink_edges(records, site_host)
+    if not edges:
+        ctx.skip("DEEP_DISCOVERY_PATH", "all_inlinks export has no internal hyperlinks")
+        return
+
+    seed = next((p for p in ctx.pages if _rec(p).get("crawl_depth") == 0), None)
+    if seed is None:
+        ctx.skip("DEEP_DISCOVERY_PATH", "no page at Crawl Depth 0 to use as the seed")
+        return
+
+    paths = shortest_paths_from_seed(edges, norm_url(seed.url))
+    max_depth = ctx.thresholds.get("crawl_depth_max", 4)
+    for page in ctx.indexable_html_pages():
+        path_norm = paths.get(norm_url(page.url))
+        if path_norm is None or len(path_norm) - 1 <= max_depth:
+            continue
+        path_urls = [ctx.page_by_norm[n].url if n in ctx.page_by_norm else n for n in path_norm]
+        ctx.add(
+            "DEEP_DISCOVERY_PATH",
+            target_url=page.url,
+            details={"path": path_urls, "hops": len(path_norm) - 1},
+        )
+
+
+# Rows Screaming Frog's All Inlinks export uses for a page's own directives
+# rather than an actual fetched resource — never "insecure subresources".
+_NON_RESOURCE_LINK_TYPES = frozenset(
+    {"hyperlink", "canonical", "rel next", "rel prev", "meta refresh", "amphtml"}
+)
+
+
+def check_insecure_subresources(ctx: AuditContext) -> None:
+    """INSECURE_SUBRESOURCE — an HTTPS page loads a subresource over HTTP.
+
+    Needs the completed inventory of every page cross-joined with the
+    resources it loads (issue #15, item 11): this reads the non-hyperlink
+    rows (Image, JavaScript, CSS, ...) of the same ``all_inlinks`` export the
+    checks above already use. A native Security:Mixed Content export answers
+    the same question and is preferred when present (``check_native_exports``
+    → ``MIXED_CONTENT``); this only fills the gap when that report was not
+    exported, and skips rather than double-report when it was.
+    """
+    if ctx.exports.has("security_mixed"):
+        ctx.skip("INSECURE_SUBRESOURCE", "native Security:Mixed Content export already covers this")
+        return
+    records = _all_inlink_records(ctx)
+    if records is None:
+        ctx.skip(
+            "INSECURE_SUBRESOURCE", "no all_inlinks export (needed for the resource inventory)"
+        )
+        return
+    if not any(rec.get("type") for rec in records):
+        ctx.skip(
+            "INSECURE_SUBRESOURCE",
+            "all_inlinks export has no Type column (needed to tell a resource from a hyperlink)",
+        )
+        return
+
+    by_source: OrderedDict[str, list[str]] = OrderedDict()
+    for rec in records:
+        source, dest = rec.get("source_url"), rec.get("destination_url")
+        if not source or not dest or not source.lower().startswith("https://"):
+            continue
+        link_type = str(rec.get("type") or "").strip().lower()
+        if link_type in _NON_RESOURCE_LINK_TYPES:
+            continue
+        if dest.lower().startswith("http://"):
+            by_source.setdefault(source, []).append(dest)
+
+    for source, resources in by_source.items():
+        ctx.add(
+            "INSECURE_SUBRESOURCE",
+            target_url=source,
+            occurrences_count=len(resources),
+            details={"resources": sorted(set(resources))[:20]},
+        )
+
+
 def run_inlinks(ctx: AuditContext) -> None:
     site_host = _site_host(ctx)
     for key, (internal_check, external_check) in INLINK_SOURCES.items():
@@ -426,3 +743,8 @@ def run_inlinks(ctx: AuditContext) -> None:
     check_anchor_text(ctx)
     check_hreflang_targets(ctx)
     check_hreflang_quality(ctx)
+    check_hreflang_reciprocity(ctx)
+    check_link_score(ctx)
+    check_inlink_composition(ctx)
+    check_discovery_path(ctx)
+    check_insecure_subresources(ctx)
