@@ -10,11 +10,27 @@ Requires the optional ``mcp`` dependency: ``pip install "seohead-seotools[mcp]"`
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from seohead import runlog
 from seohead.models import ParseManyResult, RobotsCheckResult
 from seohead.servers import handlers
+
+
+def _checked(result: Any) -> Any:
+    """Raise so FastMCP marks the call ``isError`` instead of returning a handler's own-reported
+    failure (``ok: False``, see ``handlers.handler_failed``) as a normal success — the same
+    distinction the CLI makes with a non-zero exit (docs/USAGE.md). Every ``return handlers.*``
+    call below passes through here rather than each ``@mcp.tool`` decorator wrapping its own
+    function, because ``tool_reference.py`` reads that decorator's literal shape with `ast` to
+    generate docs/TOOL_REFERENCE.md and must keep finding it unchanged.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    if handlers.handler_failed(result):
+        raise ToolError(json.dumps(result, ensure_ascii=False, default=str))
+    return result
 
 
 def build_server():  # -> FastMCP
@@ -52,7 +68,7 @@ def build_server():  # -> FastMCP
     ) -> ParseManyResult:
         """Parse SEO data (title, meta description, canonical, OG/Twitter, H1-H6,
         JSON-LD, links, visible text, word count) from one URL or a list of URLs."""
-        return handlers.parse(url=url or None, urls=urls, options=options)
+        return _checked(handlers.parse(url=url or None, urls=urls, options=options))
 
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_redirects_generate(
@@ -63,14 +79,19 @@ def build_server():  # -> FastMCP
     ) -> dict[str, Any]:
         """Generate redirect rules (Apache mod_rewrite/Redirect, Nginx, or a custom
         template) from a list of {old_url, new_url} pairs."""
-        return handlers.redirects_generate(
-            redirects=redirects, fmt=fmt, default_url=default_url, custom_template=custom_template
+        return _checked(
+            handlers.redirects_generate(
+                redirects=redirects,
+                fmt=fmt,
+                default_url=default_url,
+                custom_template=custom_template,
+            )
         )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_redirects_check(url: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
         """Follow a live redirect chain for a URL and report each hop (status, location)."""
-        return handlers.redirects_check(url=url, options=options)
+        return _checked(handlers.redirects_check(url=url, options=options))
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
     def seo_crawl_site(
@@ -91,14 +112,16 @@ def build_server():  # -> FastMCP
         anyway, and report what a compliant crawler would have missed) or
         "ignore" (do not fetch it at all). ``concurrency`` is a per-origin
         ceiling the adaptive throttle grows into, not a fixed thread count."""
-        return handlers.crawl_site(
-            url=url,
-            max_urls=max_urls,
-            max_depth=max_depth,
-            min_delay=min_delay,
-            robots=robots,
-            concurrency=concurrency,
-            out_dir=out_dir,
+        return _checked(
+            handlers.crawl_site(
+                url=url,
+                max_urls=max_urls,
+                max_depth=max_depth,
+                min_delay=min_delay,
+                robots=robots,
+                concurrency=concurrency,
+                out_dir=out_dir,
+            )
         )
 
     @mcp.tool(annotations=pure, structured_output=True)
@@ -107,7 +130,7 @@ def build_server():  # -> FastMCP
         description, and whether it changes what the audit finds (results-affecting)
         or only cost/duration. The same source ``crawl-site --config-help`` reads, so
         an agent can discover the configuration surface without a filesystem."""
-        return handlers.crawl_describe_settings()
+        return _checked(handlers.crawl_describe_settings())
 
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_log_scan(
@@ -121,13 +144,15 @@ def build_server():  # -> FastMCP
         traced instead of trusted. ``run`` is a directory holding audit.json and/or
         pages.jsonl; ``images_dir`` is an images-download directory whose manifest lets a
         recorded size be checked against the bytes on disk."""
-        return handlers.log_scan(run=run, images_dir=images_dir, max_per_rule=max_per_rule)
+        return _checked(
+            handlers.log_scan(run=run, images_dir=images_dir, max_per_rule=max_per_rule)
+        )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_sitemap_crawl(url: str, concurrency: int = 3) -> dict[str, Any]:
         """Recursively parse a sitemap (index/urlset, gzip supported) into a URL tree,
         with duplicate detection."""
-        return handlers.sitemap_crawl(url=url, concurrency=concurrency)
+        return _checked(handlers.sitemap_crawl(url=url, concurrency=concurrency))
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
     def seo_images_download(
@@ -135,7 +160,7 @@ def build_server():  # -> FastMCP
     ) -> dict[str, Any]:
         """Download images from a URL list, setting the correct extension by
         content-type and skipping already-downloaded files."""
-        return handlers.images_download(urls=urls, output_dir=output_dir, options=options)
+        return _checked(handlers.images_download(urls=urls, output_dir=output_dir, options=options))
 
     @mcp.tool(annotations=rewrite_files, structured_output=True)
     def seo_images_optimize(
@@ -147,7 +172,7 @@ def build_server():  # -> FastMCP
         settings.in_place=true and creates a backup by default. Existing destinations
         require settings.overwrite=true. Animated and multipage images are rejected.
         """
-        return handlers.images_optimize(files=files, settings=settings)
+        return _checked(handlers.images_optimize(files=files, settings=settings))
 
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_keywords_cluster(
@@ -157,7 +182,7 @@ def build_server():  # -> FastMCP
         params: dict[str, Any] = {"keywords": keywords, "algorithm": algorithm}
         if n_clusters is not None:
             params["n_clusters"] = n_clusters
-        return handlers.keywords_cluster(**params)
+        return _checked(handlers.keywords_cluster(**params))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_robots_check(
@@ -165,13 +190,13 @@ def build_server():  # -> FastMCP
     ) -> RobotsCheckResult:
         """Fetch and analyze a site's robots.txt: user-agent groups, declared
         sitemaps, and whether given paths are crawlable."""
-        return handlers.robots_check(url=url, user_agent=user_agent, paths=paths)
+        return _checked(handlers.robots_check(url=url, user_agent=user_agent, paths=paths))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_headers_check(url: str, method: str = "GET") -> dict[str, Any]:
         """Inspect SEO-relevant response headers (X-Robots-Tag, canonical Link,
         Cache-Control, HSTS, ...), HTTP version, TTFB, and body size."""
-        return handlers.headers_check(url=url, method=method)
+        return _checked(handlers.headers_check(url=url, method=method))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_asset_weight_check(url: str, file_size_threshold: int | None = None) -> dict[str, Any]:
@@ -181,40 +206,42 @@ def build_server():  # -> FastMCP
         polyfilled JS, and resources served without compression or a long-lived
         Cache-Control. Unused-code and cross-page outlier detection need a rendered
         DOM / a multi-page run and are reported under `skipped`, not silently clean."""
-        return handlers.asset_weight_check(url=url, file_size_threshold=file_size_threshold)
+        return _checked(
+            handlers.asset_weight_check(url=url, file_size_threshold=file_size_threshold)
+        )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_links_check(url: str, internal_only: bool = False, limit: int = 200) -> dict[str, Any]:
         """Check a page's outbound links for broken (4xx/5xx) targets and links
         that point at redirects (wasted crawl hops)."""
-        return handlers.links_check(url=url, internal_only=internal_only, limit=limit)
+        return _checked(handlers.links_check(url=url, internal_only=internal_only, limit=limit))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_hreflang_check(url: str) -> dict[str, Any]:
         """Extract and validate a page's hreflang alternates (x-default,
         self-reference, duplicates, malformed codes)."""
-        return handlers.hreflang_check(url=url)
+        return _checked(handlers.hreflang_check(url=url))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_domain_profile(domain: str, with_tls: bool = True) -> dict[str, Any]:
         """Infrastructure profile of a domain: registrar and domain age (RDAP, whois
         fallback), DNS records with DNS/mail provider, hosting IP with ASN, owner and
         country, reverse DNS, TLS certificate and its expiry, plus risk flags."""
-        return handlers.domain_profile(domain=domain, with_tls=with_tls)
+        return _checked(handlers.domain_profile(domain=domain, with_tls=with_tls))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_cdn_check(url: str) -> dict[str, Any]:
         """Which CDN sits in front of a URL and whether caching actually works:
         cache status on a repeat request (MISS->HIT), Cache-Control, ETag/Last-Modified,
         304 revalidation, HTTP version, HTTP/3 advertisement, brotli/gzip and TTFB."""
-        return handlers.cdn_check(url=url)
+        return _checked(handlers.cdn_check(url=url))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_tech_detect(url: str) -> dict[str, Any]:
         """Detect the technologies behind a page: CMS, framework, server stack,
         analytics and ad pixels, chat widgets, consent tools, fonts and third-party
         script hosts. Every hit carries the marker it was detected by."""
-        return handlers.tech_detect(url=url)
+        return _checked(handlers.tech_detect(url=url))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_security_check(url: str, probe_paths: bool = False) -> dict[str, Any]:
@@ -222,14 +249,16 @@ def build_server():  # -> FastMCP
         X-Content-Type-Options, Referrer-Policy, Permissions-Policy), software version
         disclosure, cookie flags and the http->https upgrade. Set probe_paths=true to
         also check whether .git/.env and similar service files are exposed."""
-        return handlers.security_check(url=url, probe_paths=probe_paths)
+        return _checked(handlers.security_check(url=url, probe_paths=probe_paths))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_backlinks_check(target: str, donors: list[str], concurrency: int = 3) -> dict[str, Any]:
         """Verify backlinks from a list of donor pages: is the link still there, its
         anchor and rel, whether it passes weight (nofollow/ugc/sponsored), and whether
         the donor page itself is indexable."""
-        return handlers.backlinks_check(target=target, donors=donors, concurrency=concurrency)
+        return _checked(
+            handlers.backlinks_check(target=target, donors=donors, concurrency=concurrency)
+        )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_schema_check(url: str = "", html: str = "") -> dict[str, Any]:
@@ -240,7 +269,7 @@ def build_server():  # -> FastMCP
         Layer two is Google rich-result eligibility per type. Also analyses the JSON-LD
         as a GRAPH: which entities carry @id, which are linked, which hang as islands,
         and whether any @id reference dangles. Pass html to check markup offline."""
-        return handlers.schema_check(url=url or None, html=html or None)
+        return _checked(handlers.schema_check(url=url or None, html=html or None))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_schema_build(url: str = "", html: str = "", override_type: str = "") -> dict[str, Any]:
@@ -251,8 +280,10 @@ def build_server():  # -> FastMCP
         actually visible on the page. Also diffs the suggestion against markup the
         page already carries: which recommended fields are missing, which it can
         fill now. Set override_type when the classifier is unsure (confidence=low)."""
-        return handlers.schema_build(
-            url=url or None, html=html or None, override_type=override_type or None
+        return _checked(
+            handlers.schema_build(
+                url=url or None, html=html or None, override_type=override_type or None
+            )
         )
 
     @mcp.tool(annotations=pure, structured_output=True)
@@ -275,11 +306,13 @@ def build_server():  # -> FastMCP
         items whose indexable flag is true or absent, since a page canonicalised to
         another is an intended twin, not a defect; set it to false to audit the
         canonical tags themselves."""
-        return handlers.duplicate_check(
-            items=items,
-            threshold=threshold,
-            with_fingerprints=with_fingerprints,
-            only_indexable=only_indexable,
+        return _checked(
+            handlers.duplicate_check(
+                items=items,
+                threshold=threshold,
+                with_fingerprints=with_fingerprints,
+                only_indexable=only_indexable,
+            )
         )
 
     @mcp.tool(annotations=fetch, structured_output=True)
@@ -290,7 +323,7 @@ def build_server():  # -> FastMCP
         and ``www`` DNS availability. DNS is checked through DNS-over-HTTPS rather than the
         machine's local resolver so local cache or split-DNS state does not create false evidence.
         """
-        return handlers.mirror_check(url=url, timeout=timeout)
+        return _checked(handlers.mirror_check(url=url, timeout=timeout))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_ai_bots_check(url: str = "", robots_text: str = "") -> dict[str, Any]:
@@ -299,7 +332,7 @@ def build_server():  # -> FastMCP
         robots.txt. For each bot: its role (training/retrieval/user), whether it has an
         explicit robots group, and whether the root path is blocked. Pass robots_text to
         check offline; otherwise it fetches /robots.txt from the url's host."""
-        return handlers.ai_bots_check(url=url or None, robots_text=robots_text or None)
+        return _checked(handlers.ai_bots_check(url=url or None, robots_text=robots_text or None))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_llms_txt_check(url: str, brand: str = "") -> dict[str, Any]:
@@ -308,7 +341,7 @@ def build_server():  # -> FastMCP
         proof/docs pages, size <= 60KB. Returns a 0-10 score, a letter grade, and the
         per-check breakdown. A missing llms.txt is itself a finding (no AI-ready context).
         Set brand to verify the project name is mentioned."""
-        return handlers.llms_txt_check(url=url, brand=brand or None)
+        return _checked(handlers.llms_txt_check(url=url, brand=brand or None))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_citability_check(
@@ -324,8 +357,8 @@ def build_server():  # -> FastMCP
         breaks preserved), not the raw whole-document text, since a flat text blob has no
         structure for the scorer to find. content_area configures that region — see
         seo_markdown_extract / seo_parse's content_area option for its keys."""
-        return handlers.citability_check(
-            url=url or None, text=text or None, content_area=content_area
+        return _checked(
+            handlers.citability_check(url=url or None, text=text or None, content_area=content_area)
         )
 
     @mcp.tool(annotations=fetch, structured_output=True)
@@ -341,8 +374,8 @@ def build_server():  # -> FastMCP
         records how the region was resolved for this page. Pass html to render offline,
         or url to fetch it first. content_area configures the region (root/include CSS
         selectors, tag/selector exclusions); defaults exclude <nav> and <footer>."""
-        return handlers.markdown_extract(
-            url=url or None, html=html or None, content_area=content_area
+        return _checked(
+            handlers.markdown_extract(url=url or None, html=html or None, content_area=content_area)
         )
 
     @mcp.tool(annotations=pure, structured_output=True)
@@ -355,7 +388,7 @@ def build_server():  # -> FastMCP
         one template, a footer never migrated on old pages, or a menu that renders
         differently under one language branch. Each page is {"url", "html"}, or
         {"url", "hash"} when the hash was already computed upstream."""
-        return handlers.boilerplate_report(pages=pages)
+        return _checked(handlers.boilerplate_report(pages=pages))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_social_meta_check(
@@ -365,7 +398,7 @@ def build_server():  # -> FastMCP
         preview to render: which required tags (og:title/type/url/image/image:alt,
         twitter:card/title/description/image/image:alt) are missing, and which recommended
         ones. Pass url to fetch and check, or hand in pre-extracted og/twitter dicts."""
-        return handlers.social_meta_check(url=url or None, og=og, twitter=twitter)
+        return _checked(handlers.social_meta_check(url=url or None, og=og, twitter=twitter))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_soft404_check(url: str) -> dict[str, Any]:
@@ -375,7 +408,7 @@ def build_server():  # -> FastMCP
         AND-logic: both 2xx/3xx -> soft-404 confirmed (warning); both 404/410 -> pass;
         anything else -> unknown. Screaming Frog cannot see this — it crawls known URLs,
         not invented ones, so this needs an active request."""
-        return handlers.soft404_check(url=url)
+        return _checked(handlers.soft404_check(url=url))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_log_analyze(path: str, verify_bots: bool = False) -> dict[str, Any]:
@@ -387,7 +420,7 @@ def build_server():  # -> FastMCP
         a spoofed User-Agent is one line, a forged PTR of google.com is not. That check
         hits the network, and if reverse DNS is unavailable it says so instead of
         declaring every bot fake."""
-        return handlers.log_analyze(path=path, verify_bots=verify_bots)
+        return _checked(handlers.log_analyze(path=path, verify_bots=verify_bots))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_regions_check(
@@ -404,7 +437,7 @@ def build_server():  # -> FastMCP
         schemes used at once. Satellite domains are invisible from the page — pass them in
         `extra`. Set render=true when the city switcher is drawn by JavaScript (needs
         Playwright) — on many large sites it is not in the raw HTML at all."""
-        return handlers.regions_check(url=url, extra=extra, limit=limit, render=render)
+        return _checked(handlers.regions_check(url=url, extra=extra, limit=limit, render=render))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_render_check(url: str, viewport: str = "desktop", wait: str = "load") -> dict[str, Any]:
@@ -417,7 +450,7 @@ def build_server():  # -> FastMCP
         Core Web Vitals from CrUX, and are labelled metrics_lab for that reason. Requires
         Playwright; if it is missing the tool says so and gives the install command instead
         of failing."""
-        return handlers.render_check(url=url, viewport=viewport, wait=wait)
+        return _checked(handlers.render_check(url=url, viewport=viewport, wait=wait))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_site_audit(
@@ -438,19 +471,24 @@ def build_server():  # -> FastMCP
         A tool that fails does NOT fail the audit: it lands in summary.tools_failed with
         its reason, so silence is never mistaken for a clean result. Feed the returned
         document straight into seo_report_build."""
-        return handlers.site_audit(
-            url=url, urls=urls, limit=limit, concurrency=concurrency, render=render, skip=skip
+        return _checked(
+            handlers.site_audit(
+                url=url, urls=urls, limit=limit, concurrency=concurrency, render=render, skip=skip
+            )
         )
 
     @mcp.tool(annotations=create_files, structured_output=True)
     def seo_report_build(audit: dict, fmt: str = "xlsx", out: str | None = None) -> dict[str, Any]:
         """Turn an audit document into a file: xlsx, docx, csv, md or json. Pass the dict
-        returned by seo_site_audit (or a path to its JSON). xlsx has four sheets with
-        filters and a live Excel chart — for work; docx is prose with headings — for the
-        client; csv is flat data for a tracker (two files: findings and pages); md is for
-        reading and for git. The generators compute nothing and reach no network: what is
-        not in the JSON does not appear in the report."""
-        return handlers.report_build(audit=audit, fmt=fmt, out=out)
+        returned by seo_site_audit, an SF Analyzer audit.json from sf_audit_run (or a
+        path to either one's JSON) — both schemas are recognized and normalized before
+        rendering. xlsx has four sheets with filters and a live Excel chart — for work;
+        docx is prose with headings — for the client; csv is flat data for a tracker (two
+        files: findings and pages); md is for reading and for git. The generators compute
+        nothing and reach no network: what is not in the JSON does not appear in the
+        report. A document matching neither schema is refused with ok: false naming the
+        mismatch, never rendered as an empty report."""
+        return _checked(handlers.report_build(audit=audit, fmt=fmt, out=out))
 
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_compare_crawls(before: Any, after: Any) -> dict[str, Any]:
@@ -462,7 +500,7 @@ def build_server():  # -> FastMCP
         "disappeared" look identical in a naive diff and mean opposite things.
         Warns when the two runs used different results-affecting settings, since
         part of the difference may be the configuration rather than the site."""
-        return handlers.compare_crawls(before=before, after=after)
+        return _checked(handlers.compare_crawls(before=before, after=after))
 
     # --- External data providers: demand, search results, traffic, and spend ---
 
@@ -476,7 +514,7 @@ def build_server():  # -> FastMCP
         good enough for a first cut, then top up exact via seo_keywords_exact. A
         multi-region request SUMS frequency, so query regions one at a time. Paid and
         quota-bound: 100 Wordstat requests per hour."""
-        return handlers.keywords_expand(phrase=phrase, limit=limit, regions=regions)
+        return _checked(handlers.keywords_expand(phrase=phrase, limit=limit, regions=regions))
 
     @mcp.tool(annotations=paid, structured_output=True)
     def seo_keywords_seasonality(
@@ -489,8 +527,10 @@ def build_server():  # -> FastMCP
         """Demand over time for one phrase (Yandex Wordstat dynamics). Dates are RFC3339,
         e.g. 2026-01-01T00:00:00Z. Use it to tell a dead query from a seasonal one before
         deciding a page is not worth building."""
-        return handlers.keywords_seasonality(
-            phrase=phrase, from_date=from_date, to_date=to_date, period=period, regions=regions
+        return _checked(
+            handlers.keywords_seasonality(
+                phrase=phrase, from_date=from_date, to_date=to_date, period=period, regions=regions
+            )
         )
 
     @mcp.tool(annotations=paid, structured_output=True)
@@ -501,7 +541,7 @@ def build_server():  # -> FastMCP
         API will not give you. Paid, spends account limits. The charge and task_id are
         journaled the moment the task is created, so a paid result is never lost: pass
         wait=false to get the task_id and collect the result later for free."""
-        return handlers.keywords_exact(keywords=keywords, region=region, wait=wait)
+        return _checked(handlers.keywords_exact(keywords=keywords, region=region, wait=wait))
 
     @mcp.tool(annotations=paid, structured_output=True)
     def seo_serp_fetch(
@@ -514,7 +554,7 @@ def build_server():  # -> FastMCP
         is materially more expensive and deliberately absent. A batch launches all operations
         at once and polls them together, so N queries take one batch's time, not N times
         one. Use it to see who actually ranks before promising a client a position."""
-        return handlers.serp_fetch(query=query, queries=queries, region=region, top=top)
+        return _checked(handlers.serp_fetch(query=query, queries=queries, region=region, top=top))
 
     @mcp.tool(annotations=paid, structured_output=True)
     def seo_google_keywords(
@@ -537,14 +577,16 @@ def build_server():  # -> FastMCP
 
         Default environment is `sandbox`: real response shape, fake data, nothing charged.
         Production is an explicit opt-in via DATAFORSEO_ENV=prod."""
-        return handlers.google_keywords(
-            keywords=keywords,
-            seed=seed,
-            location_code=location_code,
-            language=language,
-            country=country,
-            limit=limit,
-            difficulty=difficulty,
+        return _checked(
+            handlers.google_keywords(
+                keywords=keywords,
+                seed=seed,
+                location_code=location_code,
+                language=language,
+                country=country,
+                limit=limit,
+                difficulty=difficulty,
+            )
         )
 
     @mcp.tool(annotations=paid, structured_output=True)
@@ -558,19 +600,21 @@ def build_server():  # -> FastMCP
         """Google organic results for a query — who actually ranks. Same geo rules as
         seo_google_keywords: Russia and Belarus are not covered, use seo_serp_fetch (Yandex)
         for those. Default environment is sandbox."""
-        return handlers.google_serp(
-            query=query,
-            location_code=location_code,
-            language=language,
-            depth=depth,
-            country=country,
+        return _checked(
+            handlers.google_serp(
+                query=query,
+                location_code=location_code,
+                language=language,
+                depth=depth,
+                country=country,
+            )
         )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_metrika_counters() -> dict[str, Any]:
         """List the Yandex Metrika counters this token can see (id, name, site). Start here to
         get the counter_id the report tools need. Requires a Metrika OAuth token."""
-        return handlers.metrika_counters()
+        return _checked(handlers.metrika_counters())
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_metrika_setup(counter_id: str) -> dict[str, Any]:
@@ -579,7 +623,7 @@ def build_server():  # -> FastMCP
         parameter trimming, for instance), and with no goals configured there are no
         conversions in the data at all — so "zero conversion" in a report would be a
         consequence of setup, not a fact about the site."""
-        return handlers.metrika_setup(counter_id=counter_id)
+        return _checked(handlers.metrika_setup(counter_id=counter_id))
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_metrika_report(
@@ -598,16 +642,18 @@ def build_server():  # -> FastMCP
         forms like 30daysAgo. This is the missing half of an audit: a page can be technically
         perfect and get no visits at all. paginate=true walks every page but stops at
         100 000 rows, and says so via "capped"."""
-        return handlers.metrika_report(
-            counter_id=counter_id,
-            metrics=metrics,
-            dimensions=dimensions,
-            date1=date1,
-            date2=date2,
-            filters=filters,
-            sort=sort,
-            limit=limit,
-            paginate=paginate,
+        return _checked(
+            handlers.metrika_report(
+                counter_id=counter_id,
+                metrics=metrics,
+                dimensions=dimensions,
+                date1=date1,
+                date2=date2,
+                filters=filters,
+                sort=sort,
+                limit=limit,
+                paginate=paginate,
+            )
         )
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
@@ -615,7 +661,7 @@ def build_server():  # -> FastMCP
         """Authoritative tree of Yandex region IDs for the regions[] parameter. This is the
         only FREE Wordstat method, so it is not journaled. Note that a multi-region request
         SUMS frequency rather than reporting per region — query regions one at a time."""
-        return handlers.regions_tree(save_to=save_to)
+        return _checked(handlers.regions_tree(save_to=save_to))
 
     @mcp.tool(annotations=read_files, structured_output=True)
     def seo_spend_report(since: str | None = None) -> dict[str, Any]:
@@ -623,14 +669,14 @@ def build_server():  # -> FastMCP
         by day, read from the local journal. Estimating spend by eye has already missed the
         provider usage was recorded, so check here before and after a large run. since is
         YYYY-MM-DD."""
-        return handlers.spend_report(since=since)
+        return _checked(handlers.spend_report(since=since))
 
     @mcp.tool(annotations=read_files, structured_output=True)
     def seo_sources_doctor() -> dict[str, Any]:
         """Which external data sources are ready to use: whether each secret is present,
         where it is read from, and where the spend journal lives. Call this before planning
         a paid run — a missing key is cheaper to find now than mid-collection."""
-        return handlers.sources_doctor()
+        return _checked(handlers.sources_doctor())
 
     # Register Screaming Frog crawl-export tools on the same local connector.
     from seohead.servers import sf_mcp

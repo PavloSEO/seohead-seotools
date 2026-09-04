@@ -37,6 +37,17 @@ ROOT = Path(__file__).resolve().parent.parent
 NEEDS_LIVE_INFRASTRUCTURE = {
     "domain-profile",
     "mirror-check",
+    # Needs a headless browser. Playwright is an optional extra, so a runner without it gets a
+    # truthful ok:false ("playwright is not installed") — which, since #155 made ok:false reach
+    # the exit code, is now a non-zero exit rather than a silently swallowed success. That is the
+    # command working, not failing: the same distinction sf doctor and save-config already draw
+    # between "this environment lacks the dependency" and "this command is broken".
+    "render-check",
+    # Its target-domain matching deliberately rejects a bare IP address (the fixture server has
+    # no name, only 127.0.0.1) — the same "needs a real domain, not just an HTTP-answering host"
+    # gap as domain-profile and mirror-check above, just surfaced only once ok:false reached the
+    # exit code (#155) instead of being silently swallowed by an exit-0 success.
+    "backlinks-check",
     "keywords-expand",
     "keywords-seasonality",
     "keywords-exact",
@@ -109,6 +120,12 @@ def _seed_workdir(tmp_path: Path, base_url: str) -> None:
     images_dir = tmp_path / "images"
     images_dir.mkdir()
     shutil.copy(ROOT / "tests" / "doc_fixtures" / "site" / "image.png", images_dir / "image.png")
+    # docs/../deliverables.md's chain optimizes whatever `images-download --output-dir
+    # ./original` just wrote; its own `--urls` is an illustrative "<comma list>" placeholder
+    # that downloads nothing, so pre-seed the directory the second command reads from.
+    original_dir = tmp_path / "original"
+    original_dir.mkdir()
+    shutil.copy(ROOT / "tests" / "doc_fixtures" / "site" / "image.png", original_dir / "image.png")
 
 
 @pytest.fixture(scope="module")
@@ -181,3 +198,97 @@ def test_every_documented_command_was_exercised_above():
     assert commands, "no documented `seohead` commands were found at all"
     for command in commands:
         to_argv(command.raw)  # raises on the rare unparseable line
+
+
+def test_sf_run_then_report_build_renders_the_real_totals(tmp_path, monkeypatch):
+    """The exact two-line recipe docs/USAGE.md and docs/TOOLS.md document, checked on
+    *content* rather than exit code alone (#151): `sf run` writes findings under
+    ``issues``/``pages[].metrics``, and a renderer that only reads ``findings``/flat
+    page keys silently produces a confident 0/0/0/0 report for a site that failed
+    its audit. The parametrized test above already runs this recipe and only checks
+    that it exits 0 -- which a report full of zeros still does.
+    """
+    from seohead.cli import main as cli_main
+
+    monkeypatch.chdir(tmp_path)
+    shutil.copytree(ROOT / "examples", tmp_path / "examples")
+
+    assert (
+        cli_main(["sf", "run", "--exports-dir", "examples/exports", "--out", "report", "--tasks"])
+        == 0
+    )
+    audit = json.loads((tmp_path / "report" / "audit.json").read_text(encoding="utf-8"))
+    totals = audit["summary"]["totals"]
+    by_severity = audit["summary"]["by_severity"]
+    assert by_severity["critical"] > 0, "fixture must exercise a report with real findings"
+
+    docx_path = tmp_path / "client.docx"
+    assert (
+        cli_main(
+            [
+                "report-build",
+                "--audit",
+                "report/audit.json",
+                "--format",
+                "docx",
+                "--out",
+                str(docx_path),
+            ]
+        )
+        == 0
+    )
+    from docx import Document
+
+    doc = Document(str(docx_path))
+    summary_row = {row.cells[0].text: row.cells[1].text for row in doc.tables[0].rows}
+    assert summary_row["Pages checked"] == str(totals["urls_crawled"])
+    assert summary_row["Critical issues"] == str(by_severity["critical"])
+    assert summary_row["Warnings"] == str(by_severity["warning"])
+    assert summary_row["Notices"] == str(by_severity["notice"])
+    # Not just the summary table: the per-severity findings sections themselves,
+    # the part a zero-findings render dropped entirely.
+    paragraph_text = "\n".join(p.text for p in doc.paragraphs)
+    assert f"Critical — {by_severity['critical']}" in paragraph_text
+    first_issue = next(i for i in audit["issues"] if i["severity"] == "critical")
+    assert first_issue["message"] in paragraph_text
+
+    xlsx_path = tmp_path / "client.xlsx"
+    assert (
+        cli_main(
+            [
+                "report-build",
+                "--audit",
+                "report/audit.json",
+                "--format",
+                "xlsx",
+                "--out",
+                str(xlsx_path),
+            ]
+        )
+        == 0
+    )
+    from openpyxl import load_workbook
+
+    wb = load_workbook(xlsx_path)
+    ws = wb["Summary"]
+    metrics = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in range(6, 11)}
+    assert metrics["Pages checked"] == totals["urls_crawled"]
+    assert metrics["Total findings"] == totals["issues_total"]
+    assert metrics["Critical findings"] == by_severity["critical"]
+    assert metrics["Warnings"] == by_severity["warning"]
+    assert metrics["Notices"] == by_severity["notice"]
+    assert wb["Findings"].max_row - 1 == totals["issues_total"]
+    assert wb["Pages"].max_row - 1 == totals["urls_crawled"]
+
+
+def test_report_build_refuses_a_document_matching_neither_schema(tmp_path):
+    """Neither ``findings`` (site-audit) nor ``issues``+``pages`` (SF Analyzer): this is
+    not a document either renderer contract in this package produces, so it must be
+    refused loudly rather than rendered as an empty, confident report (#151).
+    """
+    from seohead.reports import build_report
+
+    result = build_report({"totally": "unrelated"}, fmt="docx", path=str(tmp_path / "out.docx"))
+    assert result["ok"] is False
+    assert "not recognized" in result["error"]
+    assert not (tmp_path / "out.docx").exists()

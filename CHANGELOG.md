@@ -4,6 +4,37 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix `report-build` silently rendering a zero-findings report for an SF Analyzer
+  `audit.json` (#151). The documented recipe — `sf run --tasks` piped into
+  `report-build --format docx`/`xlsx`/`csv`/`md` — read `findings`/flat page keys, which
+  the SF schema does not use (findings live under `issues`, page facts under
+  `pages[].metrics`); the mismatch produced a confident `0/0/0/0` summary for an audit
+  that found real critical issues, with no findings sections at all. `build_report` now
+  recognizes both the native `seohead.site-audit/1` shape and the SF Analyzer shape,
+  normalizing the latter into the flat contract the four human-facing writers already
+  understand before rendering. `--format json` is untouched — it already relayed the
+  original document correctly, which is what proved the data was never missing. A
+  document matching neither contract is refused with `ok: False` naming the schema
+  mismatch instead of being rendered as an empty deliverable, and the dead
+  `if ... : pass` conditional that looked like this validation but always no-opped is
+  gone. `tests/test_docs_commands_execute.py` now asserts the documented recipe's
+  rendered summary against `audit.json`'s own totals, not just its exit code.
+- Close two money-safety gaps in `seohead/data_sources/` (#157, #159). `geo_guard` checked only
+  the advisory `country` string, so `search_volume`/`keyword_ideas`/`keyword_difficulty`/`serp`
+  could still reach DataForSEO's live endpoint for `location_code=2643` (Russia) or `2112`
+  (Belarus) whenever a caller supplied the numeric geo-target without also filling in `country`;
+  the guard now checks `location_code` first, since that is the field actually billed on. Separately,
+  a network-level exception (`URLError`/`TimeoutError`/`SSLError`) during a billed call — DataForSEO's
+  `post`, Arsenkin's `/set`, and Yandex Cloud's `wordstat.topRequests`/`wordstat.dynamics`/
+  `web.searchAsync` — used to retry the identical payload with no idempotency key and log only the
+  attempt that finally returned a response. None of the three providers offers an idempotency
+  mechanism for these endpoints, so a lost response is no longer retried: the attempt is recorded
+  in the spend ledger (cost unknown, flagged `attempt_failed: network_error`) and the call fails
+  outright instead of risking a second charge. Idempotent reads (Arsenkin `/check`/`/get`, Yandex
+  Cloud operation polling) are unaffected and keep retrying. `yandex_cloud.WebSearch.search_batch`
+  isolates a lost submission to its own query instead of aborting the batch. `metrika.py` retries
+  network errors the same way but is not billed money and was left unchanged; flagged for a
+  follow-up if its Logs API export creation should get the same treatment for quota reasons.
 - Close a DNS-rebinding gap in `http_client()` (#142): `pinned_target()`, the fix for the
   TOCTOU window described in #14, protected only `collect.py`'s list-mode fetch — the
   other fourteen call sites, including `spider.py`'s `crawl-site` engine, let httpx resolve
@@ -14,6 +45,20 @@ All notable public changes are documented here.
   request and on every redirect hop, keeping the hostname only for the `Host` header and
   TLS SNI — so the fix is structural rather than a discipline every caller had to remember.
   `SEOHEAD_ALLOW_PRIVATE_NETWORKS`/`SEOHEAD_ALLOW_PRIVATE_HOSTS` are unchanged.
+- Fix the CLI/MCP exit-code contract for a handler's own-reported failure, and complete
+  `SOURCE_FLAGS` (#155, #156). A handler returning `{"ok": false, ...}` — the tool layer's
+  documented way of reporting a fetch, parse, or provider failure without raising — used to
+  print that JSON and exit 0 on the CLI and return a normal (non-`isError`) result over MCP,
+  so a pipeline gating on `$?` or a client checking `isError` alone could not detect it.
+  `cli.py` now exits 1 for that case (`log-scan`'s own exit 2 for a self-contradicting run
+  stays a separate, documented signal — see `docs/USAGE.md`), and `mcp_server.py` raises
+  `ToolError` from a shared `_checked()` wrapper so a client sees `isError` instead. Both call
+  a single `handlers.handler_failed()` so the two interfaces cannot drift on what counts as a
+  failure. Separately, `SOURCE_FLAGS` gained `--phrase`, `--keywords`, `--query`/`--queries`,
+  `--seed`, `--counter`, and `--before`/`--after` — each already identifies a command's whole
+  input the way `--url` does, but was missing, so a per-line loop over any of them silently
+  processed only its first line. The set is now built by `_source_flag()` at the point each
+  flag is declared instead of hand-listed separately, so it cannot drift out of sync again.
 - Expand `docs/scenarios/` from ten chains to fifty-six, grouped by the question a reader
   arrives with (#120). Which scenarios exist is decided by the coverage map rather than by
   taste: each declares the catalogued issues it resolves, and

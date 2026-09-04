@@ -71,7 +71,15 @@ class ArsenkinClient:
         self.token = token or arsenkin_token()
         self.limiter = limiter or RateLimiter()
 
-    def _post(self, endpoint: str, body: dict, retries: int = 5) -> Any:
+    def _post(self, endpoint: str, body: dict, retries: int = 5, *, billed: bool = False) -> Any:
+        """POST to an endpoint; ``billed`` marks one that creates and charges a task.
+
+        HTTP 429 means the provider replied without creating a task, so retrying it is safe and
+        unchanged. A network-level exception is different: the response was lost, not refused,
+        and Arsenkin offers no idempotency key to deduplicate a resent ``/set``. For a billed
+        endpoint the attempt is logged and the call fails outright instead of resending a payload
+        that may already have created and charged a task.
+        """
         url = f"{BASE}/{endpoint}"
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         last: ArsenkinError | None = None
@@ -98,6 +106,18 @@ class ArsenkinClient:
                     continue
                 raise ArsenkinError(str(exc.code), raw)  # noqa: B904 - Preserve the provider body.
             except urllib.error.URLError as exc:
+                if billed:
+                    spend.record(
+                        SOURCE,
+                        endpoint,
+                        cost=0.0,
+                        unit="limits",
+                        extra={"attempt_failed": "network_error", "detail": str(exc)},
+                    )
+                    raise ArsenkinError(
+                        "NETWORK",
+                        f"{endpoint}: response lost; task may already be billed: {exc}",
+                    ) from None
                 last = ArsenkinError("NETWORK", str(exc))
                 time.sleep(2**attempt + 1)
                 continue
@@ -128,7 +148,7 @@ class ArsenkinClient:
 
     def set_task(self, tools_name: str, data: dict) -> dict:
         """Create a task and immediately log its charge together with ``task_id``."""
-        result = self._post("set", {"tools_name": tools_name, "data": data})
+        result = self._post("set", {"tools_name": tools_name, "data": data}, billed=True)
         task_id, cost = result.get("task_id"), result.get("cost")
         spend.record(
             SOURCE,
