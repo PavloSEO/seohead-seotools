@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from seohead.sf.core import sitemap as S
+from seohead.sf.core import sitemap_coverage as S
 
 NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
 
