@@ -41,7 +41,9 @@ def test_shingles_overlap():
     assert sh == [("a", "b", "c"), ("b", "c", "d")]
 
 
-def test_find_duplicates_clusters_similar():
+def test_find_duplicates_reports_exact_pair_as_exact_not_near():
+    # /page-a and /page-a-copy are byte-for-byte identical text: an exact
+    # duplicate, not a "near" one, so it must not double-report as a cluster.
     items = [
         {"id": "/page-a", "text": TEXT_A},
         {"id": "/page-a-copy", "text": TEXT_A_COPY},
@@ -51,11 +53,59 @@ def test_find_duplicates_clusters_similar():
     r = D.find_duplicates(items)
     assert r["ok"] is True
     assert r["count"] == 4
-    # One cluster contains A and its copy; B and the contact page remain unique.
-    assert len(r["clusters"]) == 1
-    cluster = r["clusters"][0]
-    assert set(cluster["members"]) == {"/page-a", "/page-a-copy"}
-    assert cluster["min_similarity"] == 1.0
+    assert r["clusters"] == []
+    assert len(r["exact_duplicates"]) == 1
+    assert set(r["exact_duplicates"][0]["members"]) == {"/page-a", "/page-a-copy"}
+
+
+def test_near_cluster_found_while_exact_pair_excluded_from_it():
+    # A known near-duplicate cluster (similar wording, not identical) alongside
+    # a known exact-duplicate pair: the near pass must find the former and
+    # must not also list the latter as a cluster.
+    common = "the quick brown fox jumps over the lazy dog every single morning near the office"
+    near_1 = common + " during the alpha release cycle"
+    near_2 = common + " during the beta release cycle"
+    items = [
+        {"id": "/near-1", "text": near_1},
+        {"id": "/near-2", "text": near_2},
+        {"id": "/exact-a", "text": TEXT_A},
+        {"id": "/exact-b", "text": TEXT_A_COPY},
+    ]
+    r = D.find_duplicates(items, threshold=0.8)
+    assert r["ok"] is True
+    cluster_members = {frozenset(c["members"]) for c in r["clusters"]}
+    assert frozenset({"/near-1", "/near-2"}) in cluster_members
+    assert not any({"/exact-a", "/exact-b"} <= set(c["members"]) for c in r["clusters"])
+    assert {"/exact-a", "/exact-b"} == set(r["exact_duplicates"][0]["members"])
+
+
+def test_rerun_with_new_threshold_is_pure_and_needs_no_new_data():
+    # A stored corpus can be re-run at a different threshold at zero request
+    # cost because find_duplicates never performs I/O.
+    items = [{"id": "1", "text": TEXT_A}, {"id": "2", "text": TEXT_B}]
+    first = D.find_duplicates(items, threshold=0.5)
+    second = D.find_duplicates(items, threshold=0.99)
+    assert first == D.find_duplicates(items, threshold=0.5)  # deterministic
+    assert second != first
+
+
+def test_only_indexable_excludes_non_indexable_items_by_default():
+    items = [
+        {"id": "/canonical-target", "text": TEXT_A, "indexable": True},
+        {"id": "/canonicalized-twin", "text": TEXT_A_COPY, "indexable": False},
+    ]
+    default = D.find_duplicates(items)
+    assert default["count"] == 1
+    assert default["excluded_non_indexable"] == 1
+    assert default["exact_duplicates"] == []
+
+    audit_canonicals = D.find_duplicates(items, only_indexable=False)
+    assert audit_canonicals["count"] == 2
+    assert audit_canonicals["excluded_non_indexable"] == 0
+    assert set(audit_canonicals["exact_duplicates"][0]["members"]) == {
+        "/canonical-target",
+        "/canonicalized-twin",
+    }
 
 
 def test_threshold_respected():

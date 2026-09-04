@@ -5,7 +5,9 @@ transparently decodes gzip/deflate/br), then extracts the on-page SEO
 signals a specialist cares about: title, meta description, canonical,
 robots, Open Graph / Twitter tags, the H1..H6 heading outline, JSON-LD
 blocks, links (with rel / nofollow / external flags), and the collapsed
-visible body text with a word count.
+visible body text with a word count. Word count is scoped to a configurable
+content area (see ``content_area.py``) so navigation and footer boilerplate
+does not inflate it; link discovery always covers the whole document.
 
 BeautifulSoup (``features="lxml"``) provides robust HTML parsing. Relative URLs
 (links, canonical) are resolved against the
@@ -26,6 +28,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from seohead.recon.net import http_client
+from seohead.tools.content_area import extract_area_text, resolve_content_area
 
 # Browser-like User-Agent: without it, bot protection (Cloudflare et al.)
 # tends to serve a challenge/block page instead of the real document.
@@ -552,9 +555,21 @@ def parse_html(html: str, final_url: str, options: dict | None = None) -> dict[s
     if opts["text"]:
         text = _extract_text(soup)
         result["text"] = text
-        result["word_count"] = len(text.split())
+        # Word count is scoped to the content area (nav/footer excluded by
+        # default) so a mega-menu can't make a thin page look substantial;
+        # "text" above stays whole-body for callers that rely on it (e.g.
+        # citability, price/rating heuristics). Link discovery never sees the
+        # resolved root, so restricting text never restricts the crawl.
+        content_config = options.get("content_area") if isinstance(options, dict) else None
+        content_root, strategy = resolve_content_area(soup, content_config)
+        content_text = extract_area_text(content_root)
+        result["content_text"] = content_text
+        result["content_area_strategy"] = strategy
+        result["word_count"] = len(content_text.split())
     else:
         result["text"] = ""
+        result["content_text"] = ""
+        result["content_area_strategy"] = None
         result["word_count"] = 0
 
     return result
@@ -581,12 +596,14 @@ def parse_url(url: str, options: dict | None = None) -> dict[str, Any]:
 
     ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
     ``headings``, ``jsonld``, ``links`` and ``text`` (all default True). A
-    ``timeout`` (seconds) may also be provided.
+    ``timeout`` (seconds) may also be provided, and a ``content_area`` dict
+    configures the region ``word_count`` is scoped to — see
+    ``content_area.resolve_content_area`` for its keys.
 
     On success returns a dict with keys: ``url``, ``final_url``,
     ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
     ``robots``, ``og``, ``twitter``, ``headings``, ``jsonld``, ``links``,
-    ``text`` and ``word_count``.
+    ``text``, ``content_text``, ``content_area_strategy`` and ``word_count``.
 
     On any fetch or parse error returns ``{"url", "ok": False, "error"}``
     rather than raising.

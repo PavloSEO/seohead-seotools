@@ -408,13 +408,21 @@ def backlinks_check(
 
 
 def duplicate_check(
-    items: list[dict] | None = None, threshold: float = 0.92, with_fingerprints: bool = False
+    items: list[dict] | None = None,
+    threshold: float = 0.92,
+    with_fingerprints: bool = False,
+    only_indexable: bool = True,
 ) -> dict[str, Any]:
     if not items:
         raise ValueError("items[] required (list of {id, text})")
     from seohead.tools import duplicate as dup_core
 
-    return dup_core.find_duplicates(items, threshold=threshold, with_fingerprints=with_fingerprints)
+    return dup_core.find_duplicates(
+        items,
+        threshold=threshold,
+        with_fingerprints=with_fingerprints,
+        only_indexable=only_indexable,
+    )
 
 
 def mirror_check(url: str | None = None, timeout: float = 12.0) -> dict[str, Any]:
