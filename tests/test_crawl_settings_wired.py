@@ -437,20 +437,10 @@ def test_default_sitemaps_auto_discover_does_not_seed(monkeypatch):
 # this PR (canonical-chasing and cross-host crawling are new capabilities, not
 # a hardcode-to-config move). Do not add a new setting to this set — wire it
 # and point at its test above, or delete it.
-_KNOWN_UNWIRED_GAP = frozenset(
-    {
-        "discovery.hyperlinks.store",
-        "discovery.hyperlinks.crawl",
-        "discovery.canonicals.store",
-        "discovery.canonicals.crawl",
-        "discovery.redirects.store",
-        "discovery.redirects.crawl",
-        "discovery.external.store",
-        "discovery.external.crawl",
-        "http.headers",
-        "speed.adaptive",
-    }
-)
+# Empty, and it must stay that way: every DEFAULTS path is now read by something. The set is
+# kept rather than deleted because it is the shape a future "validated but unwired" setting
+# would have to be added to, and adding to it is meant to be an argued exception (#63, #91).
+_KNOWN_UNWIRED_GAP: frozenset[str] = frozenset()
 
 
 def test_every_default_path_is_exercised_by_a_test():
@@ -473,3 +463,209 @@ def test_every_default_path_is_exercised_by_a_test():
 def test_the_known_gap_exemption_names_only_real_settings():
     """The exemption above must shrink, never grow, as settings get wired."""
     assert set(_flatten(DEFAULTS)) >= _KNOWN_UNWIRED_GAP
+
+
+# ── http.headers ─────────────────────────────────────────────────────────────
+
+
+def _header_recording_client():
+    class Client:
+        def __init__(self):
+            self.sent: list[dict] = []
+
+        def get(self, target, *, headers, extensions):
+            self.sent.append(dict(headers))
+            return FakeResponse("<html><head><title>t</title></head><body>x</body></html>")
+
+    return Client()
+
+
+def test_http_headers_configured_are_sent_on_every_request(monkeypatch):
+    import seohead.crawl.collect as collect_mod
+
+    monkeypatch.setattr(collect_mod, "validate_url", lambda u: u)
+    monkeypatch.setattr(collect_mod, "pinned_target", lambda u: (u, {}, {}))
+    client = _header_recording_client()
+
+    fetch_one(
+        "https://example.com/",
+        client=client,
+        extra_headers={"X-Audit": "seohead", "Accept-Language": "be"},
+    )
+
+    assert client.sent[0]["X-Audit"] == "seohead"
+    assert client.sent[0]["Accept-Language"] == "be"
+
+
+def test_default_http_headers_add_nothing_beyond_the_user_agent(monkeypatch):
+    import seohead.crawl.collect as collect_mod
+
+    monkeypatch.setattr(collect_mod, "validate_url", lambda u: u)
+    monkeypatch.setattr(collect_mod, "pinned_target", lambda u: (u, {}, {}))
+    client = _header_recording_client()
+
+    fetch_one("https://example.com/", client=client)
+
+    assert set(client.sent[0]) == {"User-Agent"}
+
+
+# ── speed.adaptive ───────────────────────────────────────────────────────────
+
+
+def test_adaptive_off_keeps_the_configured_delay_whatever_the_origin_does():
+    throttle = Throttle(min_delay=0.5, max_delay=MAX_DELAY_S, max_concurrency=4, adaptive=False)
+
+    throttle.record_response(latency_s=9.0, ok=True)
+    throttle.record_timeout()
+    throttle.record_server_error(429)
+
+    assert throttle.delay == 0.5
+    # The give-up counters are a separate mechanism and keep running: a non-adaptive crawl
+    # still has to stop when the origin stops answering.
+    assert throttle.timeouts == 1
+    assert throttle.server_errors == 1
+
+
+def test_adaptive_on_is_the_default_and_still_widens_on_a_slow_origin():
+    throttle = Throttle(min_delay=0.5, max_delay=MAX_DELAY_S, max_concurrency=4)
+    throttle.record_response(latency_s=9.0, ok=True)
+    assert throttle.delay > 0.5
+
+
+# ── discovery.hyperlinks.store / .crawl ──────────────────────────────────────
+
+
+_TWO_PAGE_SITE = {
+    "https://example.com/": page("/a"),
+    "https://example.com/a": page(),
+    "https://example.com/robots.txt": ROBOTS_OK,
+}
+
+
+def test_hyperlinks_crawl_off_records_the_edge_but_never_fetches_it():
+    result = _crawl(_TWO_PAGE_SITE, crawl_hyperlinks=False)
+    assert not _fetched(result, "https://example.com/a")
+    assert [edge.destination for edge in result.links] == ["https://example.com/a"]
+    assert result.excluded.get("hyperlink_discovery_off") == 1
+
+
+def test_hyperlinks_store_off_drops_the_edge_but_still_fetches_the_page():
+    result = _crawl(_TWO_PAGE_SITE, store_hyperlinks=False)
+    assert _fetched(result, "https://example.com/a")
+    assert result.links == []
+
+
+def test_both_hyperlink_defaults_store_and_follow():
+    result = _crawl(_TWO_PAGE_SITE)
+    assert _fetched(result, "https://example.com/a")
+    assert [edge.destination for edge in result.links] == ["https://example.com/a"]
+
+
+# ── discovery.external.store ─────────────────────────────────────────────────
+
+
+_SITE_WITH_AN_OUTBOUND_LINK = {
+    "https://example.com/": page("/a", "https://other.example/x"),
+    "https://example.com/a": page(),
+    "https://example.com/robots.txt": ROBOTS_OK,
+}
+
+
+def test_external_store_off_drops_the_off_host_edge_only():
+    result = _crawl(_SITE_WITH_AN_OUTBOUND_LINK, store_external_links=False)
+    destinations = [edge.destination for edge in result.links]
+    assert destinations == ["https://example.com/a"]
+
+
+def test_external_store_default_keeps_the_off_host_edge_without_fetching_it():
+    result = _crawl(_SITE_WITH_AN_OUTBOUND_LINK)
+    destinations = [edge.destination for edge in result.links]
+    assert "https://other.example/x" in destinations
+    assert not _fetched(result, "https://other.example/x")
+
+
+# ── discovery.redirects.crawl ────────────────────────────────────────────────
+
+
+_SITE_WITH_A_REDIRECT = {
+    "https://example.com/": page("/old"),
+    "https://example.com/old": FakeResponse(
+        "", status_code=301, headers={"location": "https://example.com/new"}
+    ),
+    "https://example.com/new": page(),
+    "https://example.com/robots.txt": ROBOTS_OK,
+}
+
+
+def test_redirects_crawl_off_never_follows_a_redirect_target():
+    result = _crawl(_SITE_WITH_A_REDIRECT, crawl_redirects=False)
+    assert _fetched(result, "https://example.com/old")
+    assert not _fetched(result, "https://example.com/new")
+
+
+def test_redirects_crawl_default_follows_the_target():
+    result = _crawl(_SITE_WITH_A_REDIRECT)
+    assert _fetched(result, "https://example.com/new")
+
+
+# ── the handler threads all of them ──────────────────────────────────────────
+
+
+def test_handler_threads_the_remaining_settings_into_the_spider(monkeypatch, tmp_path):
+    """discovery.hyperlinks.store, discovery.hyperlinks.crawl, discovery.external.store,
+    discovery.redirects.crawl, http.headers and speed.adaptive (#91)."""
+    import seohead.crawl.spider as spider_mod
+    from seohead.servers import handlers
+
+    captured: dict = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return SpiderResult()
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+    config = tmp_path / "crawl.json"
+    config.write_text(
+        json.dumps(
+            {
+                "http": {"headers": {"X-Audit": "seohead"}},
+                "speed": {"adaptive": False},
+                "discovery": {
+                    "hyperlinks": {"store": False, "crawl": False},
+                    "external": {"store": False},
+                    "redirects": {"crawl": False},
+                },
+            }
+        )
+    )
+
+    handlers.crawl_site(url="https://example.com/", config=str(config))
+
+    assert captured["extra_request_headers"] == {"X-Audit": "seohead"}
+    assert captured["adaptive"] is False
+    assert captured["store_hyperlinks"] is False
+    assert captured["crawl_hyperlinks"] is False
+    assert captured["store_external_links"] is False
+    assert captured["crawl_redirects"] is False
+
+
+def test_handler_threads_headers_and_adaptive_into_collect_urls(monkeypatch, tmp_path):
+    import seohead.crawl.collect as collect_mod
+    from seohead.servers import handlers
+
+    captured: dict = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return CrawlResult()
+
+    monkeypatch.setattr(collect_mod, "collect_urls", fake)
+    config = tmp_path / "crawl.json"
+    config.write_text(
+        json.dumps({"http": {"headers": {"X-Audit": "s"}}, "speed": {"adaptive": False}})
+    )
+
+    handlers.crawl_site(urls=["https://example.com/"], config=str(config))
+
+    assert captured["extra_request_headers"] == {"X-Audit": "s"}
+    assert captured["adaptive"] is False

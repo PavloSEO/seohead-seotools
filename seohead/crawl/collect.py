@@ -447,6 +447,8 @@ def collect_urls(
     max_delay_seconds: float = MAX_DELAY_S,
     parse_options: dict[str, Any] | None = None,
     cache: ResponseCache | None = None,
+    extra_request_headers: dict[str, str] | None = None,
+    adaptive: bool = True,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
@@ -464,7 +466,7 @@ def collect_urls(
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
-    throttle = Throttle(min_delay=min_delay, max_delay=max_delay_seconds)
+    throttle = Throttle(min_delay=min_delay, max_delay=max_delay_seconds, adaptive=adaptive)
     started = clock()
 
     seen: set[str] = set()
@@ -506,9 +508,11 @@ def collect_urls(
             seen.add(url)
 
             host = (urlsplit(url).hostname or "").lower()
-            extra_headers = (
-                resolve_credential_headers(credential_headers, host) if credential_headers else None
-            )
+            # http.headers goes on every request; a credential is bound to one host.
+            extra_headers = dict(extra_request_headers or {})
+            if credential_headers:
+                extra_headers.update(resolve_credential_headers(credential_headers, host) or {})
+            extra_headers = extra_headers or None
             record, _ = fetch_one(
                 url,
                 client=client,

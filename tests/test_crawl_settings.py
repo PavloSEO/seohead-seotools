@@ -55,11 +55,14 @@ def test_results_affecting_names_only_real_settings():
     assert every >= cfg.RESULTS_AFFECTING, sorted(cfg.RESULTS_AFFECTING - every)
 
 
-def test_store_and_crawl_are_independent_for_every_link_type():
-    """Two different questions: keep it in the report, versus request it."""
+def test_every_discovery_key_is_store_or_crawl_and_nothing_else():
+    """Two different questions: keep it in the report, versus request it. A link type carries
+    only the half that changes an outcome — a redirect has no LinkEdge of its own to withhold,
+    and an off-host link is never fetched by a single-host crawler (#91)."""
     for link_type, pair in cfg.DEFAULTS["discovery"].items():
         if isinstance(pair, dict):
-            assert set(pair) == {"store", "crawl"}, link_type
+            assert pair, link_type
+            assert set(pair) <= {"store", "crawl"}, link_type
 
 
 # ── precedence ──────────────────────────────────────────────────────────────
