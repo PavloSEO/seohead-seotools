@@ -77,19 +77,23 @@ def build_server():  # -> FastMCP
         max_urls: int = 200,
         max_depth: int = 5,
         min_delay: float = 0.5,
-        respect_robots: bool = True,
+        robots: str = "respect",
         out_dir: str | None = None,
     ) -> dict[str, Any]:
         """Crawl a site from a start URL by following links, then audit the result
         through the same checks used for Screaming Frog exports. Same host only,
-        robots.txt respected, politeness adapts to the origin. Checks whose evidence
-        a native crawl cannot produce are reported as skipped, never as clean."""
+        politeness adapts to the origin. Checks whose evidence a native crawl
+        cannot produce are reported as skipped, never as clean.
+
+        ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
+        anyway, and report what a compliant crawler would have missed) or
+        "ignore" (do not fetch it at all)."""
         return handlers.crawl_site(
             url=url,
             max_urls=max_urls,
             max_depth=max_depth,
             min_delay=min_delay,
-            respect_robots=respect_robots,
+            robots=robots,
             out_dir=out_dir,
         )
 
