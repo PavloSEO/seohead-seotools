@@ -4,6 +4,19 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add eight post-crawl second-pass computations that only become answerable once a crawl is
+  complete (issue #15): an internal link score computed from the `all_inlinks` edge graph
+  (`LOW_LINK_SCORE`); a canonical target no hyperlink ever points to (`UNLINKED_CANONICAL`);
+  `rel="next"` loop and unlinked-series detection (`PAGINATION_LOOP`,
+  `UNLINKED_PAGINATION_SERIES`); hreflang reciprocity (`HREFLANG_MISSING_RETURN_LINK`);
+  inlink-composition aggregates (`ONLY_NOFOLLOW_INLINKS`, `ONLY_NONINDEXABLE_SOURCE_INLINKS`);
+  the concrete shortest discovery path from the crawl seed (`DEEP_DISCOVERY_PATH`); a
+  self-computed mixed-content fallback (`INSECURE_SUBRESOURCE`); and near-duplicate clustering
+  from stored page text (`NEAR_DUPLICATE`/`DUPLICATE_BY_HASH`), wiring `tools/duplicate.py` and
+  `tools/content_area.py` into the audit for the first time. `ORPHAN_PAGE`, `SITEMAP_ORPHAN` and
+  the two new "unlinked" checks are now withheld — reported as a named skip, not a finding — on a
+  crawl the aggregator has marked partial, since "nothing links here" is unprovable on a
+  truncated crawl. Registry grows from 104 to 113 checks.
 - Audit the crawl registry against an external technical-SEO checklist and close eight cheap,
   verified gaps: five hreflang checks (invalid language/region codes, missing self-reference,
   missing x-default, duplicate entries, non-canonical targets), two robots directives
