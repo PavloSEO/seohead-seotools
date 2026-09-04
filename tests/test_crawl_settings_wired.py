@@ -1,0 +1,475 @@
+"""Every setting #63 found "read by nothing" must change what a crawl does.
+
+Same discipline as ``tests/test_crawl_scope.py``: one test proves the
+configured value changes the outcome, one proves the default's own behaviour
+still holds. No network — every response is a fake.
+
+Settings already covered elsewhere by key name rather than by dotted path
+(the coverage canary below greps for the dotted path literally):
+``scope.exclude_hosts``, ``scope.include_patterns`` -> tests/test_crawl_scope.py.
+``limits.max_crawl_seconds`` ->
+tests/test_crawl_resume.py::test_max_seconds_stops_the_crawl_with_a_duration_finish_reason
+(wired by the resumable-crawl work, not by this file).
+"""
+
+from __future__ import annotations
+
+import json
+
+from seohead.crawl.collect import CrawlResult, collect_urls, fetch_one
+from seohead.crawl.settings import DEFAULTS, _flatten
+from seohead.crawl.spider import SpiderResult, crawl_site
+from seohead.crawl.throttle import MAX_DELAY_S, Throttle
+from tests.test_crawl_spider import FakeResponse, _fetcher, page
+
+
+def _crawl(mapping, **kw):
+    kw.setdefault("sleeper", lambda _s: None)
+    kw.setdefault("min_delay", 0)
+    return crawl_site("https://example.com/", fetcher=_fetcher(mapping), **kw)
+
+
+def _fetched(result, url: str) -> bool:
+    return any(p.url == url for p in result.pages)
+
+
+ROBOTS_OK = FakeResponse("User-agent: *\nDisallow:\n", headers={"content-type": "text/plain"})
+
+
+# ── limits.max_response_bytes ────────────────────────────────────────────────
+
+
+def test_max_response_bytes_configured_skips_parsing_a_large_page():
+    big = "<html><head><title>t</title></head><body>" + ("x" * 200) + "</body></html>"
+    record, parsed = fetch_one(
+        "https://example.com/", fetcher=lambda u: FakeResponse(big), max_response_bytes=50
+    )
+    assert parsed is None
+    assert record.error == "response too large to parse"
+    assert record.title == ""
+
+
+def test_default_max_response_bytes_parses_a_normal_page():
+    body = "<html><head><title>t</title></head><body><h1>t</h1></body></html>"
+    record, parsed = fetch_one("https://example.com/", fetcher=lambda u: FakeResponse(body))
+    assert parsed is not None
+    assert record.title == "t"
+
+
+# ── speed.max_delay_seconds ──────────────────────────────────────────────────
+
+
+def test_max_delay_seconds_configured_caps_the_backoff_lower():
+    t = Throttle(min_delay=0, max_delay=2.0)
+    for _ in range(4):
+        t.record_timeout()
+    assert t.delay == 2.0
+
+
+def test_default_max_delay_seconds_allows_a_much_higher_backoff():
+    t = Throttle(min_delay=0)
+    for _ in range(4):
+        t.record_timeout()
+    assert t.delay == MAX_DELAY_S
+
+
+# ── robots.user_agent_token ──────────────────────────────────────────────────
+
+SITE_TOKEN = {
+    "https://example.com/robots.txt": FakeResponse(
+        "User-agent: SpecialBot\nDisallow: /private/\nUser-agent: *\nDisallow:\n",
+        headers={"content-type": "text/plain"},
+    ),
+    "https://example.com/": page("/private/secret"),
+    "https://example.com/private/secret": page(),
+}
+
+
+def test_robots_user_agent_token_configured_matches_its_own_group():
+    result = _crawl(SITE_TOKEN, robots_token="SpecialBot")
+    assert not _fetched(result, "https://example.com/private/secret")
+    assert result.excluded.get("blocked_by_robots") == 1
+
+
+def test_default_robots_user_agent_token_falls_back_to_the_wildcard_group():
+    result = _crawl(SITE_TOKEN)
+    assert _fetched(result, "https://example.com/private/secret")
+
+
+# ── robots.unavailable_means_stop ────────────────────────────────────────────
+
+SITE_ROBOTS_DOWN = {
+    "https://example.com/robots.txt": TimeoutError("connection timed out"),
+    "https://example.com/": page("/a"),
+    "https://example.com/a": page(),
+}
+
+
+def test_default_unavailable_means_stop_stops_the_crawl():
+    result = _crawl(SITE_ROBOTS_DOWN)
+    assert result.finish_reason == "robots_unavailable"
+    assert result.partial is True
+    assert result.pages == []
+
+
+def test_unavailable_means_stop_configured_false_continues_unrestricted():
+    result = _crawl(SITE_ROBOTS_DOWN, unavailable_means_stop=False)
+    assert _fetched(result, "https://example.com/")
+    assert _fetched(result, "https://example.com/a")
+
+
+# ── speed.stop_after_consecutive_timeouts ────────────────────────────────────
+
+SITE_TIMEOUTS = {
+    "https://example.com/robots.txt": ROBOTS_OK,
+    "https://example.com/": page(*[f"/{c}" for c in "abcdefg"]),
+    **{f"https://example.com/{c}": TimeoutError("read timed out") for c in "abcdefg"},
+}
+
+
+def test_stop_after_consecutive_timeouts_configured_stops_earlier():
+    result = _crawl(SITE_TIMEOUTS, stop_after_consecutive_timeouts=2)
+    assert result.finish_reason == "errors"
+    assert result.partial is True
+    assert len(result.pages) == 3  # start page + 2 timed-out children
+
+
+def test_default_stop_after_consecutive_timeouts_allows_more_failures_first():
+    result = _crawl(SITE_TIMEOUTS)
+    assert result.finish_reason == "errors"
+    assert len(result.pages) == 6  # start page + 5 timed-out children (default limit)
+
+
+# ── limits.max_url_length ────────────────────────────────────────────────────
+
+LONG_PATH = "/" + ("p" * 60)
+SITE_URL_LENGTH = {
+    "https://example.com/robots.txt": ROBOTS_OK,
+    "https://example.com/": page("/short", LONG_PATH),
+    "https://example.com/short": page(),
+    f"https://example.com{LONG_PATH}": page(),
+}
+
+
+def test_max_url_length_configured_excludes_a_long_discovered_link():
+    result = _crawl(SITE_URL_LENGTH, max_url_length=40)
+    assert not _fetched(result, f"https://example.com{LONG_PATH}")
+    assert _fetched(result, "https://example.com/short")
+    assert result.excluded.get("url_too_long") == 1
+
+
+def test_default_max_url_length_allows_a_normal_length_url():
+    result = _crawl(SITE_URL_LENGTH)
+    assert _fetched(result, f"https://example.com{LONG_PATH}")
+
+
+def test_list_mode_max_url_length_configured_skips_a_long_url():
+    short_url = "https://example.com/a"
+    long_url = "https://example.com/" + ("b" * 3000)
+    mapping = {short_url: FakeResponse("<html><head><title>t</title></head><body></body></html>")}
+    result = collect_urls([short_url, long_url], fetcher=lambda u: mapping[u], max_url_length=50)
+    assert [p.url for p in result.pages] == [short_url]
+
+
+def test_default_list_mode_max_url_length_allows_a_normal_url():
+    short_url = "https://example.com/a"
+    mapping = {short_url: FakeResponse("<html><head><title>t</title></head><body></body></html>")}
+    result = collect_urls([short_url], fetcher=lambda u: mapping[u])
+    assert [p.url for p in result.pages] == [short_url]
+
+
+# ── limits.max_query_variants_per_path ───────────────────────────────────────
+
+SITE_QUERY_VARIANTS = {
+    "https://example.com/robots.txt": ROBOTS_OK,
+    "https://example.com/": page("/search?q=a", "/search?q=b", "/search?q=c", "/search?q=d"),
+    "https://example.com/search?q=a": page(),
+    "https://example.com/search?q=b": page(),
+    "https://example.com/search?q=c": page(),
+    "https://example.com/search?q=d": page(),
+}
+
+
+def _search_urls(result) -> list[str]:
+    return sorted(p.url for p in result.pages if p.url.startswith("https://example.com/search"))
+
+
+def test_max_query_variants_per_path_configured_caps_the_budget():
+    result = _crawl(SITE_QUERY_VARIANTS, max_query_variants_per_path=2)
+    assert len(_search_urls(result)) == 2
+    assert result.excluded.get("query_variants_limit") == 2
+
+
+def test_default_max_query_variants_per_path_allows_more_before_capping():
+    result = _crawl(SITE_QUERY_VARIANTS)
+    assert len(_search_urls(result)) == 4
+
+
+# ── http.retry_on_timeout ────────────────────────────────────────────────────
+
+
+def _flaky_fetcher():
+    calls = {"n": 0}
+
+    def fetch(_url):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("read timed out")
+        return FakeResponse("<html><head><title>t</title></head><body></body></html>")
+
+    fetch.calls = calls
+    return fetch
+
+
+def test_retry_on_timeout_configured_recovers_from_a_single_timeout():
+    fetcher = _flaky_fetcher()
+    record, parsed = fetch_one("https://example.com/", fetcher=fetcher, retry_on_timeout=1)
+    assert record.error == ""
+    assert parsed is not None
+    assert fetcher.calls["n"] == 2
+
+
+def test_default_retry_on_timeout_does_not_retry():
+    fetcher = _flaky_fetcher()
+    record, parsed = fetch_one("https://example.com/", fetcher=fetcher)
+    assert "timed out" in record.error
+    assert parsed is None
+    assert fetcher.calls["n"] == 1
+
+
+# ── discovery.follow_nofollow ─────────────────────────────────────────────────
+
+
+def _page_with_nofollow(href: str) -> FakeResponse:
+    body = f'<a href="{href}" rel="nofollow">link</a>'
+    return FakeResponse(f"<html><head><title>t</title></head><body><h1>t</h1>{body}</body></html>")
+
+
+SITE_NOFOLLOW = {
+    "https://example.com/robots.txt": ROBOTS_OK,
+    "https://example.com/": _page_with_nofollow("/nf"),
+    "https://example.com/nf": page(),
+}
+
+
+def test_follow_nofollow_configured_true_enqueues_nofollow_links():
+    result = _crawl(SITE_NOFOLLOW, follow_nofollow=True)
+    assert _fetched(result, "https://example.com/nf")
+    assert any(e.destination == "https://example.com/nf" and e.nofollow for e in result.links)
+
+
+def test_default_follow_nofollow_excludes_nofollow_links():
+    result = _crawl(SITE_NOFOLLOW)
+    assert not _fetched(result, "https://example.com/nf")
+    assert result.excluded.get("nofollow") == 1
+    # "store" and "crawl" stay independent: the edge is recorded either way.
+    assert any(e.destination == "https://example.com/nf" and e.nofollow for e in result.links)
+
+
+# ── http.user_agent ───────────────────────────────────────────────────────────
+
+
+class _FakeClient:
+    def __init__(self, response: FakeResponse) -> None:
+        self._response = response
+        self.captured_headers: dict[str, str] | None = None
+
+    def get(self, target, *, headers, extensions):
+        self.captured_headers = headers
+        return self._response
+
+
+_PAGE_BODY = "<html><head><title>t</title></head><body></body></html>"
+
+
+def test_user_agent_configured_is_sent_on_the_request(monkeypatch):
+    import seohead.crawl.collect as collect_mod
+
+    monkeypatch.setattr(collect_mod, "validate_url", lambda u: u)
+    monkeypatch.setattr(collect_mod, "pinned_target", lambda u: (u, {}, {}))
+    client = _FakeClient(FakeResponse(_PAGE_BODY))
+
+    record, _ = collect_mod.fetch_one("https://example.com/", client=client, user_agent="MyBot/9.0")
+    assert client.captured_headers["User-Agent"] == "MyBot/9.0"
+    assert record.status_code == 200
+
+
+def test_default_user_agent_falls_back_to_the_toolkits_identifiable_default(monkeypatch):
+    import seohead.crawl.collect as collect_mod
+    from seohead.recon.net import UA
+
+    monkeypatch.setattr(collect_mod, "validate_url", lambda u: u)
+    monkeypatch.setattr(collect_mod, "pinned_target", lambda u: (u, {}, {}))
+    client = _FakeClient(FakeResponse(_PAGE_BODY))
+
+    record, _ = collect_mod.fetch_one("https://example.com/", client=client)
+    assert client.captured_headers["User-Agent"] == UA
+    assert record.status_code == 200
+
+
+# ── handler wiring: settings must reach the collector under the right names ─
+
+
+def test_handler_threads_every_newly_wired_setting_into_the_spider(monkeypatch, tmp_path):
+    import seohead.crawl.spider as spider_mod
+    from seohead.servers import handlers
+
+    captured: dict = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return SpiderResult()
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+    config = tmp_path / "crawl.json"
+    config.write_text(
+        json.dumps(
+            {
+                "limits": {
+                    "max_response_bytes": 999,
+                    "max_url_length": 123,
+                    "max_query_variants_per_path": 3,
+                },
+                "http": {"retry_on_timeout": 2, "user_agent": "MyBot"},
+                "robots": {"user_agent_token": "MyBotToken", "unavailable_means_stop": False},
+                "speed": {"stop_after_consecutive_timeouts": 7, "max_delay_seconds": 12.0},
+                "discovery": {"follow_nofollow": True},
+            }
+        )
+    )
+
+    handlers.crawl_site(url="https://example.com/", config=str(config))
+
+    assert captured["max_response_bytes"] == 999
+    assert captured["max_url_length"] == 123
+    assert captured["max_query_variants_per_path"] == 3
+    assert captured["retry_on_timeout"] == 2
+    assert captured["user_agent"] == "MyBot"
+    assert captured["robots_token"] == "MyBotToken"
+    assert captured["unavailable_means_stop"] is False
+    assert captured["stop_after_consecutive_timeouts"] == 7
+    assert captured["max_delay_seconds"] == 12.0
+    assert captured["follow_nofollow"] is True
+
+
+def test_handler_threads_every_newly_wired_setting_into_collect_urls(monkeypatch, tmp_path):
+    import seohead.crawl.collect as collect_mod
+    from seohead.servers import handlers
+
+    captured: dict = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return CrawlResult()
+
+    monkeypatch.setattr(collect_mod, "collect_urls", fake)
+    config = tmp_path / "crawl.json"
+    config.write_text(
+        json.dumps(
+            {
+                "limits": {"max_response_bytes": 999, "max_url_length": 123},
+                "http": {"retry_on_timeout": 2, "user_agent": "MyBot"},
+                "speed": {"stop_after_consecutive_timeouts": 7, "max_delay_seconds": 12.0},
+            }
+        )
+    )
+
+    handlers.crawl_site(urls=["https://example.com/a"], config=str(config))
+
+    assert captured["max_response_bytes"] == 999
+    assert captured["max_url_length"] == 123
+    assert captured["retry_on_timeout"] == 2
+    assert captured["user_agent"] == "MyBot"
+    assert captured["stop_after_consecutive_timeouts"] == 7
+    assert captured["max_delay_seconds"] == 12.0
+
+
+# ── sitemaps.auto_discover (wired, previously untested at the config level) ──
+
+
+def test_sitemaps_auto_discover_configured_seeds_without_an_explicit_sitemap_arg(
+    tmp_path, monkeypatch
+):
+    import seohead.crawl.spider as spider_mod
+    import seohead.tools.robots as robots_tool
+    import seohead.tools.sitemap as sitemap_tool
+    from seohead.servers import handlers
+
+    monkeypatch.setattr(
+        robots_tool, "check_robots", lambda url: {"sitemaps": ["https://example.com/sitemap.xml"]}
+    )
+    monkeypatch.setattr(
+        sitemap_tool,
+        "crawl",
+        lambda url, concurrency=3: {"urls": [{"loc": "https://example.com/a"}]},
+    )
+    captured: dict = {}
+
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return SpiderResult()
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+
+    config = tmp_path / "crawl.json"
+    config.write_text(json.dumps({"sitemaps": {"auto_discover": True}}))
+
+    out = handlers.crawl_site(url="https://example.com/", config=str(config))
+    assert out["discovery"]["sitemap_url"] == "https://example.com/sitemap.xml"
+    # The discovered sitemap's declared URLs actually reach the spider as seeds.
+    assert captured["seed_urls"] == ["https://example.com/a"]
+
+
+def test_default_sitemaps_auto_discover_does_not_seed(monkeypatch):
+    from seohead.servers import handlers
+
+    monkeypatch.setattr("seohead.crawl.spider.crawl_site", lambda *a, **kw: SpiderResult())
+    out = handlers.crawl_site(url="https://example.com/")
+    assert out["discovery"]["sitemap_url"] is None
+    assert out["discovery"]["sitemap_seeded"] == 0
+
+
+# ── coverage canary: a DEFAULTS path nobody tests is #63 recurring ───────────
+
+# Known, separately-tracked gap that predates this fix and is not part of
+# #63's enumerated list: validated, described, and classified, but still read
+# by nothing in seohead/crawl. Flagged for follow-up rather than folded into
+# this PR (canonical-chasing and cross-host crawling are new capabilities, not
+# a hardcode-to-config move). Do not add a new setting to this set — wire it
+# and point at its test above, or delete it.
+_KNOWN_UNWIRED_GAP = frozenset(
+    {
+        "discovery.hyperlinks.store",
+        "discovery.hyperlinks.crawl",
+        "discovery.canonicals.store",
+        "discovery.canonicals.crawl",
+        "discovery.redirects.store",
+        "discovery.redirects.crawl",
+        "discovery.external.store",
+        "discovery.external.crawl",
+        "http.headers",
+        "speed.adaptive",
+    }
+)
+
+
+def test_every_default_path_is_exercised_by_a_test():
+    """A DEFAULTS path no test ever names is exactly the #63 defect recurring.
+
+    Checked by literal presence of the dotted path somewhere in ``tests/`` — a
+    config override, an assertion, or a comment pointing at the test that
+    covers it behaviourally elsewhere. ``_KNOWN_UNWIRED_GAP`` is the one
+    permitted exemption; see its comment before adding to it.
+    """
+    import pathlib
+
+    tests_dir = pathlib.Path(__file__).resolve().parent
+    corpus = "\n".join(p.read_text(encoding="utf-8") for p in sorted(tests_dir.glob("*.py")))
+    paths = set(_flatten(DEFAULTS)) - _KNOWN_UNWIRED_GAP
+    missing = sorted(p for p in paths if p not in corpus)
+    assert not missing, f"settings never referenced by any test: {missing}"
+
+
+def test_the_known_gap_exemption_names_only_real_settings():
+    """The exemption above must shrink, never grow, as settings get wired."""
+    assert set(_flatten(DEFAULTS)) >= _KNOWN_UNWIRED_GAP

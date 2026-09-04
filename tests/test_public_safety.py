@@ -48,6 +48,87 @@ def test_socket_resolution_requires_explicit_private_opt_in(monkeypatch: pytest.
     ]
 
 
+def test_resolve_socket_addresses_honours_the_named_host_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The scoped opt-in works at the resolver, not only at validate_url."""
+    records = [(net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", ("10.0.0.9", 443))]
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_args, **_kwargs: records)
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.delenv(net.PRIVATE_HOST_ALLOWLIST_ENV, raising=False)
+    with pytest.raises(ValueError, match="private or non-public"):
+        net.resolve_socket_addresses("staging.internal", 443)
+
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+    assert net.resolve_socket_addresses("staging.internal", 443) == [
+        (net.socket.AF_INET, net.socket.SOCK_STREAM, 6, ("10.0.0.9", 443))
+    ]
+    # The obvious bypass: a *different* host must still be blocked, even
+    # though it resolves to the exact same private address.
+    with pytest.raises(ValueError, match="private or non-public"):
+        net.resolve_socket_addresses("other-internal.example", 443)
+
+
+def _private_records(address: str = "10.0.0.9") -> list:
+    return [(net.socket.AF_INET, net.socket.SOCK_STREAM, 6, "", (address, 443))]
+
+
+def test_allowed_private_hosts_permits_only_the_named_host(monkeypatch: pytest.MonkeyPatch):
+    """The scoped opt-in authorizes one staging host, not every private range."""
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_a, **_k: _private_records())
+
+    assert net.validate_url("https://staging.internal/") == "https://staging.internal/"
+
+
+def test_allowed_private_hosts_does_not_permit_a_different_private_host(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The obvious bypass: try a second private host under the same opt-in."""
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_a, **_k: _private_records())
+
+    with pytest.raises(ValueError, match="private"):
+        net.validate_url("https://other-internal.example/")
+
+
+def test_allowed_private_hosts_matching_is_exact_not_a_suffix(monkeypatch: pytest.MonkeyPatch):
+    """A subdomain of the allowed host must not inherit the authorization."""
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_a, **_k: _private_records())
+
+    with pytest.raises(ValueError, match="private"):
+        net.validate_url("https://evil.staging.internal/")
+
+
+def test_allowed_private_hosts_does_not_survive_a_redirect_to_a_different_private_host(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An allowlisted host redirecting elsewhere must not widen the opt-in."""
+    monkeypatch.delenv(net.PRIVATE_NETWORK_ENV, raising=False)
+    monkeypatch.setenv(net.PRIVATE_HOST_ALLOWLIST_ENV, "staging.internal")
+    monkeypatch.setattr(net.socket, "getaddrinfo", lambda *_a, **_k: _private_records())
+
+    class Request:
+        url = "https://staging.internal/start"
+
+    class Response:
+        is_redirect = True
+        request = Request()
+        headers: ClassVar[dict[str, str]] = {"location": "http://admin.internal/panel"}
+
+    with pytest.raises(ValueError, match="private"):
+        net.network_event_hooks()["response"][0](Response())
+
+
+def test_allowed_private_hosts_is_empty_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv(net.PRIVATE_HOST_ALLOWLIST_ENV, raising=False)
+    assert net.allowed_private_hosts() == frozenset()
+
+
 def test_url_credentials_are_always_rejected(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(net.PRIVATE_NETWORK_ENV, "1")
     with pytest.raises(ValueError, match="credentials"):

@@ -64,7 +64,12 @@ def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
     # Raised from 56 to 59 when NOTRANSLATE, UNAVAILABLE_AFTER and
     # CANONICAL_FRAGMENT were added (issue #30): the example fixture has no
     # page that trips them, so they run clean rather than declare a skip.
-    assert coverage["checks_silent"] <= 59
+    # Raised from 59 to 60 when INLINK_BOILERPLATE_ONLY was added (issue #20):
+    # like SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP before it, it is added
+    # directly from evidence a native crawl produces (crawl/linkgraph.py),
+    # never through this SF-export fixture, so it has no export-based
+    # dependency to declare and is silent here by the same construction.
+    assert coverage["checks_silent"] <= 60
 
 
 def test_removing_evidence_only_ever_grows_the_skip_set(tmp_path):

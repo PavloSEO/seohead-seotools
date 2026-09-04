@@ -37,20 +37,34 @@ MAX_DELAY_S = 60.0
 # more concurrent request. Slow to grow, fast to collapse.
 WIDEN_AFTER_CONSECUTIVE_OK = 3
 
+# A ceiling on the *configured* value, not on what the adaptive throttle will
+# actually use — ``concurrency`` starts low and earns its way up to whichever
+# of this or the caller's request is smaller (#14: "a hard ceiling on
+# concurrency that a config file alone cannot raise"). Enforced here, inside
+# the constructor, rather than only at the one call site that currently reads
+# a config value — so any caller building a ``Throttle`` directly, not only
+# ``crawl_site()``, is bound by it too.
+MAX_CONCURRENCY_CEILING = 16
+
 
 class Throttle:
     """Adaptive delay and concurrency for one origin."""
 
     def __init__(
-        self, start_delay: float = 0.0, min_delay: float = 0.0, max_concurrency: int = 1
+        self,
+        start_delay: float = 0.0,
+        min_delay: float = 0.0,
+        max_delay: float = MAX_DELAY_S,
+        max_concurrency: int = 1,
     ) -> None:
         self.min_delay = max(0.0, float(min_delay))
+        self.max_delay = max(self.min_delay, float(max_delay))
         self.delay = max(self.min_delay, float(start_delay))
         self.timeouts = 0
         self.server_errors = 0
         # The ceiling is a configured, bounded fact; ``concurrency`` is what the
         # origin has earned so far, never more than the ceiling allows.
-        self.max_concurrency = max(1, int(max_concurrency))
+        self.max_concurrency = max(1, min(int(max_concurrency), MAX_CONCURRENCY_CEILING))
         self.concurrency = min(2, self.max_concurrency)
         self._consecutive_ok = 0
         self._lock = threading.Lock()
@@ -66,7 +80,7 @@ class Throttle:
             new_delay = (self.delay + target) / 2
             if not ok:
                 new_delay = max(new_delay, self.delay)
-            self.delay = min(MAX_DELAY_S, max(self.min_delay, new_delay))
+            self.delay = min(self.max_delay, max(self.min_delay, new_delay))
             if ok:
                 self._consecutive_ok += 1
                 if (
@@ -83,7 +97,7 @@ class Throttle:
         with self._lock:
             self.timeouts += 1
             base = max(self.delay, self.min_delay, 0.5)
-            self.delay = min(MAX_DELAY_S, base * TIMEOUT_PENALTY)
+            self.delay = min(self.max_delay, base * TIMEOUT_PENALTY)
             self._consecutive_ok = 0
             self.concurrency = 1
 
@@ -115,7 +129,7 @@ class Throttle:
             widened = base * TIMEOUT_PENALTY if status_code == 429 else base * 2
             if retry_after is not None:
                 widened = max(widened, retry_after)
-            self.delay = min(MAX_DELAY_S, widened)
+            self.delay = min(self.max_delay, widened)
             self._consecutive_ok = 0
             self.concurrency = 1
 

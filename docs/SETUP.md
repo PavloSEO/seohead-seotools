@@ -182,7 +182,9 @@ settings above and every one the crawler build-out has added since — lives in 
 `seohead crawl-site --config-help` for the full list: every key's path, type, default, and
 description, generated from this module rather than hand-maintained. (`--max-depth` and
 `--min-delay` still work as direct flags for scripts written before `--config` existed; they are
-just no longer shown in `--help`.)
+just no longer shown in `--help`.) The same list is reachable without a filesystem via
+`seohead crawl-describe-settings` (CLI) or the `seo_crawl_describe_settings` MCP tool — a
+tool-calling agent can discover the configuration surface, not only a human reading the source.
 
 `--sitemap <url>` seeds the crawl from that sitemap's declared URLs — each one is fetched and its
 own links are followed, rather than the sitemap being treated as the final answer — and reconciles

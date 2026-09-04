@@ -10,17 +10,38 @@ contains indexable content and links.
 Performance values are laboratory measurements only: LCP, CLS, and timing data
 from one run on one machine. They are not field Core Web Vitals from the Chrome
 UX Report and are explicitly returned under ``metrics_lab``.
+
+``render_document`` is the engine behind selective rendering escalation across
+a whole crawl (#18, ``seohead.crawl.render_escalation``): unlike
+``render_check``'s single fixed desktop/mobile comparison, it honours every
+setting that changes what the rendered DOM contains -- script timeout,
+viewport, resize-to-content, shadow-DOM and iframe flattening, device pixel
+ratio, mobile/touch emulation, page-load strategy -- because those settings
+are exactly what makes two render runs on the same site not comparable
+unless both are recorded (see ``seohead.crawl.settings`` for where that
+recording happens).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
 from seohead.recon.net import http_client, normalize_url, validate_url
 from seohead.tools import dualcrawl
+
+# Two fixed profiles rather than a free-form width/height: a responsive page
+# renders a different DOM at different widths, so comparing two runs requires
+# a short, named list both can point at. seohead.crawl.settings' rendering
+# config reuses this exact mapping.
+VIEWPORT_PRESETS: dict[str, dict[str, int]] = {
+    "desktop": {"width": 1366, "height": 768},
+    "mobile": {"width": 390, "height": 844},
+}
 
 # Common single-page application shells. An empty mount container means the raw
 # response exposes no application content to a crawler that does not render.
@@ -55,6 +76,82 @@ def _guard_browser_route(route) -> None:
         route.abort("blockedbyclient")
         return
     route.continue_()
+
+
+def _guard_websocket_route(ws_route: Any) -> None:
+    """Block a WebSocket the address guard would reject as an HTTP request.
+
+    ``page.route()`` never sees WebSocket traffic -- Playwright does not run
+    it through the same request-interception pipeline -- so a page could
+    otherwise reach a private address over a channel ``_guard_browser_route``
+    never inspects. ``context.route_web_socket`` intercepts before the real
+    connection is made, so validating and closing here happens before any
+    byte reaches -- or comes back from -- the target.
+    """
+    scheme = {"ws": "http", "wss": "https"}.get(urlsplit(ws_route.url).scheme.lower())
+    if scheme is None:
+        ws_route.close()
+        return
+    parts = urlsplit(ws_route.url)
+    try:
+        validate_url(urlunsplit((scheme, parts.netloc, parts.path or "/", parts.query, "")))
+    except ValueError:
+        ws_route.close()
+        return
+    ws_route.connect_to_server()
+
+
+def _refuse_if_root() -> None:
+    """Refuse to launch the rendering browser as root, rather than disable its sandbox.
+
+    Chromium's sandbox will not start as root unless it is told to run
+    without one (``--no-sandbox``). This toolkit never passes that flag --
+    rendering executes whatever code the audited site serves, and a browser
+    with no sandbox removes the one barrier between that code and the host
+    running the crawl. Refusing outright is the documented alternative.
+    """
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and geteuid() == 0:
+        raise RuntimeError(
+            "refusing to launch the rendering browser as root: that would require "
+            "disabling the sandbox (--no-sandbox), which this toolkit never does -- "
+            "run the crawl as a non-root user instead"
+        )
+
+
+def _artifact_filename(url: str) -> str:
+    """A filesystem-safe, collision-resistant name for one URL's artifacts."""
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+
+
+_FRAGMENT_META_RE = re.compile(
+    r'<meta[^>]+name=["\']fragment["\'][^>]+content=["\']!["\']', re.IGNORECASE
+)
+
+
+def legacy_fragment_target(url: str, html: str) -> str | None:
+    """Return the ``_escaped_fragment_`` URL for a page opting into the legacy
+    AJAX-crawling scheme, or ``None`` when the page does not declare it.
+
+    Google's now-deprecated scheme let a site announce, via a ``#!`` hash
+    fragment in its own URL or a page-wide
+    ``<meta name="fragment" content="!">``, that a fully rendered snapshot is
+    available at a companion URL built from ``?_escaped_fragment_=``. Some
+    legacy single-page applications still implement only this, not real
+    server-side rendering or a modern render pipeline, so honouring it
+    recovers real content without needing a browser at all.
+    """
+    parts = urlparse(url)
+    fragment = parts.fragment
+    if fragment.startswith("!"):
+        escaped = fragment[1:]
+    elif html and _FRAGMENT_META_RE.search(html):
+        escaped = ""
+    else:
+        return None
+    query = dict(parse_qsl(parts.query))
+    query["_escaped_fragment_"] = escaped
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
 
 
 # This script reads laboratory metrics after load. LCP and CLS are captured by
@@ -181,8 +278,13 @@ def _jsonld_types(html: str) -> list[str]:
     return sorted(set(types))
 
 
-def _empty_shell(html: str) -> str | None:
-    """Return the ID of an empty SPA mount container, or ``None``."""
+def detect_empty_shell(html: str) -> str | None:
+    """Return the ID of an empty SPA mount container, or ``None``.
+
+    A raw-HTML regex match, not a rendering result -- so this is also what
+    the crawl-level gate in ``seohead.crawl.render_escalation`` calls on the
+    start page's raw HTML, before any browser is ever launched (#18).
+    """
     for shell_id in _SHELL_IDS:
         m = re.search(
             rf'<div[^>]+id=["\']{shell_id}["\'][^>]*>(.*?)</div>',
@@ -325,6 +427,10 @@ def render_check(
         validate_url(target)
     except ValueError as exc:
         return {"ok": False, "url": target, "error": str(exc)}
+    try:
+        _refuse_if_root()
+    except RuntimeError as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
 
     # Fetch raw HTML with the regular client: this is what a non-rendering crawler receives.
     client, _ = http_client(timeout)
@@ -342,13 +448,22 @@ def render_check(
     finally:
         client.close()
 
-    size = {"width": 390, "height": 844} if viewport == "mobile" else {"width": 1366, "height": 768}
+    size = VIEWPORT_PRESETS.get(viewport, VIEWPORT_PRESETS["desktop"])
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             try:
-                context = browser.new_context(viewport=size, is_mobile=(viewport == "mobile"))
+                # service_workers="block": a default-configuration service
+                # worker can serve requests the page.route() guard below never
+                # sees, the exact bypass #18's security section names.
+                context = browser.new_context(
+                    viewport=size, is_mobile=(viewport == "mobile"), service_workers="block"
+                )
                 context.add_init_script(_CLS_INIT_JS)
+                # WebSockets are not HTTP requests and page.route() never sees
+                # them either; route_web_socket is the separate interception
+                # point that covers them.
+                context.route_web_socket("**/*", _guard_websocket_route)
                 page = context.new_page()
                 page.route("**/*", _guard_browser_route)
                 page.goto(target, wait_until=wait, timeout=timeout * 1000)
@@ -371,7 +486,7 @@ def render_check(
     # Merge in what only getComputedStyle can see: a background-image an
     # external stylesheet declares, absent from both HTML strings above.
     rendered["images"] = sorted(set(rendered["images"]) | set(computed_backgrounds))
-    shell = _empty_shell(raw_html)
+    shell = detect_empty_shell(raw_html)
     findings = compare(raw, rendered, raw_html, shell)
     # Its own report section, not merged into "findings": #21's compare()
     # assumes the site changed between two runs, this assumes the site is the
@@ -429,14 +544,188 @@ def rendered_html(url: str, timeout: float = 30.0, wait: str = "load") -> dict[s
     except ValueError as exc:
         return {"ok": False, "url": target, "error": str(exc)}
     try:
+        _refuse_if_root()
+    except RuntimeError as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
+    try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             try:
-                page = browser.new_page()
+                page = browser.new_page(service_workers="block")
                 page.route("**/*", _guard_browser_route)
+                page.context.route_web_socket("**/*", _guard_websocket_route)
                 page.goto(target, wait_until=wait, timeout=timeout * 1000)
                 return {"ok": True, "url": page.url, "html": page.content()}
             finally:
                 browser.close()
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "url": target}
+
+
+# Merges every open shadow root's light-DOM-visible children into its host
+# element so page.content() -- which only ever serializes light DOM -- carries
+# what a search engine's own DOM flattening would see. Closed shadow roots are
+# unreachable from page script at all and are left untouched, same as for any
+# renderer.
+_FLATTEN_SHADOW_DOM_JS = """() => {
+  const walk = (root) => {
+    root.querySelectorAll('*').forEach((el) => {
+      if (el.shadowRoot) {
+        walk(el.shadowRoot);
+        el.append(...Array.from(el.shadowRoot.childNodes));
+      }
+    });
+  };
+  walk(document);
+}"""
+
+# Replaces each same-origin iframe with its own document's body content,
+# matching how a search engine assembles one page out of same-origin frames.
+# A cross-origin frame throws on contentDocument access and is left as an
+# empty frame -- exactly what a non-rendering crawler could see too, so
+# nothing is invented in its place.
+_FLATTEN_IFRAMES_JS = """() => {
+  document.querySelectorAll('iframe').forEach((frame) => {
+    try {
+      const doc = frame.contentDocument;
+      if (doc && doc.body) {
+        const div = document.createElement('div');
+        div.setAttribute('data-flattened-iframe', frame.src || '');
+        div.innerHTML = doc.body.innerHTML;
+        frame.replaceWith(div);
+      }
+    } catch (e) {
+      // Cross-origin: not reachable from page script, left as-is.
+    }
+  });
+}"""
+
+
+def render_document(
+    url: str,
+    rendering_config: dict[str, Any],
+    *,
+    nav_timeout: float = 30.0,
+    artifacts_dir: str | None = None,
+) -> dict[str, Any]:
+    """Render one URL under the full crawler rendering configuration.
+
+    ``rendering_config`` is the resolved ``rendering`` block from
+    ``seohead.crawl.settings`` (its ``browser`` and ``artifacts`` sub-dicts),
+    not a browser handle -- which is exactly what lets a test replace this
+    whole function with a stub for ``seohead.crawl.render_escalation``,
+    never needing a real browser or the network.
+
+    Unlike ``render_check`` (one fixed comparison for the single-page tool),
+    this is what selective escalation calls for every page it decides to
+    re-fetch, so every setting #18 asked for is honoured: script timeout
+    (how long JavaScript may keep running after load), viewport,
+    resize-to-content with its cap, shadow-DOM and iframe flattening, device
+    pixel ratio, mobile/touch emulation, page-load strategy, and a persistent
+    profile that stays off unless a directory is explicitly named.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "Playwright is required",
+            "install": "pip install 'seohead[render]' && python -m playwright install chromium",
+        }
+    target = normalize_url(str(url or "").strip())
+    if not target:
+        return {"ok": False, "error": "URL is required"}
+    try:
+        validate_url(target)
+    except ValueError as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
+    try:
+        _refuse_if_root()
+    except RuntimeError as exc:
+        return {"ok": False, "url": target, "error": str(exc)}
+
+    browser_cfg = rendering_config.get("browser", {})
+    artifacts_cfg = rendering_config.get("artifacts", {})
+    preset = VIEWPORT_PRESETS.get(
+        browser_cfg.get("viewport", "desktop"), VIEWPORT_PRESETS["desktop"]
+    )
+    viewport = dict(preset)
+    console_errors: list[str] = []
+    screenshot_path: str | None = None
+
+    def _on_console(msg: Any) -> None:
+        if artifacts_cfg.get("console_errors") and msg.type == "error":
+            console_errors.append(msg.text)
+
+    browser = None
+    try:
+        with sync_playwright() as pw:
+            context_options = {
+                "viewport": viewport,
+                "device_scale_factor": float(browser_cfg.get("device_pixel_ratio", 1.0) or 1.0),
+                "is_mobile": bool(browser_cfg.get("mobile_emulation")),
+                "has_touch": bool(browser_cfg.get("touch_emulation")),
+                # Blocks the default-configuration bypass named in #18's
+                # security section: a service worker can otherwise answer
+                # requests page.route() never sees.
+                "service_workers": "block",
+            }
+            profile_dir = (
+                browser_cfg.get("persistent_profile_dir")
+                if browser_cfg.get("persistent_profile")
+                else None
+            )
+            if profile_dir:
+                # Off by default, and seohead.crawl.settings refuses to
+                # enable this without an explicit directory: a persistent
+                # profile crawls the site as whoever's cookies it carries.
+                context = pw.chromium.launch_persistent_context(profile_dir, **context_options)
+            else:
+                browser = pw.chromium.launch()
+                context = browser.new_context(**context_options)
+            try:
+                page = context.new_page()
+                page.route("**/*", _guard_browser_route)
+                context.route_web_socket("**/*", _guard_websocket_route)
+                page.on("console", _on_console)
+                page.goto(
+                    target,
+                    wait_until=browser_cfg.get("wait_until", "load"),
+                    timeout=nav_timeout * 1000,
+                )
+                script_timeout = float(browser_cfg.get("script_timeout_seconds", 0) or 0)
+                if script_timeout > 0:
+                    page.wait_for_timeout(script_timeout * 1000)
+                if browser_cfg.get("resize_to_content"):
+                    cap = int(browser_cfg.get("resize_to_content_max_height_px", 15000))
+                    content_height = int(page.evaluate("document.documentElement.scrollHeight"))
+                    page.set_viewport_size(
+                        {"width": viewport["width"], "height": max(min(content_height, cap), 1)}
+                    )
+                if browser_cfg.get("flatten_shadow_dom"):
+                    page.evaluate(_FLATTEN_SHADOW_DOM_JS)
+                if browser_cfg.get("flatten_iframes"):
+                    page.evaluate(_FLATTEN_IFRAMES_JS)
+                html = page.content()
+                final_url = page.url
+                if artifacts_cfg.get("screenshots") and artifacts_dir:
+                    os.makedirs(artifacts_dir, exist_ok=True)
+                    screenshot_path = os.path.join(
+                        artifacts_dir, _artifact_filename(target) + ".png"
+                    )
+                    page.screenshot(path=screenshot_path, full_page=True)
+            finally:
+                context.close()
+                if browser is not None:
+                    browser.close()
+    except Exception as exc:
+        return {"ok": False, "url": target, "error": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        "ok": True,
+        "url": target,
+        "final_url": final_url,
+        "html": html,
+        "console_errors": console_errors,
+        "screenshot_path": screenshot_path,
+    }

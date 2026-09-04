@@ -105,6 +105,98 @@ def _seed_urls_from_sitemap(url: str, sitemap: str | None, auto_discover: bool) 
     return {"sitemap_url": target, "declared": declared}
 
 
+def _run_render_escalation(
+    result: Any, rendering_config: dict[str, Any], settings: dict[str, Any]
+) -> Any:
+    """Bind the escalation orchestrator to a real probe and re-fetch.
+
+    This is the interface layer's own job, same as ``crawl_site`` above:
+    ``seohead.crawl.render_escalation`` stays free of Playwright and the
+    network so it can be unit-tested with fake callables, and this function
+    is what supplies the real ones for an actual run. "js" mode reuses
+    ``render_check`` for the sample probe -- the raw-versus-rendered
+    comparison #18 asks for reuse of -- and the cheaper ``render_document``
+    for the full re-fetch of every page an escalated pattern contains.
+    "legacy_fragment" mode needs no browser at all: probing and re-fetching
+    are both a plain HTTP GET.
+    """
+    import os
+
+    from seohead.crawl import render_escalation
+    from seohead.recon.net import http_client, validate_url
+    from seohead.tools import render as render_tool
+
+    mode = rendering_config["mode"]
+    browser_cfg = rendering_config["browser"]
+    timeout = settings["http"]["timeout_seconds"]
+    artifacts_dir = (
+        os.path.join(settings["output"]["dir"], "render_artifacts")
+        if settings["output"]["dir"]
+        else None
+    )
+
+    if mode == "js":
+
+        def probe(target: str) -> dict[str, Any]:
+            probed = render_tool.render_check(
+                target,
+                timeout=timeout,
+                wait=browser_cfg["wait_until"],
+                viewport=browser_cfg["viewport"],
+            )
+            probed["needs_escalation"] = bool(probed.get("js_dependent"))
+            return probed
+
+        def render_fetch(target: str) -> dict[str, Any]:
+            return render_tool.render_document(
+                target, rendering_config, artifacts_dir=artifacts_dir
+            )
+
+        label = "rendered"
+    else:  # legacy_fragment
+
+        def _fetch_raw(target: str) -> str:
+            try:
+                validate_url(target)
+            except ValueError:
+                return ""
+            client, _ = http_client(timeout)
+            try:
+                return client.get(target).text
+            except Exception:
+                return ""
+            finally:
+                client.close()
+
+        def probe(target: str) -> dict[str, Any]:
+            html = _fetch_raw(target)
+            return {
+                "ok": bool(html),
+                "needs_escalation": render_tool.legacy_fragment_target(target, html) is not None,
+                "empty_shell": render_tool.detect_empty_shell(html),
+            }
+
+        def render_fetch(target: str) -> dict[str, Any]:
+            html = _fetch_raw(target)
+            escaped = render_tool.legacy_fragment_target(target, html)
+            if not escaped:
+                return {"ok": False}
+            fetched_html = _fetch_raw(escaped)
+            if not fetched_html:
+                return {"ok": False}
+            return {"ok": True, "url": target, "final_url": escaped, "html": fetched_html}
+
+        label = "legacy_fragment"
+
+    return render_escalation.escalate(
+        result.pages,
+        rendering_config,
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label=label,
+    )
+
+
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
@@ -136,6 +228,7 @@ def crawl_site(
     import os
     from datetime import datetime, timezone
 
+    from seohead.crawl import cache as http_cache
     from seohead.crawl import settings as crawl_config
     from seohead.crawl.collect import collect_urls
     from seohead.crawl.evidence import build_evidence
@@ -171,6 +264,15 @@ def crawl_site(
         else None
     )
     max_seconds = settings["limits"]["max_crawl_seconds"]
+    # One cache per run, shared by every worker thread a concurrent crawl starts — see
+    # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
+    # cache.invalidate. A directory this session cannot trust (missing, world-writable) degrades
+    # to no cache rather than failing the run.
+    cache = http_cache.build(
+        http_cache.resolve_dir(),
+        mode=settings["cache"]["mode"],
+        invalidate=settings["cache"]["invalidate"],
+    )
 
     sitemap_seed = {"sitemap_url": None, "declared": []}
     if url and (sitemap or settings["sitemaps"]["auto_discover"]):
@@ -194,6 +296,19 @@ def crawl_site(
             state_path=os.path.join(out_dir, "crawl_state.json") if out_dir else None,
             config_fingerprint=crawl_config.fingerprint(settings),
             concurrency=settings["speed"]["concurrency"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            max_query_variants_per_path=settings["limits"]["max_query_variants_per_path"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            robots_token=settings["robots"]["user_agent_token"],
+            unavailable_means_stop=settings["robots"]["unavailable_means_stop"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
+            follow_nofollow=settings["discovery"]["follow_nofollow"],
+            classify_links=settings["link_position"]["classify"],
+            link_position_rules=settings["link_position"]["rules"] or None,
+            cache=cache,
         )
         discovery = {
             "mode": "spider",
@@ -218,8 +333,55 @@ def crawl_site(
             timeout=settings["http"]["timeout_seconds"],
             out_path=pages_path,
             credential_headers=settings["http"]["credential_headers"],
+            max_response_bytes=settings["limits"]["max_response_bytes"],
+            max_url_length=settings["limits"]["max_url_length"],
+            retry_on_timeout=settings["http"]["retry_on_timeout"],
+            user_agent=settings["http"]["user_agent"],
+            stop_after_consecutive_timeouts=settings["speed"]["stop_after_consecutive_timeouts"],
+            max_delay_seconds=settings["speed"]["max_delay_seconds"],
+            cache=cache,
         )
         discovery = {"mode": "list"}
+
+    requires_rendering = False
+    requires_rendering_reason = ""
+    render_summary: dict[str, Any] = {}
+    if url:
+        from seohead.crawl import render_escalation
+        from seohead.recon.net import normalize_url
+
+        start_norm = normalize_url(url)
+        rendering_config = settings["rendering"]
+        escalation = None
+        if rendering_config["mode"] != "raw" and result.pages:
+            escalation = _run_render_escalation(result, rendering_config, settings)
+            render_escalation.apply_rendered_evidence(result.pages, result.links, escalation)
+            render_summary = {
+                "mode": escalation.mode,
+                "patterns_sampled": escalation.patterns_sampled,
+                "patterns_escalated": escalation.patterns_escalated,
+                "probe_requests": escalation.probe_requests,
+                "render_requests": escalation.render_requests,
+                "render_budget_exhausted": escalation.render_budget_exhausted,
+            }
+
+        # Re-evaluated after escalation so a run that actually renders its
+        # start page is judged on that rendered evidence, not the raw
+        # snapshot escalation was meant to fix -- but the gate itself is
+        # static-only (see start_page_gate) so it still fires for "raw" mode,
+        # which has no render to fall back on.
+        start_record = next((p for p in result.pages if p.url == start_norm), None)
+        if start_record is not None:
+            rendered_start = escalation.rendered.get(start_norm) if escalation else None
+            start_html = (rendered_start or {}).get("html") or result.start_page_evidence.get(
+                "html", ""
+            )
+            gate = render_escalation.start_page_gate(
+                start_norm,
+                max(start_record.outlinks - start_record.external_outlinks, 0),
+                start_html,
+            )
+            requires_rendering, requires_rendering_reason = gate.requires_rendering, gate.reason
 
     evidence = build_evidence(result)
     exports = LoadedExports()
@@ -246,6 +408,24 @@ def crawl_site(
         for extra_url in sitemap_summary["linked_not_in_sitemap"]:
             ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
 
+    # Same "native crawl produces evidence the SF export never carries" shape
+    # as the sitemap reconciliation above: classification runs inside the
+    # spider's own link recording (see crawl/spider.py), never through the
+    # analyzer, and only meets the SF-shaped audit here.
+    link_position: dict[str, Any] = {}
+    if url and settings["link_position"]["classify"]:
+        from seohead.crawl.linkgraph import inlink_composition
+
+        link_position = inlink_composition(result.links)
+        for page in link_position["pages"]:
+            if page["boilerplate_only"]:
+                ctx.add(
+                    "INLINK_BOILERPLATE_ONLY",
+                    target_url=page["url"],
+                    occurrences_count=page["inlinks_total"],
+                    details={"by_position": page["by_position"]},
+                )
+
     audit = aggregate(
         ctx,
         {
@@ -263,6 +443,16 @@ def crawl_site(
             # Without these two reports on the same site are not comparable.
             "crawl_config": crawl_config.manifest(settings),
             "effective_max_requests_per_second": crawl_config.effective_request_rate(settings),
+            # "The site is fine" and "the site was fine when we last looked" are different
+            # claims — cache_replay says which one this report can support, and cache_stats
+            # says how much of the corpus was measured now versus remembered.
+            "cache_replay": result.cache_replay,
+            "cache_stats": result.cache_stats,
+            # Whether this run is a false-green that must not reach a health
+            # score (#18), and the escalation that ran (if any) to check.
+            "requires_rendering": requires_rendering,
+            "requires_rendering_reason": requires_rendering_reason,
+            "render_escalation": render_summary or None,
         },
         {},
         sitemap_summary,
@@ -280,10 +470,32 @@ def crawl_site(
         "resumed": result.resumed,
         "discovery": discovery,
         "limitations": result.limitations,
+        "link_position": link_position,
         "summary": audit["summary"],
         "checks_skipped": len(audit["run"].get("checks_skipped", [])),
         "out_dir": out_dir,
+        # See the matching keys in audit["run"] for why these are surfaced twice: a caller
+        # reading only this dict (no out_dir, no audit.json) must still be able to tell a
+        # replayed answer from a measured one.
+        "cache_replay": result.cache_replay,
+        "cache_stats": result.cache_stats,
+        "requires_rendering": requires_rendering,
+        "requires_rendering_reason": requires_rendering_reason,
+        "render_escalation": render_summary,
     }
+
+
+def crawl_describe_settings() -> dict[str, Any]:
+    """Every crawl-site config setting: path, type, default, and description.
+
+    The MCP half of #23: an agent can ask what it can configure instead of
+    guessing a key name or reading the source. Backed by the same
+    ``describe_settings`` that ``crawl-site --config-help`` prints, so the CLI
+    and MCP surfaces cannot describe the same setting two different ways.
+    """
+    from seohead.crawl import settings as crawl_config
+
+    return {"settings": crawl_config.describe_settings()}
 
 
 def images_download(
@@ -1042,6 +1254,7 @@ _RAW_HANDLERS = {
     "redirects_check": redirects_check,
     "sitemap_crawl": sitemap_crawl,
     "crawl_site": crawl_site,
+    "crawl_describe_settings": crawl_describe_settings,
     "images_download": images_download,
     "images_optimize": images_optimize,
     "keywords_cluster": keywords_cluster,

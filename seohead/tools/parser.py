@@ -58,7 +58,22 @@ DEFAULT_HEADERS = {
 }
 
 # Which extractions run by default. Each may be switched off via options.
-_OPTION_KEYS = ("meta", "canonical", "og", "headings", "jsonld", "links", "text", "url_sources")
+_OPTION_KEYS = (
+    "meta",
+    "canonical",
+    "og",
+    "headings",
+    "jsonld",
+    "links",
+    "text",
+    "url_sources",
+    "classify_links",
+)
+
+# Options that default to False rather than True: each adds cost (a resolved
+# content root, a per-link ancestor walk) that most callers of parse_html
+# never need.
+_DEFAULT_OFF_OPTIONS = ("url_sources", "classify_links")
 
 # URL-bearing attributes beyond a[href]: media, forms, citations, ping,
 # meta-refresh, and itemtype. This covers carriers that a crawler or auditor
@@ -120,9 +135,42 @@ def is_external(href_abs: str, base_url: str) -> bool:
 
 
 def _resolve_options(options: dict[str, Any] | None) -> dict[str, bool]:
-    """Normalize the options dict: every flag defaults to True except url_sources."""
+    """Normalize the options dict: every flag defaults to True except the opt-in ones."""
     options = options or {}
-    return {key: bool(options.get(key, key != "url_sources")) for key in _OPTION_KEYS}
+    return {key: bool(options.get(key, key not in _DEFAULT_OFF_OPTIONS)) for key in _OPTION_KEYS}
+
+
+# Lighthouse's `charset` audit only looks in the first 1024 bytes of the HTML
+# (or the Content-Type header, checked separately in rules.py from the
+# response we already have). See https://developer.chrome.com/docs/lighthouse/best-practices/charset/
+_CHARSET_WINDOW_CHARS = 1024
+_CHARSET_META_RE = re.compile(r"<meta[^>]+charset[^<]+>", re.IGNORECASE)
+_CHARSET_VALUE_RE = re.compile(r'charset\s*=\s*["\']?([a-zA-Z0-9_\-:.()]{2,})', re.IGNORECASE)
+# A doctype declaration is only meaningful at the top of the document; scanning
+# the whole body would risk matching an escaped/quoted example elsewhere.
+_DOCTYPE_WINDOW_CHARS = 2048
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE\b[^>]*>", re.IGNORECASE | re.DOTALL)
+
+
+def document_charset(html: str) -> str | None:
+    """The charset named by an early ``<meta charset>``/``http-equiv`` tag, if any.
+
+    Lighthouse's ``charset`` audit (see module docstring above) also accepts a
+    charset on the ``Content-Type`` response header; that half is checked
+    against the header seohead already captured, in
+    ``seohead.sf.core.rules.check_charset``, not here.
+    """
+    match = _CHARSET_META_RE.search(html[:_CHARSET_WINDOW_CHARS])
+    if not match:
+        return None
+    value = _CHARSET_VALUE_RE.search(match.group(0))
+    return value.group(1) if value else match.group(0)
+
+
+def document_doctype(html: str) -> str | None:
+    """The raw ``<!DOCTYPE ...>`` declaration text, if the document has one."""
+    match = _DOCTYPE_RE.search(html[:_DOCTYPE_WINDOW_CHARS])
+    return match.group(0).strip() if match else None
 
 
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
@@ -308,7 +356,15 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
         return final_url
 
 
-def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[LinkInfo]:
+def _extract_links(
+    soup: BeautifulSoup,
+    base_url: str,
+    final_url: str,
+    *,
+    classify_links: bool = False,
+    content_area_config: dict[str, Any] | None = None,
+    position_rules: Any = None,
+) -> list[LinkInfo]:
     """Collect ``<a href>`` links resolved against ``base_url``.
 
     ``base_url`` resolves the hrefs; ``final_url`` decides what counts as
@@ -319,8 +375,23 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[L
     pure-fragment (``#...``) links. Each entry carries the resolved absolute
     href, anchor text, rel tokens, a ``nofollow`` flag, and an ``external``
     flag.
+
+    ``classify_links`` additionally resolves each link's ``position`` (nav,
+    header, sidebar, footer, content, other; see ``link_position.py``). It is
+    off by default: computing an ancestor-path classification for every link
+    on every page has a real per-link cost, and most callers never read it.
+    When off, links carry no ``position`` key at all, which is what makes the
+    absence visible rather than a silently empty string.
     """
     links: list[LinkInfo] = []
+    content_root = None
+    rules = None
+    if classify_links:
+        from seohead.tools.content_area import find_content_root
+        from seohead.tools.link_position import classify_link, rules_from_config
+
+        content_root, _ = find_content_root(soup, content_area_config)
+        rules = rules_from_config(position_rules)
     for tag in soup.find_all("a"):
         # "href" is single-valued, so this is always a plain string.
         href_raw = (cast("str | None", tag.get("href")) or "").strip()
@@ -342,15 +413,16 @@ def _extract_links(soup: BeautifulSoup, base_url: str, final_url: str) -> list[L
         # BeautifulSoup returns rel as a list; normalize to lowercase tokens.
         rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
         rel_tokens = [t.lower() for t in rel_tokens]
-        links.append(
-            {
-                "href": abs_href,
-                "text": collapse_whitespace(tag.get_text(" ")),
-                "rel": " ".join(rel_tokens),
-                "nofollow": "nofollow" in rel_tokens,
-                "external": is_external(abs_href, final_url),
-            }
-        )
+        entry: LinkInfo = {
+            "href": abs_href,
+            "text": collapse_whitespace(tag.get_text(" ")),
+            "rel": " ".join(rel_tokens),
+            "nofollow": "nofollow" in rel_tokens,
+            "external": is_external(abs_href, final_url),
+        }
+        if classify_links:
+            entry["position"] = classify_link(tag, content_root, rules=rules)
+        links.append(entry)
     return links
 
 
@@ -515,11 +587,20 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         # Separate from "robots": that key keeps its literal meaning, this one
         # carries every crawler-addressed tag, which is what indexability needs.
         result["robots_meta"] = robots_meta_values(soup)
+        # Static Lighthouse audits (see seohead.sf.core.rules): charset/doctype
+        # read the raw markup directly (their rule is positional), viewport
+        # reuses the existing meta-content helper.
+        result["charset"] = document_charset(html)
+        result["doctype"] = document_doctype(html)
+        result["viewport"] = _meta_content(soup, name="viewport")
     else:
         result["title"] = None
         result["meta_description"] = None
         result["robots"] = None
         result["robots_meta"] = []
+        result["charset"] = None
+        result["doctype"] = None
+        result["viewport"] = None
 
     if opts["canonical"]:
         canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
@@ -557,7 +638,19 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["jsonld"], result["jsonld_invalid"] = _extract_jsonld(soup)
     else:
         result["jsonld"], result["jsonld_invalid"] = [], []
-    result["links"] = _extract_links(soup, base_url, final_url) if opts["links"] else []
+    if opts["links"]:
+        content_config = options.get("content_area") if isinstance(options, dict) else None
+        position_rules = options.get("link_position_rules") if isinstance(options, dict) else None
+        result["links"] = _extract_links(
+            soup,
+            base_url,
+            final_url,
+            classify_links=opts["classify_links"],
+            content_area_config=content_config,
+            position_rules=position_rules,
+        )
+    else:
+        result["links"] = []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.
     if opts["url_sources"]:
@@ -655,15 +748,19 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """Fetch ``url`` and return its extracted SEO data.
 
     ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
-    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True). A
-    ``timeout`` (seconds) may also be provided, and a ``content_area`` dict
-    configures the region ``word_count`` is scoped to — see
-    ``content_area.resolve_content_area`` for its keys.
+    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True), plus
+    ``url_sources`` and ``classify_links`` (both default False). A ``timeout``
+    (seconds) may also be provided, a ``content_area`` dict configures the
+    region ``word_count`` is scoped to — see ``content_area.resolve_content_area``
+    for its keys — and, when ``classify_links`` is on, ``link_position_rules``
+    (a list of ``{"position", "selector"}`` dicts; see ``link_position.py``)
+    overrides the default nav/header/sidebar/footer rules.
 
     On success returns a dict with keys: ``url``, ``final_url``,
     ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
-    ``robots``, ``og``, ``twitter``, ``headings``, ``jsonld``, ``links``,
-    ``text``, ``content_text``, ``content_area_strategy`` and ``word_count``.
+    ``robots``, ``charset``, ``doctype``, ``viewport``, ``og``, ``twitter``,
+    ``headings``, ``jsonld``, ``links``, ``text``, ``content_text``,
+    ``content_area_strategy`` and ``word_count``.
 
     On any fetch or parse error returns ``{"url", "ok": False, "error"}``
     rather than raising.
