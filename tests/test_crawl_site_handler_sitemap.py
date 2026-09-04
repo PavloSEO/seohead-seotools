@@ -74,3 +74,90 @@ def test_handler_without_sitemap_reports_no_sitemap_summary(monkeypatch):
     assert "sitemap" not in out["summary"]
     assert out["discovery"]["sitemap_url"] is None
     assert out["discovery"]["sitemap_seeded"] == 0
+
+
+# ── URL_NOT_IN_SITEMAP compares pages with pages (#94) ───────────────────────
+
+
+def _site_with_the_four_wrong_populations() -> SpiderResult:
+    """One real omission, surrounded by the four kinds of URL that are not one.
+
+    Each of these was reported as a sitemap defect on a live site: an outbound link, a
+    gallery link straight to an image file, a URL the crawl recorded a link to but never
+    fetched (budget or scope), and a page the site deliberately marked noindex.
+    """
+    result = SpiderResult()
+    result.pages = [
+        PageRecord(url="https://example.com/", status_code=200, content_type="text/html"),
+        PageRecord(url="https://example.com/declared", status_code=200, content_type="text/html"),
+        # The one real finding: an indexable page, linked, that the sitemap forgot.
+        PageRecord(url="https://example.com/undeclared", status_code=200, content_type="text/html"),
+        PageRecord(
+            url="https://example.com/gallery/photo.jpg", status_code=200, content_type="image/jpeg"
+        ),
+        PageRecord(
+            url="https://example.com/private",
+            status_code=200,
+            content_type="text/html",
+            meta_robots="noindex, follow",
+        ),
+        PageRecord(url="https://example.com/gone", status_code=404, content_type="text/html"),
+    ]
+    result.links = [
+        LinkEdge(source="https://example.com/", destination=destination, anchor="", nofollow=False)
+        for destination in (
+            "https://example.com/declared",
+            "https://example.com/undeclared",
+            "https://example.com/gallery/photo.jpg",
+            "https://example.com/private",
+            "https://example.com/gone",
+            "https://wa.me/1234567890",  # outbound
+            "https://example.com/never-fetched",  # linked, outside the budget
+        )
+    ]
+    result.seed_urls = ["https://example.com/declared"]
+    return result
+
+
+def test_only_a_missing_page_is_reported_not_files_hosts_or_uncrawled_urls(monkeypatch):
+    monkeypatch.setattr(
+        sitemap_tool,
+        "crawl",
+        lambda url, concurrency=3: {
+            "urls": [{"loc": "https://example.com/"}, {"loc": "https://example.com/declared"}]
+        },
+    )
+    monkeypatch.setattr(
+        "seohead.crawl.spider.crawl_site", lambda *a, **kw: _site_with_the_four_wrong_populations()
+    )
+
+    out = handlers.crawl_site(url="https://example.com/", sitemap="https://example.com/sitemap.xml")
+    summary = out["summary"]["sitemap"]
+
+    assert summary["linked_not_in_sitemap"] == ["https://example.com/undeclared"]
+    assert out["summary"]["by_check"].get("URL_NOT_IN_SITEMAP") == 1
+
+    # Nothing is silently discarded: what was set aside is named.
+    set_aside = set(summary["linked_not_comparable"])
+    assert "https://wa.me/1234567890" in set_aside
+    assert "https://example.com/gallery/photo.jpg" in set_aside
+    assert "https://example.com/never-fetched" in set_aside
+    assert "https://example.com/private" in set_aside
+    assert "https://example.com/gone" in set_aside
+
+
+def test_narrowing_the_comparable_side_does_not_invent_orphans(monkeypatch):
+    """A declared URL that is noindex, or not HTML, is still reachable — so it must not
+    turn into a SITEMAP_ORPHAN just because it left the URL_NOT_IN_SITEMAP population."""
+    declared = ["https://example.com/private", "https://example.com/gallery/photo.jpg"]
+    monkeypatch.setattr(
+        sitemap_tool, "crawl", lambda url, concurrency=3: {"urls": [{"loc": u} for u in declared]}
+    )
+    monkeypatch.setattr(
+        "seohead.crawl.spider.crawl_site", lambda *a, **kw: _site_with_the_four_wrong_populations()
+    )
+
+    out = handlers.crawl_site(url="https://example.com/", sitemap="https://example.com/sitemap.xml")
+
+    assert out["summary"]["sitemap"]["in_sitemap_not_linked"] == []
+    assert "SITEMAP_ORPHAN" not in out["summary"]["by_check"]

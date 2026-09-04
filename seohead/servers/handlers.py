@@ -197,6 +197,47 @@ def _run_render_escalation(
     )
 
 
+def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
+    """The pages an XML sitemap of this site is supposed to declare.
+
+    A sitemap lists indexable HTML pages of one host. Comparing it against every link
+    destination the crawl recorded answers a different question and answers it wrongly: on a
+    live 124-page site that comparison produced 392 URL_NOT_IN_SITEMAP findings — 307 .jpg and
+    55 .webp files the gallery links to directly, five off-host links, and 30 URLs the crawl
+    never fetched — which was 74% of the entire report (issue #94). So the population is built
+    here from what the crawl actually fetched:
+
+    * fetched at all, with a real status — a URL nobody requested is evidence of nothing;
+    * 2xx — a 404 or a redirect is not a page a sitemap should declare;
+    * HTML by its own Content-Type — not an image, a PDF or a feed;
+    * on the start URL's host — a sitemap may not declare someone else's domain;
+    * indexable — a noindex page (meta robots or X-Robots-Tag) is deliberately excluded.
+    """
+    from urllib.parse import urlsplit
+
+    from seohead.recon.net import normalize_url as _normalize_host_url
+    from seohead.tools.parser import robots_directives
+
+    try:
+        host = urlsplit(_normalize_host_url(start_url)).netloc.lower()
+    except Exception:
+        host = ""
+
+    comparable: list[str] = []
+    for page in getattr(result, "pages", []) or []:
+        status = getattr(page, "status_code", None)
+        if status is None or not (200 <= status < 300):
+            continue
+        if not getattr(page, "is_html", False):
+            continue
+        if host and urlsplit(page.url).netloc.lower() != host:
+            continue
+        if "noindex" in robots_directives(page.meta_robots, page.x_robots):
+            continue
+        comparable.append(page.url)
+    return comparable
+
+
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
@@ -401,7 +442,9 @@ def crawl_site(
         # pipeline already uses for the same distinction (SITEMAP_ORPHAN,
         # URL_NOT_IN_SITEMAP), so audit.json has one schema either way.
         observed = [edge.destination for edge in result.links]
-        sitemap_summary = reconcile_sitemap(sitemap_seed["declared"], observed)
+        sitemap_summary = reconcile_sitemap(
+            sitemap_seed["declared"], observed, _sitemap_comparable_pages(result, url)
+        )
         sitemap_summary["sitemap_url"] = sitemap_seed["sitemap_url"]
         for orphan_url in sitemap_summary["in_sitemap_not_linked"]:
             ctx.add("SITEMAP_ORPHAN", target_url=orphan_url, details={"in_sitemap": True})
