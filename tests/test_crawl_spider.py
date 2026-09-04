@@ -103,6 +103,98 @@ def test_a_5xx_robots_stops_the_crawl_rather_than_allowing_it():
     assert "503" in result.stopped_reason
 
 
+# --- robots.txt redirects (#135): must be followed, but only so far ---------
+
+
+def test_robots_redirect_is_followed_and_its_disallow_applies():
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=301, headers={"location": "/robots-real.txt", "content-type": "text/html"}
+    )
+    site["https://example.com/robots-real.txt"] = FakeResponse(
+        "User-agent: *\nDisallow: /private/\n", headers={"content-type": "text/plain"}
+    )
+    site["https://example.com/"] = page("/a", "/private/secret")
+    result = _crawl(site)
+    assert "https://example.com/private/secret" not in {p.url for p in result.pages}
+    assert result.robots_blocked == ["https://example.com/private/secret"]
+    # The redirect happened where nothing used to say so — robots_note must
+    # name it rather than reading like an ordinary, unrestricted robots.txt.
+    assert "redirected" in result.robots_note
+    assert result.stopped_reason == ""
+
+
+def test_robots_redirect_off_host_is_not_trusted():
+    """A robots.txt fetched from somebody else's server must not govern this crawl."""
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=301, headers={"location": "https://other.com/robots.txt"}
+    )
+    result = _crawl(site)
+    assert result.pages == []
+    assert result.partial is True
+    assert "off-site" in result.stopped_reason
+
+
+def test_robots_redirect_loop_is_treated_as_unavailable():
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=302, headers={"location": "/r2.txt"}
+    )
+    site["https://example.com/r2.txt"] = FakeResponse(
+        "", status_code=302, headers={"location": "/robots.txt"}
+    )
+    result = _crawl(site)
+    assert result.pages == []
+    assert result.partial is True
+    assert "loop" in result.stopped_reason
+
+
+def test_robots_redirect_exceeding_the_hop_budget_is_treated_as_unavailable():
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=302, headers={"location": "/hop0"}
+    )
+    for i in range(6):
+        site[f"https://example.com/hop{i}"] = FakeResponse(
+            "", status_code=302, headers={"location": f"/hop{i + 1}"}
+        )
+    site["https://example.com/hop6"] = FakeResponse(
+        ROBOTS_OK, headers={"content-type": "text/plain"}
+    )
+    result = _crawl(site)
+    assert result.pages == []
+    assert result.partial is True
+    assert "redirected more than" in result.stopped_reason
+
+
+def test_robots_redirected_to_a_non_text_plain_body_is_treated_as_unavailable():
+    """An HTML page at the redirect target parses to an empty, permissive ruleset
+    just like the original bug — that must not pass for "no restrictions"."""
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=301, headers={"location": "/login"}
+    )
+    site["https://example.com/login"] = FakeResponse(
+        "<html>please sign in</html>", headers={"content-type": "text/html"}
+    )
+    result = _crawl(site)
+    assert result.pages == []
+    assert result.partial is True
+    assert "non-text/plain" in result.stopped_reason
+
+
+def test_robots_redirect_unavailable_does_not_stop_when_configured_not_to():
+    site = dict(SITE)
+    site["https://example.com/robots.txt"] = FakeResponse(
+        "", status_code=301, headers={"location": "https://other.com/robots.txt"}
+    )
+    result = _crawl(site, unavailable_means_stop=False)
+    assert "https://example.com/a" in {p.url for p in result.pages}
+    assert result.stopped_reason == ""
+    assert "off-site" in result.robots_note
+
+
 def test_the_url_budget_stops_the_crawl_and_marks_it_partial():
     result = _crawl(max_urls=2)
     assert len(result.pages) == 2

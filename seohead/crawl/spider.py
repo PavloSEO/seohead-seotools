@@ -28,7 +28,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
 from seohead.crawl.cache import ResponseCache
@@ -49,6 +49,9 @@ MAX_URLS_CEILING = 10_000
 MAX_DEPTH_CEILING = 20
 ROBOTS_TOKEN = "SEOHEAD-Tools"
 EMPTY_ROBOTS = {"allow": [], "disallow": [], "groups": [], "crawl_delay": None}
+# RFC 9309 §2.3.1.2 asks crawlers to follow "at least five consecutive redirects"
+# before giving up on robots.txt — this is that number, not an arbitrary one.
+MAX_ROBOTS_REDIRECTS = 5
 # Matches Throttle.should_stop / host_is_failing's own default limit — kept as
 # a separate constant here because the circuit breaker's *decision* is no
 # longer read off Throttle's live counters (see _fold_failure_streaks below).
@@ -259,28 +262,99 @@ def _fetch_robots(
 ) -> tuple[dict, str, bool]:
     """Read robots.txt. Returns ``(parsed_or_empty, note, unavailable)``.
 
-    ``unavailable`` is true only when the fetch itself failed (network error)
-    or the server answered 5xx — a host that could not say what is disallowed,
-    as distinct from one that has nothing to say. A 4xx robots.txt means "no
-    restrictions" per RFC 9309 and is not "unavailable". What happens when it
-    is unavailable — stop the crawl, or continue as if unrestricted — is
-    ``robots.unavailable_means_stop``, decided by the caller: RFC 9309 treats
-    an unavailable robots.txt as a full disallow, and the practical reason for
-    the default (stop) is sharper than the standard — a host answering 5xx is
-    already failing, and crawling it harder is the wrong response.
+    ``unavailable`` is true only when the fetch itself failed (network error),
+    the server (or the final hop of a redirect, see below) answered 5xx, or a
+    redirect could not be trusted — a host that could not say what is
+    disallowed, as distinct from one that has nothing to say. A 4xx robots.txt
+    means "no restrictions" per RFC 9309 and is not "unavailable". What
+    happens when it is unavailable — stop the crawl, or continue as if
+    unrestricted — is ``robots.unavailable_means_stop``, decided by the
+    caller: RFC 9309 treats an unavailable robots.txt as a full disallow, and
+    the practical reason for the default (stop) is sharper than the standard —
+    a host answering 5xx is already failing, and crawling it harder is the
+    wrong response.
+
+    ``client`` is the crawl's own content-fetching client, built with
+    ``follow_redirects=False`` so a 3xx on a *page* stays visible as a 3xx
+    (see ``crawl_site``). robots.txt has no such requirement — nothing reads
+    its Location header — so a 3xx here is followed by hand, hop by hop,
+    rather than reusing that client's redirect behaviour as-is (which is how
+    this function used to read a redirect's own near-always-empty body as the
+    whole ruleset: fully permissive, and silently so). Three things bound how
+    far "followed" goes, each because trusting it unconditionally reopens the
+    same silent-permissive hole from a different angle:
+
+    - hop count: ``MAX_ROBOTS_REDIRECTS`` hops, and a repeated URL is caught
+      as a loop before that budget even runs out;
+    - host: a redirect off the crawled site's registrable domain is not
+      followed — a robots.txt fetched from somebody else's server (accidental
+      misconfiguration or deliberate) must not govern this crawl, only its
+      own robots.txt may; the crawl's *content* fetches make an equivalent
+      call for the exact same reason (``excluded["redirect_off_host"]``);
+    - content type: a redirect that resolves to a non-``text/plain`` body
+      (an HTML error page, a login wall) is not parsed as robots.txt just
+      because ``parse_robots`` will not choke on it — it will simply find no
+      ``User-agent:`` lines and return the same empty, permissive ruleset
+      this whole function exists to stop producing.
+
+    Every one of those three outcomes is reported as ``unavailable=True``
+    with a specific note, so ``unavailable_means_stop`` (and the crawl's
+    ``robots_note``) reflect what actually happened rather than reading as an
+    ordinary, unrestricted robots.txt.
     """
     parts = urlsplit(start)
-    robots_url = urlunsplit((parts.scheme, parts.netloc, "/robots.txt", "", ""))
-    try:
-        response = fetcher(robots_url) if fetcher else client.get(robots_url)
-    except Exception as exc:
-        return dict(EMPTY_ROBOTS), f"robots.txt unreachable: {exc}", True
-    code = getattr(response, "status_code", None)
+    site_domain = registrable_domain(parts.hostname or "")
+    url = urlunsplit((parts.scheme, parts.netloc, "/robots.txt", "", ""))
+    visited = {url}
+    hops = 0
+    redirected = False
+    while True:
+        try:
+            response = fetcher(url) if fetcher else client.get(url)
+        except Exception as exc:
+            return dict(EMPTY_ROBOTS), f"robots.txt unreachable: {exc}", True
+        code = getattr(response, "status_code", None)
+        if code is None or not (300 <= code < 400):
+            break
+        location = (getattr(response, "headers", None) or {}).get("location", "")
+        if not location:
+            break  # a redirect status with no destination is just the final response
+        hops += 1
+        if hops > MAX_ROBOTS_REDIRECTS:
+            return (
+                dict(EMPTY_ROBOTS),
+                f"robots.txt redirected more than {MAX_ROBOTS_REDIRECTS} times",
+                True,
+            )
+        next_url = urljoin(url, location)
+        if next_url in visited:
+            return dict(EMPTY_ROBOTS), f"robots.txt redirect loop at {next_url}", True
+        visited.add(next_url)
+        next_host = urlsplit(next_url).hostname or ""
+        if registrable_domain(next_host) != site_domain:
+            return (
+                dict(EMPTY_ROBOTS),
+                f"robots.txt redirected off-site to {next_url}; not followed",
+                True,
+            )
+        url = next_url
+        redirected = True
+
     if code is not None and 500 <= code < 600:
         return dict(EMPTY_ROBOTS), f"robots.txt returned {code}", True
     if code is not None and code >= 400:
         return dict(EMPTY_ROBOTS), "no robots.txt", False
-    return parse_robots(getattr(response, "text", "") or ""), "", False
+    if redirected:
+        content_type = (getattr(response, "headers", None) or {}).get("content-type", "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if content_type and media_type != "text/plain":
+            return (
+                dict(EMPTY_ROBOTS),
+                f"robots.txt redirected to non-text/plain content ({media_type})",
+                True,
+            )
+    note = f"robots.txt redirected to {url}" if redirected else ""
+    return parse_robots(getattr(response, "text", "") or ""), note, False
 
 
 def crawl_site(
