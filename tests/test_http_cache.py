@@ -181,6 +181,28 @@ def test_two_variants_of_the_same_url_can_both_be_stored(tmp_path):
     assert mobile.entry.body == "mobile"
 
 
+# ── #131: User-Agent is part of the key even when the origin never says Vary ───────────────
+
+
+def test_a_different_user_agent_is_a_miss_even_without_a_vary_header(tmp_path):
+    """The case every Vary test above omits: none of them exercise a response that stays
+    silent about Vary, which is what almost every real site does. Without this, `_match`'s
+    `all()` over an empty `vary_headers` list is vacuously true for any request."""
+    cache = ResponseCache(tmp_path)
+    cache.store(
+        "https://example.com/",
+        {"User-Agent": "A"},
+        200,
+        {"cache-control": "max-age=3600"},  # deliberately no Vary at all
+        "desktop body",
+    )
+    same_ua = cache.decide("https://example.com/", {"User-Agent": "A"})
+    other_ua = cache.decide("https://example.com/", {"User-Agent": "B"})
+    assert same_ua.status == "hit"
+    assert same_ua.entry.body == "desktop body"
+    assert other_ua.status == "miss", "a different identity must never replay another one's body"
+
+
 # ── replay mode and explicit invalidation ───────────────────────────────────
 
 

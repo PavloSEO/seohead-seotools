@@ -26,6 +26,18 @@ audit" into a silent report of last week's site. This module refuses that defaul
   variant, keyed on the values of exactly those headers, so a locale- or UA-adaptive URL never
   answers from the wrong representation. ``Vary: *`` means "not safely reusable" and is treated
   like ``no-store``.
+- ``User-Agent`` is *always* part of the key, whether or not the origin lists it in ``Vary``.
+  ``Vary`` is the origin's declaration of what it varies its own response on; it says nothing
+  about which request headers this crawler's own operator can change between runs. This
+  toolkit's ``http.user_agent`` setting is exactly such a header (see issue #131): two runs
+  configured with different identities — a plain crawl and a "fetch as Googlebot" cloaking
+  check are the motivating case — must never let one replay the body the other one stored,
+  origin opinion or not. ``http.headers`` (``crawl.extra_request_headers``) has the same
+  property in principle, but never reaches this far: any non-empty ``extra_headers`` already
+  makes ``fetch_one`` bypass the cache outright in both directions (a credentialed request has
+  always worked this way; ``http.headers`` was wired through the same gate), so it needs no key
+  entry here. No other request header gets this unconditional treatment — only the one this
+  crawler is documented to vary per run.
 - Credentialed requests (per-host credential headers — see ``seohead.crawl.settings``) bypass
   the cache in both directions, deliberately more conservative than ``Vary`` discipline alone:
   this is a private, single-operator, local cache rather than a shared proxy, but a cache that
@@ -73,8 +85,25 @@ from seohead.crawl.state import ensure_safe_dir
 # v2 added size_bytes. A v1 entry cannot supply it, and defaulting it to 0 would make a
 # replayed page report a size it never had, so v1 entries are simply not read: the URL is
 # fetched again once and stored in the new shape.
+#
+# #131 (User-Agent joining the key below) does not bump this to v3: a v2 entry written before
+# the fix has no "user-agent" key in request_header_values (only origin-Vary-listed headers
+# were ever recorded), so under the new _match it can only ever compare "" against whatever
+# User-Agent the current request actually carries — never a match by coincidence, since
+# fetch_one always sends a real one. That resolves to the fallback this whole module is built
+# on: a cache miss, safe by construction, never a wrong hit. v1 needed a version bump because a
+# missing field would have been silently read as a fabricated value (size 0); here a
+# schema-shaped-the-same entry simply fails the (now stricter) match and gets re-fetched, which
+# is a slower first run per stale entry, not an incorrect one — no bump earns its cost.
 SCHEMA_VERSION = "http_cache.v2"
 DEFAULT_DIR = "~/.cache/seohead/http_cache"
+
+# Request headers folded into every entry's key regardless of what the origin names in Vary —
+# see the module docstring's "User-Agent is always part of the key" paragraph. Kept as a tuple,
+# not a single constant, in case a future crawler-controlled identity header joins it; today
+# only User-Agent has that property (http.headers never reaches store()/decide() at all, see
+# above).
+CRAWLER_IDENTITY_HEADERS = ("user-agent",)
 
 # Stats counters, each incremented at exactly the moment its outcome is final. Total network
 # round trips saved by the cache is ``hits + revalidations`` (a revalidation still costs one
@@ -246,10 +275,10 @@ class ResponseCache:
     def _match(self, url: str, request_headers: dict[str, str]) -> CacheEntry | None:
         lowered = {k.lower(): v for k, v in request_headers.items()}
         for entry in self._variants(url):
-            if all(
-                lowered.get(h.lower(), "") == entry.request_header_values.get(h.lower(), "")
-                for h in entry.vary_headers
-            ):
+            # Origin-declared Vary headers plus the crawler's own always-keyed identity
+            # headers (User-Agent) — see CRAWLER_IDENTITY_HEADERS and the module docstring.
+            keys = {h.lower() for h in entry.vary_headers} | set(CRAWLER_IDENTITY_HEADERS)
+            if all(lowered.get(h, "") == entry.request_header_values.get(h, "") for h in keys):
                 return entry
         return None
 
@@ -319,12 +348,14 @@ class ResponseCache:
             return
         vary_headers = [h.strip() for h in headers.get("vary", "").split(",") if h.strip()]
         lowered_request = {k.lower(): v for k, v in request_headers.items()}
+        # vary_headers itself stays a faithful record of what the origin declared; the values
+        # actually recorded for matching also cover the crawler's own always-keyed headers, so
+        # a later _match() sees User-Agent even when the origin never mentioned it.
+        key_headers = {h.lower() for h in vary_headers} | set(CRAWLER_IDENTITY_HEADERS)
         entry = CacheEntry(
             url=url,
             vary_headers=vary_headers,
-            request_header_values={
-                h.lower(): lowered_request.get(h.lower(), "") for h in vary_headers
-            },
+            request_header_values={h: lowered_request.get(h, "") for h in key_headers},
             status_code=status_code,
             headers=headers,
             body=body,
