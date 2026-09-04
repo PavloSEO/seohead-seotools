@@ -309,3 +309,24 @@ def test_query_string_disallow_is_reported_under_report_only():
     result = _crawl(QUERY_SITE, robots_policy="report_only")
     assert "https://example.com/blog?page=2" in {p.url for p in result.pages}
     assert result.robots_blocked == ["https://example.com/blog?page=2"]
+
+
+# --- <template>-only links are never crawled (issue #140) -------------------
+
+TEMPLATE_SITE = {
+    "https://example.com/robots.txt": FakeResponse(
+        ROBOTS_OK, headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": FakeResponse(
+        '<html><body><template><a href="/ghost">gone</a></template>'
+        "<p>Real page content with enough words for the page to be meaningful.</p>"
+        "</body></html>"
+    ),
+    # No entry for /ghost: fetching it would be an error, proving the spider never tried.
+}
+
+
+def test_template_only_link_is_never_enqueued_or_stored():
+    result = _crawl(TEMPLATE_SITE)
+    assert {p.url for p in result.pages} == {"https://example.com/"}
+    assert result.links == []

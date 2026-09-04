@@ -56,6 +56,17 @@ AUTO_STRATEGIES = (
     ("article", "auto_article"),
 )
 
+# Elements never part of rendered body text, wherever in the document they appear: <script>/
+# <style> carry no copy, <noscript> only renders with scripting off (it still carries real,
+# discoverable links -- see parser._INERT_LINK_CONTAINERS), <template> is inert per the HTML
+# spec, and <svg>/<math> are visible graphics whose descendant text (an icon sprite's
+# accessibility <title>, glyph <text>/<tspan>, MathML notation) is a label or notation, not
+# body prose. This is the one place that answer lives: ``extract_area_text`` below and
+# ``parser._extract_text`` both decompose exactly this set, rather than keeping two lists that
+# silently drift (which is how issue #140 happened -- a fix to one text extractor did not
+# reach the other, scoped-content-area one that actually feeds ``word_count``).
+TEXT_EXCLUDED_TAGS = ("script", "style", "noscript", "template", "svg", "math")
+
 
 def _strip(root: Tag, exclude_tags: Any, exclude_selectors: Any) -> None:
     """Remove excluded elements from ``root`` in place."""
@@ -147,6 +158,6 @@ def resolve_content_area(
 def extract_area_text(root: Tag) -> str:
     """Collapsed visible text of an already-resolved content root."""
     root = copy(root)
-    for tag in root.find_all(["script", "style", "noscript", "template"]):
+    for tag in root.find_all(list(TEXT_EXCLUDED_TAGS)):
         tag.decompose()
     return " ".join(root.get_text(" ").split())
