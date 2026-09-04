@@ -22,8 +22,9 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
+from seohead.crawl.config import resolve_credential_headers
 from seohead.crawl.throttle import Throttle
 from seohead.recon.net import UA, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
@@ -136,11 +137,16 @@ def fetch_one(
     client: Any = None,
     fetcher: Callable[[str], Any] | None = None,
     throttle: Throttle | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[PageRecord, dict[str, Any] | None]:
     """Fetch and parse one URL. Returns the record and the parsed document.
 
     The parsed document is handed back rather than discarded so a caller that
     needs the links — the spider — does not parse the same bytes twice.
+
+    ``extra_headers`` is resolved by the caller for this URL's own host, so it
+    never survives a redirect to a different host: the next hop is a fresh
+    call with headers resolved for the new host, not these carried forward.
     """
     record = PageRecord(url=url)
     if fetcher is None:
@@ -164,7 +170,7 @@ def fetch_one(
             target, headers, extensions = pinned_target(url)
             response = client.get(
                 target,
-                headers={"User-Agent": UA, **headers},
+                headers={"User-Agent": UA, **headers, **(extra_headers or {})},
                 extensions=extensions,
             )
     except Exception as exc:
@@ -241,6 +247,7 @@ def collect_urls(
     out_path: str | None = None,
     fetcher: Callable[[str], Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    credential_headers: list[dict[str, Any]] | None = None,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
@@ -280,7 +287,13 @@ def collect_urls(
             if throttle.delay:
                 sleeper(throttle.delay)
 
-            record, _ = fetch_one(url, client=client, fetcher=fetcher, throttle=throttle)
+            host = (urlsplit(url).hostname or "").lower()
+            extra_headers = (
+                resolve_credential_headers(credential_headers, host) if credential_headers else None
+            )
+            record, _ = fetch_one(
+                url, client=client, fetcher=fetcher, throttle=throttle, extra_headers=extra_headers
+            )
             result.pages.append(record)
             _write(handle, record)
 

@@ -197,3 +197,85 @@ def test_the_effective_rate_is_derived_from_the_combination_not_one_knob():
 def test_no_delay_reports_an_unbounded_rate():
     rate = cfg.effective_request_rate(cfg.load(overrides={"speed.min_delay_seconds": 0}))
     assert rate == float("inf")
+
+
+# ── credential headers ──────────────────────────────────────────────────────
+
+
+def _cred_overrides(**entry):
+    return {
+        "http.credential_headers": [entry],
+        "http.credentials_acknowledged": True,
+    }
+
+
+def test_an_unbound_credential_entry_is_refused(monkeypatch):
+    """An entry without a host binding would be sent on every request."""
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "x")
+    overrides = _cred_overrides(headers={"Authorization": "env:SEOHEAD_TEST_TOKEN"})
+    with pytest.raises(cfg.ConfigError, match="host binding"):
+        cfg.load(overrides=overrides)
+
+
+def test_credentials_without_acknowledgement_are_refused(monkeypatch):
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "x")
+    overrides = {
+        "http.credential_headers": [
+            {"host": "example.com", "headers": {"Authorization": "env:SEOHEAD_TEST_TOKEN"}}
+        ]
+    }
+    with pytest.raises(cfg.ConfigError, match="credentials_acknowledged"):
+        cfg.load(overrides=overrides)
+
+
+def test_an_inline_credential_value_is_refused():
+    """Config files carry a reference to the environment, never the secret itself."""
+    overrides = _cred_overrides(host="example.com", headers={"Authorization": "Bearer abc123"})
+    with pytest.raises(cfg.ConfigError, match="environment variable"):
+        cfg.load(overrides=overrides)
+
+
+def test_a_credential_referencing_an_unset_variable_is_refused():
+    overrides = _cred_overrides(host="example.com", headers={"Authorization": "env:SEOHEAD_NOPE"})
+    with pytest.raises(cfg.ConfigError, match="SEOHEAD_NOPE"):
+        cfg.load(overrides=overrides)
+
+
+def test_a_bound_credential_with_a_set_variable_loads(monkeypatch):
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "s3cr3t")
+    overrides = _cred_overrides(
+        host="example.com", headers={"Authorization": "env:SEOHEAD_TEST_TOKEN"}
+    )
+    resolved = cfg.load(overrides=overrides)
+    assert resolved["http"]["credential_headers"][0]["host"] == "example.com"
+
+
+def test_credentials_apply_only_to_their_own_host(monkeypatch):
+    """The mechanism that keeps a credential off a cross-host redirect target."""
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "s3cr3t")
+    entries = [{"host": "example.com", "headers": {"Authorization": "env:SEOHEAD_TEST_TOKEN"}}]
+    assert cfg.resolve_credential_headers(entries, "example.com") == {"Authorization": "s3cr3t"}
+    assert cfg.resolve_credential_headers(entries, "EXAMPLE.COM") == {"Authorization": "s3cr3t"}
+    assert cfg.resolve_credential_headers(entries, "other-host.com") == {}
+
+
+def test_configuring_credentials_adds_the_default_destructive_path_exclusions(monkeypatch):
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "s3cr3t")
+    overrides = _cred_overrides(
+        host="example.com", headers={"Authorization": "env:SEOHEAD_TEST_TOKEN"}
+    )
+    resolved = cfg.load(overrides=overrides)
+    for pattern in cfg.DESTRUCTIVE_PATH_PATTERNS:
+        assert pattern in resolved["scope"]["exclude_patterns"]
+
+
+def test_credential_values_are_redacted_from_the_manifest(monkeypatch):
+    monkeypatch.setenv("SEOHEAD_TEST_TOKEN", "s3cr3t")
+    overrides = _cred_overrides(
+        host="example.com", headers={"Authorization": "env:SEOHEAD_TEST_TOKEN"}
+    )
+    manifest = cfg.manifest(cfg.load(overrides=overrides))
+    entry = manifest["http.credential_headers"][0]
+    assert entry["host"] == "example.com"
+    assert entry["headers"]["Authorization"] == "REDACTED"
+    assert "s3cr3t" not in json.dumps(manifest)
