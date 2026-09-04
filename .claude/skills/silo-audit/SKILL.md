@@ -20,11 +20,39 @@ returns a verdict of **chaos / basic silo / extended silo**. The theory—3 leve
 silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–30% /
 70–90%—is in `reference/silo-architecture.md`; load it before evaluating a website.
 
-## When to Use It
-- “Do we have a silo or not?” and “Evaluate the website structure/architecture.”
-- “Are there topical clusters?” and “Is semantic coverage complete?”
-- “Is the website flat or just a brochure site?” and “Have we reached topical authority?”
-- “Site structure audit” and “silo structure.”
+## Trigger
+- "Do we have a silo or not?" and "Evaluate the website structure/architecture."
+- "Are there topical clusters?" and "Is semantic coverage complete?"
+- "Is the website flat or just a brochure site?" and "Have we reached topical authority?"
+- "Site structure audit" and "silo structure."
+- Frontmatter triggers: silo or not silo, silo architecture, website structure,
+  topical clusters, semantic coverage, flat structure, website architecture,
+  topical authority, site structure audit, silo structure, topical map.
+
+## Anti-trigger
+- The question is about individual crawl issues (broken links, duplicates, thin
+  content) rather than structure — that is `sf-report`/`sf-tasks` reading the same
+  `audit.json`, not this skill.
+- No `audit.json` from `sf-analyzer` exists and there is also no sitemap to fall
+  back on — there is no URL tree to build. Run `sf-analyzer` first, or obtain a
+  sitemap URL from the user.
+- The ask is "check robots.txt / crawlability," not "is the structure a silo" —
+  crawl blocking and URL architecture are different axes; use `robots-audit`.
+  A page can be perfectly crawlable and still be architecturally flat.
+- The deliverable is a client-facing narrative report, not a structural verdict —
+  hand the silo verdict and gap list to `sf-report`/`site-report` to fold into a
+  full report rather than presenting this skill's output as the whole deliverable.
+
+## Preconditions
+- [ ] `audit.json` from `sf-analyzer` is available (preferred — gives
+  `crawl_depth`, `inlinks`, `is_in_sitemap`, `summary.sitemap`), **or** a fetchable
+  `sitemap.xml` exists to build the path tree from as a fallback.
+- [ ] `reference/silo-architecture.md` has been loaded before scoring, since the
+  chaos/basic/extended thresholds and hub/cluster definitions live there, not in
+  this file.
+- [ ] The niche's expected intent set (catalog, industries, glossary, cases,
+  E-E-A-T pages, etc.) is known well enough to judge semantic coverage — otherwise
+  the coverage percentage in step 3 has no denominator to compare against.
 
 ## Workflow
 1. **Obtain crawl data.** You need `audit.json` from **sf-analyzer**; see
@@ -70,6 +98,43 @@ silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–3
    Then provide a **gap list**: which hubs, clusters, and intents are missing; where
    orphan nodes occur; where cross-cluster links cause the silo to “leak”; and what to
    add—specific sections and hub pages—to reach the next level.
+
+## Decision points
+- **Metrics fall in different classes.** A site might have basic-silo depth/hubs
+  but chaos-level coverage (or vice versa). Do not average the classes: state each
+  metric's class explicitly and let the lowest-scoring dimension drive the overall
+  verdict, since a gap in one dimension (e.g. no E-E-A-T pages) is still a real gap
+  regardless of how good the URL depth looks.
+- **Cross-cluster link share is ambiguous on its own.** Zero cross-links and a
+  chaotic "everything links to everything" pattern are both bad, but for opposite
+  reasons (isolated silos vs. no silo boundaries at all). Check the *distribution*
+  of cross-links against the reference guide's controlled-cross-link pattern
+  before calling either extreme a defect.
+- **`sitemap.xml` fallback vs. `audit.json`.** Without a crawl, the sitemap gives
+  you the URL list but not `inlinks`/`crawl_depth`/orphan data — say explicitly
+  which metrics could not be computed in fallback mode rather than presenting a
+  partial verdict as if it were complete.
+- **Coverage percentage depends on the expected-intent list.** This list is a
+  judgment call per niche (an e-commerce site and a SaaS site expect different
+  intents). State which intents were assumed as "expected" before reporting a
+  coverage percentage, so the number is reproducible rather than asserted.
+
+## Definition of done
+- [ ] Maximum and median URL depth, `crawl_depth`, and orphan rate are all
+  computed and stated (or explicitly marked unavailable in sitemap-only fallback).
+- [ ] Every L1 prefix has been checked for a hub page and a child count, feeding
+  the cluster table.
+- [ ] A single chaos/basic/extended verdict is given, with the metric(s) that
+  drove it named explicitly (see Decision points).
+- [ ] A prioritized gap list exists naming missing hubs/clusters/intents, not
+  just the current-state metrics.
+
+## Cost
+No new `seohead <command>` calls of its own beyond what `sf-analyzer` already ran
+to produce `audit.json` — this skill only reads that file (or, in fallback mode,
+makes one `curl` request to `sitemap.xml`). All structural-metric computation is
+local Python over `pages[]`/`issues[]`; no paid API involved. Cost scales with
+`sf-analyzer`'s crawl, not with anything this skill does independently.
 
 ## What to Deliver to the User
 - The architecture class (chaos / basic / extended) plus an evidence-based semantic

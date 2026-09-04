@@ -17,12 +17,43 @@ Screaming Frog measures **one** snapshot—raw or rendered, depending on whether
 Rendering is enabled—but does not compare "before JS" with "after JS." This skill
 performs exactly that diff.
 
-## When to Use It
+## Trigger
 - "Do content / links / metadata appear only after JS?"
 - SPA / Next.js / Nuxt / CSR: "Will it be indexed?" or "Is SSR required?"
 - An SF crawl differs with JS Rendering enabled versus disabled, and you need to determine
   which count is correct.
 - A regional or silo audit found zero links where links are known to exist.
+- Triggers from the frontmatter: JS rendering, view-source vs rendered,
+  content only after JS, client-side rendering, CSR, SPA SEO, Next.js
+  rendering, check rendering, raw vs rendered, hydration, empty HTML, Core
+  Web Vitals, LCP, CLS.
+
+## Anti-trigger
+- Auditing rendering behavior across an entire site, not one page — that is
+  an SF crawl with JS Rendering enabled (see "Boundaries" below), not a
+  per-URL loop of this skill.
+- Playwright is not installed and there is time pressure — do not
+  approximate the answer from raw HTML alone. The tool intentionally returns
+  `ok: false` with an install command rather than guessing; install it first
+  or report the check as blocked.
+- The real question is field Core Web Vitals (what real users experience),
+  not a raw-vs-rendered diff — `metrics_lab` is a single local Chromium run
+  and cannot stand in for CrUX/Search Console field data; use the
+  `pagespeed-insights` skill for that instead.
+- The page is already known to be plain server-rendered HTML (no framework,
+  no CSR) — there is nothing to diff; go straight to the relevant on-page
+  skill (`heading-outline`, `schema-graph`, …) instead of running a
+  rendering diff that will trivially show no difference.
+
+## Preconditions
+- [ ] A specific URL to check (this is a one-page tool, not a site crawl).
+- [ ] `pip install 'seohead[render]'` and `python -m playwright install
+  chromium` completed, or acceptance that the command will fail fast with an
+  install prompt if not.
+- [ ] A concrete reason to suspect JS-dependent content — an SPA/CSR
+  framework, an SF count that differs with/without JS Rendering, or missing
+  links found during another audit — otherwise this is a speculative check
+  with no expected finding.
 
 ## Workflow
 
@@ -87,6 +118,51 @@ seohead render-check --url https://example.com --wait networkidle
   ```
 - **It does not fix the issue.** The finding "content is client-rendered" is a diagnosis;
   the solution (SSR, SSG, or prerendering for bots) depends on the stack.
+
+## Decision points
+- **Diff sits between "widget" (~5%) and "alert" (30%+).** The skill only
+  names the two extremes explicitly; for anything in between, judge by
+  *what* changed, not just the percentage — a 15% text diff that includes
+  the main product description matters more than a 25% diff made of a
+  repeated footer.
+- **`load` vs `networkidle` wait mode.** Default to `load` (see "Why Wait
+  for `load`" below) even though it is less exhaustive, because
+  `networkidle` reliably times out on real sites with live analytics, chat,
+  or ads. Switch to `networkidle` only for a specific page already suspected
+  of firing content late — not as a first-pass setting.
+- **Title/canonical changed by a script.** Before flagging this as critical,
+  check what it changed *to*: a script normalizing a trailing slash or
+  protocol is cosmetic, while a script rewriting canonical to a different
+  page (or every page to the homepage) is the critical case this check
+  exists to catch.
+- **`empty_shell` present but the rest of the findings look mild.** An empty
+  root container combined with a small raw/rendered diff usually means the
+  fetch failed before JS executed (timeout, bot-block, redirect) rather than
+  a healthy page — re-run before reporting a clean result.
+
+## Definition of done
+- [ ] `render-check` has been run for the URL(s) in scope, with `--viewport
+  mobile` added where layout differs by device.
+- [ ] The `raw` vs `rendered` diff has been read for words, internal links,
+  title, h1, canonical, and JSON-LD — not just the overall percentage.
+- [ ] Every finding at or above the 30% threshold, or any critical-severity
+  finding regardless of percentage, is called out explicitly with its
+  interpretation from "How to Interpret Findings."
+- [ ] Lab metrics are labeled as lab data, not presented as field/CrUX data,
+  in the conclusion delivered to the user.
+- [ ] If Playwright was missing, that is reported as a blocked precondition,
+  not silently skipped.
+
+## Cost
+One `seohead render-check --url ...` invocation per page (two if both mobile
+and desktop viewports are checked). No other `seohead` command is involved
+and no paid API is touched — rendering runs a local headless Chromium via
+Playwright. Time is a few seconds to roughly 30 seconds per page (browser
+boot plus wait for `load`); forcing `--wait networkidle` can run far longer
+on a live commercial site (up to timeout — 26 seconds was observed in one
+measurement in this file). This is a per-page tool: auditing many pages
+means many browser launches, so rely on an SF crawl with JS Rendering
+enabled for site-wide coverage instead of looping this skill over a page list.
 
 ## Related Skills
 `sf-config` (enable JS Rendering in the crawl if the diff reveals client-rendered content) ·

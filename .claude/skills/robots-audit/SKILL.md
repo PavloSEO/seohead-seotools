@@ -18,12 +18,35 @@ An agentic `robots.txt` audit built on top of a Screaming Frog crawl. SF shows
 "blocked by robots" page by page, but it does not explain WHY a rule is harmful or
 HOW to rewrite it. This skill fills that gap.
 
-## When to use it
+## Trigger
 
 - The user asks to analyze `robots.txt`, verify that it does not block important content,
   or find redundant directives.
 - An `sf-analyzer` audit reports "Blocked by robots.txt" or unusual index coverage gaps.
 - A crawl/indexing section is needed before delivering an `sf-report` report.
+
+## Anti-trigger
+
+- The question is about **indexing**, not crawling — "is this page indexed",
+  "should this be `noindex`". Robots.txt controls crawling only; go to
+  `seo-recon` / page-level `parse` for meta robots and canonical instead of
+  reading intent into `Disallow` rules it does not have.
+- No live site and no `sf-analyzer` audit exist yet, and the user has not
+  supplied a `robots.txt` file directly — there is nothing to audit. Run
+  `sf-analyzer` (or fetch the file per step 1 below) first.
+- The ask is "generate a robots.txt for a new site" rather than auditing an
+  existing one — that is authoring, not auditing; this skill's checks assume
+  a file already exists and needs review.
+
+## Preconditions
+
+- [ ] `https://SITE/robots.txt` resolves with `200` (see step 1) — a 404/5xx
+  is itself the finding, not a reason to stop, but note it before running the
+  heuristic checks below.
+- [ ] At least one of: an `sf-analyzer` `audit.json` with live 200-status
+  pages, or a fetchable `sitemap.xml`, or a page list supplied by the user —
+  without a reference set, "blocks live pages" cannot be checked, only
+  syntax and structure.
 
 ## Workflow
 
@@ -65,6 +88,38 @@ HOW to rewrite it. This skill fills that gap.
 A small Python script using the standard-library `urllib.robotparser` is convenient for checking
 whether paths match rules:
 `python -c "import urllib.robotparser as r; rp=r.RobotFileParser(); rp.parse(open('/tmp/robots.txt').read().splitlines()); print(rp.can_fetch('*','/blog?page=2'))"`.
+
+## Decision points
+
+- **A `Disallow` matches sitemap/200-status URLs.** Do not assume it is a bug —
+  check whether the blocked section is genuinely non-public (checkout, admin,
+  search-result pages) before flagging it as high severity. Ask the user when
+  the intent is unclear rather than guessing.
+- **`Disallow: /` under the `*` group.** Before flagging this as a launch-
+  blocking incident, check whether a more specific `User-agent` group above it
+  already re-opens the site for the crawlers that matter — the `*` line is not
+  automatically the effective rule for every bot.
+- **Conflicting `Allow`/`Disallow` of equal specificity.** The spec is
+  ambiguous here and crawlers differ; say so explicitly instead of picking a
+  winner silently, and recommend making one of the two rules more specific.
+
+## Definition of done
+
+- [ ] Every `Disallow`/`Allow` directive has been checked against both the
+  rendering-resource list and the live/sitemap reference set from Preconditions.
+- [ ] Every finding carries a severity, the exact offending line, and the
+  affected URLs (or a stated reason none could be enumerated).
+- [ ] A corrected `robots.txt` exists and its diff against the original is
+  minimal — no reformatting unrelated to a finding.
+- [ ] The crawling-vs-indexing distinction has been stated in the conclusion
+  delivered to the user (see "What to deliver to the user").
+
+## Cost
+
+Two `curl` requests (robots.txt, its HTTP-status check) plus one for the
+sitemap if no `sf-analyzer` audit is already available — under 5 requests,
+sub-second each, no paid API involved. The bulk of the time is the heuristic
+review itself, not network I/O.
 
 ## What to deliver to the user
 

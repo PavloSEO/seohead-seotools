@@ -18,10 +18,33 @@ Converts an audit (`audit.json`) into a ready-to-use **backlog**: `tasks.json`
 is configurable: what to include, how to group items, and which priorities and
 effort estimates to assign.
 
-## When to Use It
+## Trigger
 - "Create tasks from this export / audit";
 - "Build a backlog for developers" or "What should be fixed first?";
 - "I need tasks.md / a prioritized task list."
+- Frontmatter triggers: tasks from an audit, SEO backlog, tasks.md, task pipeline,
+  Screaming Frog Scrum backlog, what to fix from an export.
+
+## Anti-trigger
+- No `audit.json` and no SF exports exist yet — there is nothing to turn into
+  tasks. Run `sf-analyzer` (`seohead sf run`) first, or add `--tasks` to that same
+  run to skip this skill entirely.
+- The ask is a human-readable narrative for a client review, not a checklist for
+  developers — use `sf-report`, which formats the same `audit.json` as prose
+  instead of prioritized tickets.
+- The ask is about topical/silo architecture gaps (missing hub pages, clusters,
+  semantic coverage) rather than crawl-detected issues — use `silo-audit`; its
+  gap list is a different kind of backlog, not derived from `tasks_pipeline`.
+- The site has no Screaming Frog crawl at all and the backlog should come from a
+  sitemap-based bulk audit instead — use `site-report` (`seohead site-audit`),
+  which has its own report/CSV export path, not `tasks.json`.
+
+## Preconditions
+- [ ] An `audit.json` exists, or a directory of SF exports exists from which one
+  can be generated in step 1.
+- [ ] If a custom pipeline is wanted (severities, grouping, priority/effort maps,
+  limits), a `config.json` with a `tasks_pipeline` section is ready — otherwise
+  the defaults (all severities, grouped by check) are used.
 
 ## Workflow
 1. **Obtain the audit.** If `audit.json` is available, go directly to step 3. If
@@ -45,6 +68,44 @@ effort estimates to assign.
    a "how to fix" field; for broken links, it includes a
    `destination ← source · position · XPath` list. Discuss P1 first, estimate the
    total scope (`summary.by_priority`), and attach `tasks.json` for the tracker.
+
+## Decision points
+- **`group_by: check` vs. `group_by: issue`.** Grouping by check produces one task
+  per issue type (e.g. "fix 40 broken links") that a single developer session can
+  clear in bulk; grouping by issue/URL produces one task per affected page, useful
+  when different pages have different owners. Pick based on who will pick up the
+  ticket, not by default.
+- **Default `priority_map`/`effort_map` vs. a custom one.** The severity from
+  `audit.json` (critical/warning/notice) is a technical-impact judgment, not a
+  business-priority one — a "notice" that affects 500 URLs may deserve `P1` on
+  effort/reach grounds even though its technical severity is low. Override the
+  maps in `config.json` when the client's priorities diverge from raw severity.
+- **`min_occurrences` and `max_urls_per_task`.** On a large crawl, leaving these
+  at defaults can produce a backlog that is technically complete but too long to
+  action. Raise `min_occurrences` to suppress one-off findings, and cap
+  `max_urls_per_task` when a single task would otherwise list hundreds of URLs
+  the tracker cannot render usefully.
+- **Re-running after fixes.** Because groups and priorities are deterministic,
+  a second `tasks.json` can be diffed against the first to check what was
+  actually closed — decide whether the user wants that diff before re-running
+  the full pipeline from scratch.
+
+## Definition of done
+- [ ] `tasks.json` and `tasks.md` both exist and were built from the same
+  `audit.json`/config inputs.
+- [ ] Every task carries `id`, `check`, `priority`, `severity`, `effort`, `title`,
+  `fix_hint`, and `affected_count`; broken-link tasks additionally carry
+  `broken_links[]` with source/position/XPath.
+- [ ] `tasks.md` is organized by `P1/P2/P3`, and P1 was discussed with the user
+  first along with the total scope from `summary.by_priority`.
+- [ ] `tasks.json` is attached for the tracker.
+
+## Cost
+No new network requests: this skill only calls `seohead sf tasks` (or `sf run
+--tasks`) over an `audit.json`/export set already produced by a prior
+`sf-analyzer` crawl or export — local computation, no paid API. If `audit.json`
+still needs to be generated in step 1, that cost is `sf-analyzer`'s (see its own
+skill), not this one's.
 
 ## Task Format (`tasks.json`)
 `id`, `check`, `priority` (P1/P2/P3), `severity`, `effort`, `title`, `fix_hint`,

@@ -30,13 +30,42 @@ all further analysis is static signature matching against `header`, `value`, `co
 `html`, and `script`. Every match includes the marker (`evidence`) that triggered it,
 making the conclusion verifiable.
 
-## When to Use It
+## Trigger
 - "what is the site built with," "which site engine," "which CMS," "is it WordPress," "site stack";
 - "which technologies," "what does the site use," "how is traffic measured," "which pixels are installed";
 - "which widgets / chats / support tools," "which consent banner," "which payment systems";
 - "does it use Cloudflare / protection," "who hosts the frontend (Vercel / Netlify / CloudFront)";
 - checking a headless combination (CMS + Next.js/Nuxt) before a rendering audit;
 - a quick competitor profile before an audit — what it uses and how it differs.
+- Frontmatter triggers: tech stack, detect technologies, wappalyzer, CMS,
+  WordPress, Bitrix, Tilda, Shopify, Next.js, Nuxt, Vue, React, Angular, Laravel,
+  Django, analytics, Google Analytics, Yandex Metrica, pixels, Meta Pixel, TikTok
+  Pixel, widgets, Intercom, chats, Stripe, Cloudflare, consent, cookie banner,
+  headless, what is it built with, site engine, how traffic is measured.
+
+## Anti-trigger
+- The question is about server location, DNS, hosting/ASN, TLS, or actual CDN
+  cache behavior rather than the frontend stack — that is `seo-recon`, not this
+  skill. `tech-detect` answers "what is the frontend built with," `seo-recon`
+  answers "where does the server run and does the cache work."
+- The ask is a full multi-technology roadmap combining crawl, rendering, and
+  security findings for a domain — this skill supplies only the technology-stack
+  input to that roadmap; the roadmap itself is `audit-roadmap`/`seo-deep-audit`.
+- The site is JavaScript-heavy and the real question is "does Google actually see
+  the rendered content," not "what framework renders it" — signature detection on
+  the raw HTML cannot answer that; use `js-render-check`/`render-check` instead.
+- No live URL is reachable (local-only site, staging behind auth) — this skill
+  needs one real HTTP request to the page; without it, fall back to manually
+  reading the source per Degraded Mode below, or skip the check entirely.
+
+## Preconditions
+- [ ] The page's URL responds to a direct HTTP request (not gated behind a login
+  wall, WAF challenge, or IP allowlist that would block the one request this
+  skill makes).
+- [ ] If an external fingerprint database is meant to be used, `SEOHEAD_TECH_DB`
+  is set to a valid path before running the command — otherwise only the ~200
+  built-in signatures are active (which is a legitimate default, not an error,
+  but should be stated to the user rather than assumed).
 
 ## Workflow
 
@@ -105,6 +134,43 @@ attributes using ~200 built-in signatures. The response contains:
 - `third_party_hosts` shows the domains from which scripts are actually loaded. This provides
   performance and privacy context, revealing a "double" analytics stack, pixel overload,
   and hidden redirects to the CMS backend.
+
+## Decision points
+- **No CMS/framework signature matched at all.** Do not report this as "not
+  detectable" and stop — it is itself a `findings` flag ("unidentified site
+  engine"), and usually means either a fully custom build or a heavily
+  JavaScript-rendered app whose signatures never reach the raw HTML. Check
+  `scripts_total` and the framework category together before concluding which.
+- **A headless combination is found (CMS + Next.js/Nuxt/SvelteKit/...).** This
+  changes what "editable" means for the client — content lives in the CMS but
+  rendering is a separate app that may not reflect CMS changes immediately.
+  Route to `js-render-check`/`render-check` next rather than assuming the CMS
+  alone controls what search engines see.
+- **`external_db.loaded` is `false`.** This is the default, working state, not a
+  failure — do not tell the user detection is "incomplete" unless they actually
+  asked for coverage beyond the ~200 built-in signatures. If deeper coverage is
+  needed, tell them to set `SEOHEAD_TECH_DB`, don't silently under-report.
+- **Version exposed vs. not.** A version is only available when `generator` or
+  `x-powered-by` exposes it; many hardened stacks strip both deliberately. Do not
+  guess a version from indirect evidence (e.g. a script filename) — state that the
+  version is unknown rather than presenting a guess as fact.
+
+## Definition of done
+- [ ] `seohead tech-detect` ran successfully against the target URL and returned
+  `by_category`, `findings`, and `third_party_hosts`.
+- [ ] Every technology claim delivered to the user cites its `evidence` marker,
+  not just the technology name.
+- [ ] `external_db.loaded` state is stated explicitly (built-in only, or which
+  external database and how many signatures).
+- [ ] Any headless combination, missing-analytics, ≥3-pixel, or ≥10-third-party-host
+  flag from `findings` is surfaced, not silently dropped from the summary.
+
+## Cost
+Exactly one HTTP request to the target page (`seohead tech-detect --url ...`);
+everything after that is local static signature matching against the response
+already fetched — no crawling, no paid API, no per-page multiplication. Runtime
+is sub-second beyond the single request's latency, regardless of site size, since
+this skill analyzes one page, not the whole site.
 
 ## What to Deliver to the User
 A concise stack analysis in a single block, assembled from `by_category`, `findings`,
