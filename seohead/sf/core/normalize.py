@@ -76,6 +76,14 @@ INTERNAL_FIELD_MAP: dict[str, list[str]] = {
     "og_url": ["OG:URL"],
     "spelling_errors": ["Spelling Errors"],
     "grammar_errors": ["Grammar Errors"],
+    # Not a default Screaming Frog column: present only from a native seohead
+    # crawl (seohead.crawl.evidence) or a Custom Extraction column configured
+    # under one of these names. See seohead/sf/core/lighthouse.py for which
+    # static Lighthouse audit each field feeds.
+    "content_encoding": ["Content-Encoding", "Content Encoding"],
+    "meta_charset": ["Meta Charset", "Charset"],
+    "doctype": ["Doctype", "Doctype Declaration"],
+    "viewport": ["Viewport", "Meta Viewport", "Mobile Viewport"],
     # Not an SF column -- seohead.crawl's own evidence.py projection adds it
     # (#18). An SF export simply never has this column, so it resolves to
     # None there, same as any other frame a list-mode run cannot fill.

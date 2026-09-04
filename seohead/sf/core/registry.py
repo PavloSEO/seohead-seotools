@@ -678,6 +678,35 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "AMP version is declared",
         "fix": "Confirm that the AMP version is still required, current, valid, and canonically linked.",
     },
+    # --- extension: static Lighthouse audits (issue #59) ---
+    # Correspondence to a Lighthouse audit id + doc URL lives in
+    # seohead/sf/core/lighthouse.py, not here, so it can carry the longer
+    # explanation and be checked by tests/test_lighthouse_map.py against a
+    # snapshot of every id Lighthouse actually defines.
+    "MISSING_CHARSET": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "No character encoding declared via Content-Type or an early <meta> tag",
+        "fix": "Declare charset in the Content-Type response header, or add a <meta charset> tag in the first 1024 bytes of the HTML.",
+    },
+    "MISSING_DOCTYPE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Document lacks a modern <!DOCTYPE html> declaration, triggering quirks mode",
+        "fix": "Add `<!DOCTYPE html>` as the very first line of the document, with no PUBLIC or SYSTEM identifier.",
+    },
+    "VIEWPORT_MISSING": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "No <meta name=viewport> tag with width or an initial-scale of at least 1",
+        "fix": 'Add `<meta name="viewport" content="width=device-width, initial-scale=1">` to the document head.',
+    },
+    "NO_COMPRESSION": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "HTML response is served uncompressed above the size where gzip/br would help",
+        "fix": "Enable gzip, Brotli, or deflate compression for text responses on the origin server or CDN.",
+    },
     # --- extension: export-dependent native filters (active when the export is available) ---
     "MIXED_CONTENT": {
         "severity": "warning",

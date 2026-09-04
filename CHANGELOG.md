@@ -4,6 +4,12 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Add the four static Lighthouse audits that need no browser and no third-party API
+  (#59): `MISSING_CHARSET`, `MISSING_DOCTYPE`, `VIEWPORT_MISSING` and `NO_COMPRESSION`,
+  each computed from evidence a crawl already holds. `content_encoding`,
+  `meta_charset`, `doctype` and `viewport` join the normalized column vocabulary, so an
+  SF export that happens to carry them as Custom Extraction columns feeds the same
+  checks. Registry grows from 114 to 118 checks.
 - Wire the ten remaining crawler settings that were validated, written into the run manifest, and
   described by `--config-help` but read by nothing (#63): `limits.max_response_bytes`,
   `speed.max_delay_seconds`, `robots.user_agent_token`, and `speed.stop_after_consecutive_timeouts`
