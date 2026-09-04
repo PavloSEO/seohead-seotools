@@ -71,9 +71,9 @@ sf-analyzer = "seohead.sf.cli:main"
 [project.urls]
 Homepage = "https://seohead.tech/seotools"
 Portfolio = "https://seohead.tech/about/results"
-Repository = "https://github.com/PavloSEO/seohead-seotools"
-Documentation = "https://github.com/PavloSEO/seohead-seotools/tree/main/docs"
-Issues = "https://github.com/PavloSEO/seohead-seotools/issues"
+Repository = "https://github.com/PavloSEO/seotools"
+Documentation = "https://github.com/PavloSEO/seotools/tree/main/docs"
+Issues = "https://github.com/PavloSEO/seotools/issues"
 
 [tool.setuptools.packages.find]
 include = ["seohead*"]

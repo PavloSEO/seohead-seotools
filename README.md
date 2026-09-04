@@ -1,6 +1,6 @@
 <div align="center">
 
-![SEOHEAD Tools](https://raw.githubusercontent.com/PavloSEO/seohead-seotools/main/.github/assets/social-preview.jpg)
+![SEOHEAD Tools](https://raw.githubusercontent.com/PavloSEO/seotools/main/.github/assets/social-preview.jpg)
 
 # SEOHEAD Tools
 
@@ -10,7 +10,7 @@
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
-[![CI](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seohead-seotools/actions/workflows/ci.yml)
+[![CI](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml/badge.svg)](https://github.com/PavloSEO/seotools/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-1565C0)
 ![Tests](https://img.shields.io/badge/tests-672%20offline-BDDDF5)
 ![MCP](https://img.shields.io/badge/MCP-local%20stdio-151A25)
@@ -122,7 +122,7 @@ official provider API is unavailable. The repository does not bundle a browser o
 Clone the repository and let one install command resolve the Python dependencies:
 
 ```bash
-git clone https://github.com/PavloSEO/seohead-seotools.git
+git clone https://github.com/PavloSEO/seotools.git
 cd seohead-seotools
 python -m venv .venv
 source .venv/bin/activate
