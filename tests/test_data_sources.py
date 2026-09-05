@@ -108,6 +108,28 @@ def test_dataforseo_ready_never_exposes_the_secret_values(monkeypatch, tmp_path)
     assert "super-secret-password" not in serialized
 
 
+@pytest.mark.parametrize(
+    ("ready", "components"),
+    [
+        (False, {"login": True, "password": False}),
+        (False, {"login": False, "password": True}),
+        (True, {"login": True, "password": True}),
+    ],
+    ids=["login_only", "password_only", "both"],
+)
+def test_sources_doctor_uses_shared_dataforseo_readiness(monkeypatch, tmp_path, ready, components):
+    """The public doctor must use the two-component readiness decision, not login alone."""
+    from seohead.servers import handlers
+
+    monkeypatch.setattr(credentials, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setattr(credentials, "available", lambda *_args: False)
+    monkeypatch.setattr(credentials, "dataforseo_ready", lambda: (ready, components))
+
+    dataforseo = handlers.sources_doctor()["sources"]["dataforseo"]
+    assert dataforseo["ready"] is ready
+    assert dataforseo["components"] == components
+
+
 # --- Spend journal ---------------------------------------------------------
 
 
