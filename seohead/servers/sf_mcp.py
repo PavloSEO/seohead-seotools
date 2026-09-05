@@ -1,8 +1,8 @@
 """MCP server (stdio) exposing the audit core through five agent-callable tools.
 
-Requires the MCP Python SDK::
+Requires the optional ``mcp`` dependency::
 
-    pip install mcp
+    pip install "seohead-seotools[mcp]"
 
 Run it directly (``python -m seohead.servers.sf_mcp``) or register it as a local
 stdio connector. Large payloads are returned as file paths, never dumped inline.
@@ -12,8 +12,12 @@ live-rechecks, remain opt-in.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
+import subprocess
+import threading
 from typing import Any
 
 from seohead.sf.core.audit import run_audit
@@ -28,6 +32,84 @@ except ImportError:  # pragma: no cover - SDK optional at import time
 
 VALID_MODES = {"parse-exports", "load-crawl", "crawl", "crawl-list"}
 VALID_PROFILES = {"lite", "full", "custom"}
+
+# --- cancellable live crawls (#369) -----------------------------------------
+#
+# FastMCP calls a plain ``def`` tool synchronously on the server's single asyncio
+# event loop (mcp.server.fastmcp.tools.base -- there is no thread hop for a sync
+# function), so a live crawl mode's blocking subprocess wait used to freeze the
+# whole stdio server: no other request could be served, and a client's
+# CancelledNotification had no running task to interrupt.
+#
+# Making the tool an ``async def`` that awaits ``anyio.to_thread.run_sync``
+# fixes the first half for free: the event loop is idle while the crawl runs,
+# so ``sf_list_exports`` and friends stay responsive. The second half --
+# actually stopping the child once the request is cancelled -- needs a way to
+# reach the process group `runner.py` started, without this file reaching into
+# that module's internals (out of territory here; #9 already owns its own
+# timeout-driven cleanup and is left untouched). ``_tracking_child_processes``
+# borrows the same SIGTERM-then-SIGKILL shape as ``runner._terminate_tree`` but
+# gets there by tracking every ``subprocess.Popen`` created while one crawl is
+# in flight, which is the only hook available at this layer.
+#
+# ``_RUN_LOCK`` serializes live crawls one at a time: the tracking below is
+# process-global, so two crawls racing inside it at once could kill each
+# other's child. Non-crawl sf_* tools (sf_list_exports, sf_audit_summary, ...)
+# never touch this lock and are unaffected.
+_RUN_LOCK = threading.Lock()
+_active_procs: set[subprocess.Popen] = set()
+_active_procs_lock = threading.Lock()
+_real_popen = subprocess.Popen
+
+
+class _TrackedPopen(_real_popen):  # type: ignore[misc, valid-type]
+    """``subprocess.Popen`` that registers itself so a cancelled request can reach it."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        with _active_procs_lock:
+            _active_procs.add(self)
+
+
+@contextlib.contextmanager
+def _tracking_child_processes():
+    subprocess.Popen = _TrackedPopen  # type: ignore[misc]
+    try:
+        yield
+    finally:
+        subprocess.Popen = _real_popen  # type: ignore[misc]
+
+
+def _kill_tracked_processes() -> None:
+    """Stop every process group started by the crawl this request is running.
+
+    Mirrors ``runner._terminate_tree``'s SIGTERM-then-SIGKILL escalation, just
+    reached from the MCP request layer instead of the runner's own timeout.
+    """
+    with _active_procs_lock:
+        procs = list(_active_procs)
+        _active_procs.clear()
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
+        with contextlib.suppress(OSError, ProcessLookupError):
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], check=False)
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    for proc in procs:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=2)
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
+        with contextlib.suppress(OSError, ProcessLookupError):
+            if os.name == "nt":
+                proc.kill()
+            else:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
 
 
 def _do_run(
@@ -73,6 +155,47 @@ def _do_run(
     }
 
 
+async def _do_run_cancellable(
+    mode: str,
+    source: str,
+    profile: str = "full",
+    out: str = "report",
+    config: str | None = None,
+    sitemap: str | None = None,
+) -> dict[str, Any]:
+    """Run ``_do_run`` off the event loop and stop its child on cancellation.
+
+    ``anyio.to_thread.run_sync(..., abandon_on_cancel=True)`` gives the event
+    loop back to the server the moment a cancellation notification arrives
+    instead of waiting for the worker thread, which is what keeps
+    ``sf_list_exports`` and the other sf_* tools answerable during a live
+    crawl. Abandoning the thread does not touch the OS process it started, so
+    the ``except`` below does that part explicitly, the same way the runner's
+    own timeout does for a deadline instead of a cancellation.
+
+    A crawl that dies here mid-run never reaches ``write_json``/
+    ``write_markdown`` (see ``_do_run`` above), so a cancelled run cannot
+    leave behind an ``audit.json``/``audit.md`` that would read as completed;
+    the caller distinguishes completed (a result), failed (``ToolError``) and
+    cancelled (this request never gets a response, by the MCP protocol's own
+    rules for a notification it sent) by that existing dict-or-error contract,
+    and recovers a cancelled run's outcome the same way as a lost response to
+    any other tool: rerun ``sf_list_exports``/``sf_audit_summary`` against the
+    known ``out`` path.
+    """
+    import anyio
+
+    def blocking() -> dict[str, Any]:
+        with _RUN_LOCK, _tracking_child_processes():
+            return _do_run(mode, source, profile=profile, out=out, config=config, sitemap=sitemap)
+
+    try:
+        return await anyio.to_thread.run_sync(blocking, abandon_on_cancel=True)
+    except anyio.get_cancelled_exc_class():
+        _kill_tracked_processes()
+        raise
+
+
 def _load(json_path: str) -> dict[str, Any]:
     if not os.path.isfile(json_path):
         raise FileNotFoundError(f"audit json not found: {json_path}")
@@ -102,7 +225,7 @@ def register(mcp):  # pragma: no cover - needs the SDK
     )
 
     @mcp.tool(annotations=create_files, structured_output=True)
-    def sf_audit_run(
+    async def sf_audit_run(
         mode: str,
         input: str,
         profile: str = "full",
@@ -118,8 +241,19 @@ def register(mcp):  # pragma: no cover - needs the SDK
         installed, licensed SF CLI. ``input`` is respectively an exports
         directory, .seospider path, start URL, or URL-list file. Returns a compact
         summary and absolute file paths instead of embedding the large reports.
+
+        A live crawl can run for a long time; this call runs off the server's
+        event loop, so other sf_* calls stay answerable while it is in
+        progress, and cancelling the request (an MCP CancelledNotification)
+        stops the underlying Screaming Frog process instead of leaving it
+        running. A cancelled or failed run never leaves a completed-looking
+        ``audit.json``/``audit.md`` behind; on either outcome, or a lost
+        response, recover by pointing sf_list_exports/sf_audit_summary at the
+        same ``out`` path.
         """
-        return _do_run(mode, input, profile=profile, out=out, config=config, sitemap=sitemap)
+        return await _do_run_cancellable(
+            mode, input, profile=profile, out=out, config=config, sitemap=sitemap
+        )
 
     @mcp.tool(annotations=read_files, structured_output=True)
     def sf_audit_summary(json_path: str) -> dict[str, Any]:
@@ -203,7 +337,7 @@ def register(mcp):  # pragma: no cover - needs the SDK
 def build_server():  # pragma: no cover - needs the SDK
     """Build the audit-only FastMCP server used for focused local debugging."""
     if FastMCP is None:
-        raise RuntimeError("MCP SDK not installed. Run: pip install mcp")
+        raise RuntimeError('MCP SDK not installed. Run: pip install "seohead-seotools[mcp]"')
     return register(FastMCP("sf-analyzer"))
 
 
