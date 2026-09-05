@@ -240,7 +240,10 @@ def test_js_mode_escalates_only_the_pattern_that_needs_it(tmp_path, monkeypatch)
     def fake_render_check(url, **kwargs):
         return {"ok": True, "js_dependent": "/app/" in url, "empty_shell": None}
 
-    def fake_render_document(url, rendering_config, artifacts_dir=None):
+    # Accepts whatever the real render_document accepts: the crawl now passes its
+    # own User-Agent through (#199), and a stand-in with a narrower signature than
+    # the function it replaces fails on the next keyword the real one grows.
+    def fake_render_document(url, rendering_config, artifacts_dir=None, **_kw):
         return {
             "ok": True,
             "html": '<html><body><a href="/app/extra">x</a></body></html>',
