@@ -189,6 +189,32 @@ def test_citability_check_url_scores_content_area_not_whole_document(monkeypatch
     assert out["dimensions"]["structure_quality"] > 0
 
 
+def test_citability_check_url_keeps_structure_for_nested_article_markup(monkeypatch):
+    """A heading/list nested inside a semantic wrapper (<article>) used to be
+    flattened by markdown_extract before it ever reached the scorer, zeroing
+    structure_quality for a page that has plenty of it (issue #230)."""
+    wrapped_html = (
+        "<html><body>"
+        '<main id="content"><article><h1>Widget guide</h1>'
+        "<p>A durable widget for everyone, tested since 2019.</p>"
+        "<ul><li>First step</li><li>Second step</li></ul></article></main>"
+        "</body></html>"
+    )
+    _mock_fetch(monkeypatch, wrapped_html)
+    from seohead.tools import citability as cit_core
+    from seohead.tools import markdown_extract as md_core
+
+    out = handlers.citability_check(url="https://example.com/")
+    assert out["ok"] is True
+
+    content_markdown = md_core.extract_markdown(wrapped_html)["content_markdown"]
+    assert "# Widget guide" in content_markdown
+    assert "- First step" in content_markdown
+    expected = cit_core.score_citability(content_markdown)
+    assert out["score"] == expected["score"]
+    assert out["dimensions"]["structure_quality"] > 0
+
+
 def test_citability_check_text_argument_is_untouched():
     """Passing text directly bypasses content-area scoping entirely -- the
     caller supplied exactly what should be scored."""

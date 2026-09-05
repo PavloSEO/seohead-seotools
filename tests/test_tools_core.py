@@ -90,6 +90,56 @@ def test_noscript_link_is_still_extracted():
     assert "https://site.tld/fallback-link" in hrefs
 
 
+def test_template_only_metadata_never_overrides_or_fabricates_live_values():
+    """A <template> is a DocumentFragment: a script must clone it in before any of
+    its canonical, robots, OG, JSON-LD, or form content is real (issue #236 -- the
+    same exclusion #140 gave links/images). This fixture carries a live head value
+    for every field *and* a conflicting template-only one, so a leak shows up as
+    either a wrong value or a spurious extra entry, not just a missing one."""
+    html = (
+        "<html><head>"
+        '<link rel="canonical" href="/real-canonical">'
+        '<meta name="description" content="real description">'
+        '<meta name="robots" content="index, follow">'
+        '<meta property="og:title" content="real preview">'
+        '<script type="application/ld+json">{"@type": "Article"}</script>'
+        "<template>"
+        '<link rel="canonical" href="/never-canonical">'
+        '<meta name="description" content="template description">'
+        '<meta name="robots" content="noindex">'
+        '<meta property="og:title" content="template preview">'
+        '<script type="application/ld+json">{"@type": "Product"}</script>'
+        '<form method="post" action="/never-submitted"><input type="password"></form>'
+        "</template>"
+        "</head><body><p>Visible page</p></body></html>"
+    )
+    r = parser.parse_html(html, "https://example.com/page")
+    assert r["canonical"] == "https://example.com/real-canonical"
+    assert r["meta_description"] == "real description"
+    assert r["robots"] == "index, follow"
+    assert r["og"] == {"og:title": "real preview"}
+    assert r["jsonld"] == [{"@type": "Article"}]
+    assert r["forms"] == []
+
+
+def test_template_only_form_is_not_extracted():
+    """A form only a script could clone in is never submitted, so it must not raise
+    an insecure-action or password-over-HTTP finding downstream (issue #236)."""
+    html = (
+        "<html><body>"
+        "<template>"
+        '<form method="post" action="http://collector.invalid/submit">'
+        '<input type="password"></form>'
+        "</template>"
+        '<form method="get" action="/search"></form>'
+        "</body></html>"
+    )
+    r = parser.parse_html(html, "https://example.com/login")
+    assert r["forms"] == [
+        {"method": "get", "action": "https://example.com/search", "has_password": False}
+    ]
+
+
 # ── robots ───────────────────────────────────────────────────────────────────
 
 

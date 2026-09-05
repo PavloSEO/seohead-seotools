@@ -193,8 +193,17 @@ def document_doctype(html: str) -> str | None:
 
 
 def _first_meta_tag(soup: BeautifulSoup, *, name: str) -> Any:
-    """Return the first ``<meta name=...>`` tag (case-insensitive), or ``None``."""
-    return soup.find("meta", attrs={"name": _ci(name)})
+    """Return the first ``<meta name=...>`` tag (case-insensitive), or ``None``.
+
+    Skips ``<template>`` descendants -- see ``_INERT_LINK_CONTAINERS`` -- because a
+    <meta> a script has not yet cloned into the document is not live evidence: a
+    noindex or description sitting only in a template must not out-rank the real
+    one, or invent one where the live document has none.
+    """
+    for tag in soup.find_all("meta", attrs={"name": _ci(name)}):
+        if not _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            return tag
+    return None
 
 
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
@@ -216,13 +225,18 @@ def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
 _FOREIGN_CONTENT = ("svg", "math")
 
 # <template> content is a DocumentFragment per the HTML spec: it never joins
-# the rendered tree and nothing inside it -- an <a href>, an <img src> -- is
-# ever requested by a browser or a search engine's crawler unless a script
-# explicitly clones the fragment in. That makes it the one element every
-# extractor of *real, requestable* content must agree to skip, so it is kept
-# here as the single shared answer rather than one list per function that can
-# silently drift (which is exactly how issue #140 happened: text extraction
-# excluded it, link and URL-source extraction did not).
+# the rendered tree and nothing inside it -- an <a href>, an <img src>, a
+# <meta>, a <link rel=canonical>, a JSON-LD <script>, a <form> -- is ever
+# requested, indexed, or submitted by a browser or a search engine's crawler
+# unless a script explicitly clones the fragment in. That makes it the one
+# element every reader of the document -- not just link/URL-source
+# extraction -- must agree to skip, so it is kept here as the single shared
+# answer rather than one list per function that can silently drift (which is
+# exactly how issue #140 happened: text extraction excluded it, link and
+# URL-source extraction did not; #236 found the same drift again in the
+# meta/canonical/OG/JSON-LD/form readers, which had never been taught this
+# constant existed). Every one of those readers now filters through this
+# same tuple, so a future inert container only needs to be added once.
 #
 # <noscript> is deliberately NOT in this set, unlike in ``_extract_text``
 # below. Its content is real, spec-defined markup that a JS-disabled client,
@@ -243,6 +257,17 @@ def _has_ancestor(tag: Any, names: tuple[str, ...]) -> bool:
     return tag.name in names or any(parent.name in names for parent in tag.parents)
 
 
+def is_inert_template_content(tag: Any) -> bool:
+    """True when ``tag`` is itself, or sits inside, a ``<template>`` (see
+    ``_INERT_LINK_CONTAINERS``).
+
+    A public wrapper so a module outside this file (e.g. asset-weight resource
+    discovery) can apply the same document-fragment exclusion this module uses
+    internally, without importing a private name or re-deriving its own list.
+    """
+    return _has_ancestor(tag, _INERT_LINK_CONTAINERS)
+
+
 def _title_tag(soup: BeautifulSoup) -> Any:
     """Return the tag ``document_title`` would read, ignoring SVG/MathML ``<title>``."""
     for tag in soup.find_all("title"):
@@ -256,6 +281,19 @@ def document_title(soup: BeautifulSoup) -> str | None:
     """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
     tag = _title_tag(soup)
     return (collapse_whitespace(tag.get_text()) or None) if tag else None
+
+
+def _canonical_tag(soup: BeautifulSoup) -> Any:
+    """Return the first real ``<link rel=canonical>``, or ``None``.
+
+    Skips ``<template>`` descendants -- see ``_INERT_LINK_CONTAINERS`` -- so a
+    canonical only a script could clone into the page can never redirect the
+    audit away from the live document's own URL.
+    """
+    for tag in soup.find_all("link", attrs={"rel": _rel_has("canonical")}):
+        if not _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            return tag
+    return None
 
 
 # A robots directive is addressed to a named crawler; ``robots`` addresses all
@@ -282,9 +320,15 @@ _VALUED_DIRECTIVES = (
 
 
 def _robots_directive_tags(soup: BeautifulSoup) -> list[Any]:
-    """Return every non-empty robots-directive ``<meta>`` tag, in document order."""
+    """Return every non-empty robots-directive ``<meta>`` tag, in document order.
+
+    Skips ``<template>`` descendants -- see ``_INERT_LINK_CONTAINERS`` -- a noindex
+    only a script could clone into the page has never been read by a crawler.
+    """
     out: list[Any] = []
     for tag in soup.find_all("meta"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue
         name = tag.get("name")
         if not isinstance(name, str) or name.lower() not in ROBOTS_META_NAMES:
             continue
@@ -366,14 +410,21 @@ def _extract_jsonld(soup: BeautifulSoup) -> tuple[list[Any], list[dict[str, Any]
     the failures silently makes a page whose markup is broken indistinguishable
     from a page with no markup — the opposite conclusion, and the more common
     one: a single stray comment voids an entire @graph.
+
+    Skips ``<template>`` descendants -- see ``_INERT_LINK_CONTAINERS`` -- a graph
+    only a script could clone into the page is not markup any crawler ever reads,
+    valid or not, so it is excluded before indexing rather than flagged invalid.
     """
     import json
 
     out: list[Any] = []
     invalid: list[dict[str, Any]] = []
-    for index, tag in enumerate(
-        soup.find_all("script", attrs={"type": _ci("application/ld+json")}), 1
-    ):
+    live_blocks = [
+        tag
+        for tag in soup.find_all("script", attrs={"type": _ci("application/ld+json")})
+        if not _has_ancestor(tag, _INERT_LINK_CONTAINERS)
+    ]
+    for index, tag in enumerate(live_blocks, 1):
         raw = tag.string or tag.get_text()
         text = (raw or "").strip()
         if not text:
@@ -536,7 +587,7 @@ def document_position(soup: BeautifulSoup, html: str) -> DocumentPosition:
     body_tags = soup.find_all("body")
     title_tag = _title_tag(soup)
     desc_tag = _first_meta_tag(soup, name="description")
-    canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
+    canonical_tag = _canonical_tag(soup)
     robots_tags = _robots_directive_tags(soup)
     hreflang_tags = _hreflang_tags(soup)
     return {
@@ -641,9 +692,15 @@ def _extract_forms(soup: BeautifulSoup, base_url: str, final_url: str) -> list[F
     so it resolves to ``final_url`` rather than being left blank or wrongly following
     ``base_url`` (a ``<base>`` tag changes where a *relative* action points, not what an
     omitted one means).
+
+    Skips ``<template>`` descendants -- see ``_INERT_LINK_CONTAINERS`` -- a form only a
+    script could clone into the page is never submitted, so it must not raise an
+    insecure-action or password-over-HTTP finding on a target nothing ever posts to.
     """
     forms: list[FormInfo] = []
     for tag in soup.find_all("form"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue  # a <template>-only form is never submitted, see _INERT_LINK_CONTAINERS
         method = (cast("str | None", tag.get("method")) or "get").strip().lower()
         action_raw = (cast("str | None", tag.get("action")) or "").strip()
         try:
@@ -844,7 +901,7 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["viewport"] = None
 
     if opts["canonical"]:
-        canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
+        canonical_tag = _canonical_tag(soup)
         # "href" is single-valued, so this is always a plain string.
         href = cast("str | None", canonical_tag.get("href")) if canonical_tag else None
         result["canonical"] = urljoin(base_url, href.strip()) if href else None
@@ -855,6 +912,8 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         og: dict[str, str] = {}
         twitter: dict[str, str] = {}
         for tag in soup.find_all("meta"):
+            if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+                continue  # a template-only OG/Twitter tag is never rendered, see _INERT_LINK_CONTAINERS
             # "content" is single-valued, so this is always a plain string.
             content = cast("str | None", tag.get("content"))
             if content is None:
