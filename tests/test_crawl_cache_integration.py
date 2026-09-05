@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from seohead.crawl.cache import ResponseCache
 from seohead.crawl.collect import collect_urls, fetch_one
 from seohead.crawl.spider import crawl_site
+from seohead.recon.net import UA
 
 
 class FakeResponse:
@@ -114,6 +115,61 @@ def test_a_stale_entry_with_an_etag_revalidates_with_a_conditional_request(monke
         "bypassed": 0,
         "invalidated": 0,
     }
+
+
+def test_a_304_updates_seo_metadata_but_preserves_the_cached_payload_and_variant(
+    monkeypatch, tmp_path
+):
+    _patched(monkeypatch)
+    cache = ResponseCache(tmp_path)
+    client = FakeClient(
+        [
+            FakeResponse(
+                "<html><head><title>Cached</title></head><body></body></html>",
+                headers={
+                    "content-type": "text/html",
+                    "content-encoding": "gzip",
+                    "content-length": "999",
+                    "cache-control": "max-age=0",
+                    "etag": '"old"',
+                    "vary": "User-Agent",
+                    "x-robots-tag": "noindex",
+                },
+            ),
+            FakeResponse(
+                "",
+                status_code=304,
+                headers={
+                    "cache-control": "max-age=3600",
+                    "etag": '"new"',
+                    "last-modified": "Wed, 01 Jan 2025 00:00:00 GMT",
+                    "x-robots-tag": "all",
+                    # A 304 has no body, so these must not replace metadata for the cached one.
+                    "content-type": "text/plain",
+                    "content-encoding": "br",
+                    "content-length": "0",
+                },
+            ),
+        ]
+    )
+
+    first, _ = fetch_one("https://example.com/", client=client, cache=cache)
+    second, _ = fetch_one("https://example.com/", client=client, cache=cache)
+    third, _ = fetch_one("https://example.com/", client=client, cache=cache)
+
+    assert first.x_robots == "noindex"
+    assert second.cache_status == "revalidated"
+    assert second.x_robots == "all"
+    assert second.content_type == "text/html"
+    assert second.content_encoding == "gzip"
+    assert second.title == "Cached"
+    assert client.requests[1]["headers"]["If-None-Match"] == '"old"'
+    assert third.cache_status == "hit"
+    assert len(client.requests) == 2
+    refreshed = cache.decide("https://example.com/", {"User-Agent": UA})
+    assert refreshed.entry.etag == '"new"'
+    assert refreshed.entry.last_modified == "Wed, 01 Jan 2025 00:00:00 GMT"
+    assert cache.decide("https://example.com/", {"User-Agent": "other"}).status == "miss"
 
 
 def test_a_second_user_agent_never_replays_the_first_ones_body(monkeypatch, tmp_path):
