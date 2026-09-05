@@ -244,8 +244,7 @@ def test_two_independent_direct_200_origins_stay_duplicates():
     ]
     out = M.analyze("https://example.com/", rs, WWW_OK)
     assert out["consolidated"] is False
-    assert "http://example.com/" in out["duplicates_200"]
-    assert "https://www.example.com/" in out["duplicates_200"]
+    assert {"http://example.com/", "https://www.example.com/"} <= set(out["duplicates_200"])
 
 
 def test_loop_suspect_reported():
