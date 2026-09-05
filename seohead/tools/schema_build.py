@@ -273,7 +273,9 @@ def _existing_keys(facts: dict[str, Any], target_type: str) -> set[str]:
         _flatten(block, nodes)
     for n in nodes:
         if target_type in _types_of(n):
-            keys |= {k for k in n if not k.startswith("@") and k != "_path"}
+            # "_"-prefixed keys are ``_flatten``'s own bookkeeping (source path,
+            # containment, vocabulary), never a declared Schema.org property.
+            keys |= {k for k in n if not k.startswith("@") and not k.startswith("_")}
     return keys
 
 

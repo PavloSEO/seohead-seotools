@@ -144,6 +144,74 @@ def test_faqpage_marked_deprecated_for_rich():
     assert rr.get("note"), "FAQPage must include its deprecated_for_rich note"
 
 
+# Issue #253: the flat table required Article headline (Google has no required
+# Article property, only recommended ones) and scored Offer's own required
+# fields as if Offer were an independent Google feature.
+
+
+def test_article_without_headline_is_eligible():
+    html = _ld('{"@type":"Article","author":{"@type":"Person","name":"Ada"}}')
+    r = schema.check_schema(html=html)
+    rr = next(x for x in r["rich_results"] if x["type"] == "Article")
+    assert rr["eligible"] is True, "Google documents no required Article property"
+    assert "headline" in rr["missing_recommended"]
+
+
+def test_offer_is_not_scored_as_its_own_rich_result():
+    html = _ld('{"@type":"Product","name":"Widget","offers":{"@type":"Offer","price":19.99}}')
+    r = schema.check_schema(html=html)
+    assert not any(x["type"] == "Offer" for x in r["rich_results"]), (
+        "Offer has no independent Google rich result; it is a condition Product checks for"
+    )
+
+
+def test_product_name_only_is_not_eligible_without_review_rating_or_offers():
+    # Product snippets need name plus at least one of review, aggregateRating, or offers.
+    html = _ld('{"@type":"Product","name":"Widget"}')
+    r = schema.check_schema(html=html)
+    rr = next(x for x in r["rich_results"] if x["type"] == "Product")
+    assert rr["eligible"] is False
+    assert rr["missing_required_any_of"] == ["review", "aggregateRating", "offers"]
+
+
+def test_product_with_name_and_offers_is_eligible():
+    html = _ld(
+        '{"@type":"Product","name":"Widget",'
+        '"offers":{"@type":"Offer","price":19.99,"priceCurrency":"USD"}}'
+    )
+    r = schema.check_schema(html=html)
+    rr = next(x for x in r["rich_results"] if x["type"] == "Product")
+    assert rr["eligible"] is True
+    assert rr["missing_required_any_of"] == []
+
+
+def test_eligible_rich_result_carries_a_no_guarantee_disclaimer():
+    # Issue #253/#255: a structural "eligible" verdict must never read as a promise
+    # that Google will actually display the rich result.
+    html = _ld(
+        '{"@type":"Product","name":"Widget",'
+        '"offers":{"@type":"Offer","price":19.99,"priceCurrency":"USD"}}'
+    )
+    r = schema.check_schema(html=html)
+    assert any("not a guarantee" in f for f in r["findings"])
+
+
+# Issue #254: a nested Offer inside a Product is connected by containment, so it
+# must not be reported as a disconnected graph island just for lacking its own @id.
+
+
+def test_nested_anonymous_offer_is_not_a_graph_island():
+    html = _ld(
+        '{"@context":"https://schema.org","@type":"Product","name":"Widget",'
+        '"offers":{"@type":"Offer","price":19.99,"priceCurrency":"USD"}}'
+    )
+    r = schema.check_schema(html=html)
+    g = r["graph"]
+    assert g["nodes"] == 2
+    assert g["islands"] == [], f"A nested Offer is not a disconnected island: {g['islands']}"
+    assert not any("isolated blocks" in f or "island" in f.lower() for f in r["findings"])
+
+
 # ── Findings summary ────────────────────────────────────────────────────────
 
 

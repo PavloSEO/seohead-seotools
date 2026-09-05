@@ -39,16 +39,16 @@ Create the full set: Schema + Title + Description + OG tags for [URL/content]
 ### Steps
 
 1. **Identify the content and Schema types** — choose the primary type from the table below and add secondary types when needed.
-2. **Generate JSON-LD** — include required fields, optional enhancements, and a note about rich-result eligibility.
+2. **Generate JSON-LD** — include required fields, optional enhancements, and a note about rich-result eligibility. State plainly when a type (FAQPage, HowTo) has no Google rich result to be eligible for — Schema.org validity and AI-extraction value are still worth generating the markup for, but do not present them as reaching a SERP feature.
 3. **Validate and implement** — show where to insert the markup, how to test it, and what to monitor in Search Console.
 
 ### Choosing a Schema Type
 
 | Content Type | Primary Schema | Additional Types | Rich Result |
 |-------------|----------------|---------------|-------------|
-| Blog post / article | Article / BlogPosting | FAQ, HowTo | Article carousel, FAQ |
-| FAQ page | FAQPage | Article | FAQ accordion in the SERP |
-| Guide / instructions | HowTo | Article, FAQ | Step-by-step how-to |
+| Blog post / article | Article / BlogPosting | FAQ, HowTo | Article rich result |
+| FAQ page | FAQPage | Article | No Google rich result since 7 May 2026; Schema.org validity and AI-extraction value only |
+| Guide / instructions | HowTo | Article, FAQ | No Google rich result; Schema.org validity and AI-extraction value only |
 | Product page | Product | Review, Offer, AggregateRating | Product with price/rating |
 | Service page | Service | FAQ, LocalBusiness | Service snippet |
 | Local business | LocalBusiness | Review, OpeningHoursSpecification | Local pack, Knowledge Panel |
@@ -65,7 +65,7 @@ Create the full set: Schema + Title + Description + OG tags for [URL/content]
 | Priority | Schema Types | Why |
 |-----------|------------|--------|
 | P0 — Always | Organization, BreadcrumbList, WebSite (SearchAction) | Foundation for every site |
-| P1 — Content | Article, FAQPage, HowTo | Direct path to rich results |
+| P1 — Content | Article, FAQPage, HowTo | Article reaches a rich result; FAQPage/HowTo no longer do (Google retired both), but stay useful for AI extraction |
 | P2 — Commerce | Product, Review, AggregateRating, Offer | Revenue-impacting rich results |
 | P3 — Authority | Person, SameAs, Speakable | E-E-A-T signals and AI citability |
 | P4 — Niche | Industry-specific (Recipe, Event, Course, etc.) | Niche rich results |
@@ -93,6 +93,7 @@ Create the full set: Schema + Title + Description + OG tags for [URL/content]
   ]
 }
 ```
+> Google retired the FAQ rich result on 7 May 2026. This markup keeps Schema.org validity and AI-extraction value; do not present it as a path to a SERP accordion.
 
 #### HowTo
 ```json
@@ -113,6 +114,7 @@ Create the full set: Schema + Title + Description + OG tags for [URL/content]
   ]
 }
 ```
+> Google removed the HowTo rich result. This markup keeps Schema.org validity and AI-extraction value; do not present it as a path to a SERP feature.
 
 #### Article / BlogPosting
 ```json

@@ -6,9 +6,13 @@ The validator keeps two layers deliberately separate:
   allowed on that type, and whether its value has an expected range. The bundled
   source is the official Schema.org vocabulary compiled into
   ``seohead/data/schemaorg.json`` with 1,010 types and 1,676 properties.
-* **Rich-result eligibility** applies Google's requirements for a particular
-  search feature. Vocabulary-valid markup may still be ineligible for a rich
-  result, and eligibility rules do not replace vocabulary validation.
+* **Rich-result eligibility** checks locally observable conditions for a named
+  Google search feature: required properties present, and one property from any
+  documented "at least one of" group. Vocabulary-valid markup may still fail
+  these conditions, and passing them is not a guarantee of actual display —
+  Google's ranking systems weigh content quality, policy compliance, and manual
+  actions that a static markup check cannot see. Eligibility rules do not
+  replace vocabulary validation.
 
 Inheritance makes the bundled vocabulary essential. ``Article`` declares only
 eight direct properties but inherits 136 through ``Article -> CreativeWork ->
@@ -29,36 +33,46 @@ from typing import Any
 
 from seohead.recon.net import http_client, normalize_url
 
-# Schema.org types documented by Google for rich results. ``required`` fields
-# gate eligibility; ``recommended`` fields improve completeness. These concise
-# lists capture practical gates rather than duplicating all provider documentation.
+# Schema.org types documented by Google as their own rich-result feature.
+# ``required`` fields gate eligibility; ``required_any`` is an "at least one of"
+# group Google asks for alongside ``required``; ``recommended`` fields improve
+# completeness without gating it. ``google_feature`` names the Search feature
+# being modeled so a verdict can be traced to what it actually checked rather
+# than read as a claim about the type in general.
+#
+# Sub-entities such as Offer, AggregateRating, and Review are deliberately
+# absent from this table: Google does not grant them an independent rich
+# result, so scoring one against its own required fields (e.g. Offer without
+# a parent) produced a verdict about a feature that does not exist. Their
+# presence is instead one of the conditions a parent feature (e.g. Product)
+# checks for through ``required_any``.
 RICH_RESULTS: dict[str, dict[str, Any]] = {
     "Article": {
-        "required": ["headline"],
-        "recommended": ["image", "datePublished", "dateModified", "author"],
+        "google_feature": "Article",
+        "required": [],
+        "recommended": ["image", "datePublished", "dateModified", "author", "headline"],
     },
     "NewsArticle": {
-        "required": ["headline"],
-        "recommended": ["image", "datePublished", "dateModified", "author"],
+        "google_feature": "Article",
+        "required": [],
+        "recommended": ["image", "datePublished", "dateModified", "author", "headline"],
     },
     "BlogPosting": {
-        "required": ["headline"],
-        "recommended": ["image", "datePublished", "dateModified", "author"],
+        "google_feature": "Article",
+        "required": [],
+        "recommended": ["image", "datePublished", "dateModified", "author", "headline"],
     },
     "Product": {
+        "google_feature": "Product snippets",
         "required": ["name"],
-        "recommended": ["image", "description", "brand", "offers", "aggregateRating", "review"],
+        "required_any": ["review", "aggregateRating", "offers"],
+        "recommended": ["image", "description", "brand"],
     },
-    "Offer": {
-        "required": ["price", "priceCurrency"],
-        "recommended": ["availability", "url", "priceValidUntil"],
+    "BreadcrumbList": {
+        "google_feature": "Breadcrumb",
+        "required": ["itemListElement"],
+        "recommended": [],
     },
-    "AggregateRating": {
-        "required": ["ratingValue"],
-        "recommended": ["reviewCount", "ratingCount", "bestRating"],
-    },
-    "Review": {"required": ["reviewRating"], "recommended": ["author", "datePublished"]},
-    "BreadcrumbList": {"required": ["itemListElement"], "recommended": []},
     "Organization": {
         "required": ["name"],
         "recommended": ["url", "logo", "sameAs", "contactPoint"],
@@ -253,16 +267,26 @@ def json_syntax_hint(text: str) -> str:
     return f" — {'; '.join(causes)}" if causes else ""
 
 
-def _flatten(payload: Any, out: list[dict[str, Any]], path: str = "") -> None:
-    """Flatten any JSON-LD payload while preserving each node's source path."""
+def _flatten(
+    payload: Any, out: list[dict[str, Any]], path: str = "", contained: bool = False
+) -> None:
+    """Flatten any JSON-LD payload while preserving each node's source path.
+
+    ``contained`` marks a node reached by descending into a parent's property
+    value (an inline Offer inside a Product, say) rather than sitting beside
+    other entities at the top of a block or an ``@graph`` array. A contained
+    node is already connected to its parent by nesting; graph analysis must
+    not also demand it carry an ``@id`` link, or ordinary anonymous markup
+    reads as a disconnected island.
+    """
     if isinstance(payload, list):
         for i, item in enumerate(payload):
-            _flatten(item, out, f"{path}[{i}]")
+            _flatten(item, out, f"{path}[{i}]", contained)
         return
     if not isinstance(payload, dict):
         return
     if "@graph" in payload:
-        _flatten(payload["@graph"], out, f"{path}@graph")
+        _flatten(payload["@graph"], out, f"{path}@graph", contained)
         # An @graph wrapper may have properties, but it is not treated as an entity.
         return
     # A pure {"@id": ...} object is a reference, not an entity definition. Treating
@@ -271,11 +295,12 @@ def _flatten(payload: Any, out: list[dict[str, Any]], path: str = "") -> None:
         return
     node = dict(payload)
     node["_path"] = path or "@root"
+    node["_contained"] = contained
     out.append(node)
     for key, value in payload.items():
         if key.startswith("@"):
             continue
-        _flatten(value, out, f"{path}.{key}" if path else key)
+        _flatten(value, out, f"{path}.{key}" if path else key, True)
 
 
 def _literal_ok(value: Any, ranges: list[str], vocab: dict[str, Any]) -> bool:
@@ -381,19 +406,32 @@ def _check_node(node: dict[str, Any], vocab: dict[str, Any], known_ids: set[str]
 
 
 def _rich_results(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Report rich-result candidates and their missing required or recommended fields."""
+    """Report rich-result candidates against locally verifiable requirements.
+
+    ``eligible`` reflects only the structural conditions this validator can
+    check for the named ``google_feature``: every ``required`` property present,
+    plus one property from ``required_any`` when that group exists. It is not a
+    guarantee that Google will display the rich result — ranking systems apply
+    content-quality, policy, and manual-action signals a static markup check
+    cannot observe. See ``_findings`` for the disclaimer surfaced with a true
+    verdict.
+    """
     out = []
     for node in nodes:
         for t in _types_of(node):
             spec = RICH_RESULTS.get(t)
             if not spec:
                 continue
-            present = {k for k in node if not k.startswith("@")}
+            present = {k for k in node if not k.startswith("@") and not k.startswith("_")}
             missing_req = [f for f in spec["required"] if f not in present]
+            required_any = spec.get("required_any", [])
+            missing_any = required_any if required_any and not (present & set(required_any)) else []
             entry = {
                 "type": t,
-                "eligible": not missing_req,
+                "google_feature": spec.get("google_feature", t),
+                "eligible": not missing_req and not missing_any,
                 "missing_required": missing_req,
+                "missing_required_any_of": missing_any,
                 "missing_recommended": [f for f in spec["recommended"] if f not in present],
             }
             if spec.get("deprecated_for_rich"):
@@ -406,25 +444,41 @@ def _rich_results(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _graph_shape(nodes: list[dict[str, Any]]) -> dict[str, Any]:
-    """Measure graph connectivity and identify entities with no ``@id`` connection."""
+    """Measure graph connectivity and identify entities with no ``@id`` connection.
+
+    Only top-level nodes are candidates for island status. A node reached by
+    descending into a parent's property (``_contained``) is already connected
+    by nesting; requiring it to *also* carry a redundant ``@id`` link would
+    call ordinary anonymous markup, such as an inline Offer inside a Product,
+    a disconnected island.
+    """
     with_id = [n for n in nodes if n.get("@id")]
     referenced: set[str] = set()
     for n in nodes:
         for key, value in n.items():
-            if key.startswith("@") or key == "_path":
+            if key.startswith("@") or key.startswith("_"):
                 continue
             for v in value if isinstance(value, list) else [value]:
                 if isinstance(v, dict) and "@id" in v and set(v) <= {"@id"}:
                     referenced.add(v["@id"])
-    islands = [
-        n.get("@id") or "/".join(_types_of(n)) or "?"
-        for n in nodes
-        if not n.get("@id") or n["@id"] not in referenced
-    ]
+    candidates = [n for n in nodes if not n.get("_contained")]
+    # Island status only means something when two or more top-level entities
+    # exist to be connected in the first place; a lone entity, or a Product
+    # with a nested Offer, has nothing to be disconnected from.
+    islands = (
+        [
+            n.get("@id") or "/".join(_types_of(n)) or "?"
+            for n in candidates
+            if not n.get("@id") or n["@id"] not in referenced
+        ]
+        if len(candidates) > 1
+        else []
+    )
     return {
         "nodes": len(nodes),
         "with_id": len(with_id),
         "linked_by_id": len(referenced),
+        "top_level": len(candidates),
         "islands": islands[:20],
         "is_graph": len(referenced) > 0,
     }
@@ -539,18 +593,20 @@ def _findings(r: dict[str, Any]) -> list[str]:
         out.append(f"Vocabulary warnings: {warnings}")
 
     g = r["graph"]
-    if g["nodes"] > 1 and not g["is_graph"]:
+    # Connectivity only becomes a question once two or more top-level entities
+    # compete for it; a contained node (an inline Offer inside a Product) is
+    # already connected by nesting, and a lone top-level entity has no peer to
+    # be disconnected from, so neither is judged here.
+    if g["top_level"] > 1 and not g["is_graph"]:
         out.append(
-            f"{g['nodes']} entities are marked up, but none are linked through @id; "
-            "this is a set of isolated blocks rather than a graph"
+            f"{g['top_level']} top-level entities are marked up, but none are linked "
+            "through @id; this is a set of isolated blocks rather than a graph"
         )
-    elif g["islands"] and g["nodes"] > 1:
+    elif g["islands"]:
         out.append(
             f"Entities outside the connected graph: {len(g['islands'])} "
             f"({', '.join(str(i) for i in g['islands'][:3])})"
         )
-    if g["nodes"] and not g["with_id"]:
-        out.append("No entity has an @id, so entities cannot be reused or linked")
 
     for rr in r["rich_results"]:
         if rr["missing_required"]:
@@ -558,6 +614,21 @@ def _findings(r: dict[str, Any]) -> list[str]:
                 f"{rr['type']}: missing required rich-result fields: "
                 f"{', '.join(rr['missing_required'])}"
             )
+        if rr.get("missing_required_any_of"):
+            out.append(
+                f"{rr['type']}: {rr['google_feature']} needs at least one of "
+                f"{', '.join(rr['missing_required_any_of'])}"
+            )
         if rr.get("note"):
             out.append(f"{rr['type']}: {rr['note']}")
+
+    # A structural pass cannot see what Google's ranking systems weigh — content
+    # quality, policy compliance, or a manual action — so an "eligible" verdict
+    # here is never a promise that the rich result will actually appear.
+    if any(rr["eligible"] for rr in r["rich_results"]):
+        out.append(
+            "Rich-result checks above verify only locally observable structure "
+            "(required properties present for a type Google documents); they are not "
+            "a guarantee that Google will display a rich result for this page"
+        )
     return out
