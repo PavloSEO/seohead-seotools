@@ -6,11 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-<<<<<<< HEAD
 59 callable tools · 138 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
-=======
-59 callable tools · 138 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
->>>>>>> origin/main
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
