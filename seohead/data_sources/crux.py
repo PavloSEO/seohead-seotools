@@ -51,7 +51,7 @@ def _api_error(exc: urllib.error.HTTPError) -> str:
 
 def _response_object(raw: str) -> dict[str, Any] | None:
     try:
-        body = json.loads(raw) if raw.strip() else {}
+        body = json.loads(raw)
     except (AttributeError, ValueError):
         return None
     return body if isinstance(body, dict) else None
@@ -103,21 +103,15 @@ def query(
     record = body.get("record")
     if not isinstance(record, dict):
         return {"ok": False, "error": "CrUX malformed response"}
-    record_key = record.get("key")
-    if record_key is None:
-        record_key = {}
-    metric_data = record.get("metrics")
-    if metric_data is None:
-        metric_data = {}
+    record_key = record.get("key", {})
+    metric_data = record.get("metrics", {})
     if not isinstance(record_key, dict) or not isinstance(metric_data, dict):
         return {"ok": False, "error": "CrUX malformed response"}
     values_by_metric: dict[str, dict[str, Any]] = {}
     for name, values in metric_data.items():
         if not isinstance(values, dict):
             return {"ok": False, "error": "CrUX malformed response"}
-        percentiles = values.get("percentiles")
-        if percentiles is None:
-            percentiles = {}
+        percentiles = values.get("percentiles", {})
         if not isinstance(percentiles, dict):
             return {"ok": False, "error": "CrUX malformed response"}
         values_by_metric[name] = percentiles

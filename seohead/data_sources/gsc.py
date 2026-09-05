@@ -59,7 +59,7 @@ def _api_error(exc: urllib.error.HTTPError) -> str:
 
 def _response_object(raw: str) -> dict[str, Any] | None:
     try:
-        body = json.loads(raw) if raw.strip() else {}
+        body = json.loads(raw)
     except (AttributeError, ValueError):
         return None
     return body if isinstance(body, dict) else None

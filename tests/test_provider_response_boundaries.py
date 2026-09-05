@@ -83,7 +83,7 @@ def _crux_report(body: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("provider", [_search_analytics, _inspect_url, _crux_report])
-@pytest.mark.parametrize("body", ["{", "[]"])
+@pytest.mark.parametrize("body", ["{", "[]", "", "  ", "null"])
 def test_provider_rejects_malformed_successful_response(provider: ProviderCall, body: str):
     result = provider(body)
 
@@ -102,6 +102,9 @@ def test_provider_rejects_malformed_successful_response(provider: ProviderCall, 
         (_crux_report, '{"record": {"key": [], "metrics": {}}}'),
         (_crux_report, '{"record": {"metrics": {"lcp": []}}}'),
         (_crux_report, '{"record": {"metrics": {"lcp": {"percentiles": []}}}}'),
+        (_crux_report, '{"record": {"metrics": null}}'),
+        (_crux_report, '{"record": {"key": null}}'),
+        (_crux_report, '{"record": {"metrics": {"lcp": {"percentiles": null}}}}'),
     ],
 )
 def test_provider_rejects_invalid_nested_containers(provider: ProviderCall, body: str):
@@ -151,26 +154,27 @@ def test_cli_serializes_malformed_provider_responses(monkeypatch, capsys, mode: 
 
 def test_mcp_serializes_a_malformed_provider_result(monkeypatch):
     pytest.importorskip("mcp")
-    from mcp.server.fastmcp.exceptions import ToolError
+    from mcp import types
 
     from seohead.servers.mcp_server import build_server
 
     monkeypatch.setenv("GSC_ACCESS_TOKEN", "synthetic")
     monkeypatch.setattr(gsc, "_default_fetcher", lambda _url: lambda _payload, _token: "{")
-    tool = next(
-        tool for tool in build_server()._tool_manager.list_tools() if tool.name == "seo_gsc_query"
+    server = build_server()._mcp_server
+    request = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(
+            name="seo_gsc_query",
+            arguments={
+                "site_url": "sc-domain:example.com",
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-31",
+            },
+        ),
     )
-
-    with pytest.raises(ToolError) as exc:
-        asyncio.run(
-            tool.run(
-                {
-                    "site_url": "sc-domain:example.com",
-                    "start_date": "2026-01-01",
-                    "end_date": "2026-01-31",
-                }
-            )
-        )
-
-    assert '"ok": false' in str(exc.value)
-    assert "malformed response" in str(exc.value)
+    result = asyncio.run(server.request_handlers[types.CallToolRequest](request)).root
+    assert result.isError is True
+    message = result.content[0].text
+    payload = json.loads(message[message.index("{") :])
+    assert payload["ok"] is False
+    assert "malformed response" in payload["error"]
