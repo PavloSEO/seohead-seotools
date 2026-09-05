@@ -86,6 +86,48 @@ def _withhold_unlinked_findings(ctx: AuditContext, issues: list[Issue]) -> list[
     return [i for i in issues if i.check not in UNLINKED_FINDING_CHECKS]
 
 
+# Each of these judges the *whole* observed edge set at once -- an iterative
+# score over every inlink, "the only inlinks are X", the shortest click path
+# from the seed -- rather than a single edge in isolation. On a native crawl
+# stopped early (a URL limit, a duration limit, an error streak, an
+# interruption) the unfetched frontier can still hold the very edges that
+# would change the verdict, so the same #15 "partial crawls poison specific
+# conclusions" reasoning applies here even though none of these four assert
+# "nothing links here" the way UNLINKED_FINDING_CHECKS does (issue #246).
+# GENERIC_ANCHOR_TEXT and friends stay eligible: each fires on one observed
+# edge that is already proof of itself, regardless of what the rest of the
+# graph turns out to contain.
+GRAPH_WIDE_FINDING_CHECKS = frozenset(
+    {
+        "LOW_LINK_SCORE",
+        "ONLY_NOFOLLOW_INLINKS",
+        "ONLY_NONINDEXABLE_SOURCE_INLINKS",
+        "DEEP_DISCOVERY_PATH",
+    }
+)
+
+
+def _withhold_graph_wide_findings(ctx: AuditContext, issues: list[Issue]) -> list[Issue]:
+    """Drop findings that judge the whole link graph and declare why.
+
+    Same shape as ``_withhold_unlinked_findings`` -- a distinct check set,
+    because these are whole-graph conclusions rather than "unlinked"
+    assertions, but withheld for the identical reason: the missing frontier
+    of a partial native crawl could still hold the edges the verdict depends
+    on.
+    """
+    withheld = {i.check for i in issues if i.check in GRAPH_WIDE_FINDING_CHECKS}
+    if not withheld:
+        return issues
+    for check_id in sorted(withheld):
+        ctx.skip(
+            check_id,
+            "crawl is partial: a whole-graph finding cannot be proven when the "
+            "crawl did not reach every URL",
+        )
+    return [i for i in issues if i.check not in GRAPH_WIDE_FINDING_CHECKS]
+
+
 def _crawl_validity(
     n_pages: int, by_check: dict[str, int], urls_crawled: int
 ) -> tuple[bool, str | None]:
@@ -195,6 +237,7 @@ def aggregate(
     crawl_partial = bool(run.get("crawl_partial")) or sitemap_partial
     if crawl_partial:
         issues = _withhold_unlinked_findings(ctx, issues)
+        issues = _withhold_graph_wide_findings(ctx, issues)
 
     # assign ordered ids + fingerprints (sorted for determinism)
     sev_rank = {"critical": 0, "warning": 1, "notice": 2}

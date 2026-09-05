@@ -476,6 +476,74 @@ def test_a_page_never_rendered_is_left_untouched():
     assert record.representation == "static"
 
 
+# ── #245: a rendered-only href must also become an all_inlinks edge ─────────
+
+
+def test_a_rendered_only_link_becomes_an_edge_in_raw_links():
+    """apply_rendered_evidence already folds a rendered-only href into
+    PageRecord.outlinks -- the union tested above -- but until #245 it never
+    told raw_links, the sole source build_evidence reads for the all_inlinks
+    frame every graph check runs against. A page whose outlinks count grew
+    from a rendered fetch must produce a matching new edge, or the graph the
+    audit measures stays smaller than the page counts it reports claim."""
+    from seohead.crawl.collect import PageRecord
+    from seohead.crawl.spider import LinkEdge
+
+    source = PageRecord(url="https://example.com/app/1", content_type="text/html")
+    target = PageRecord(url="https://example.com/products/1", content_type="text/html")
+    raw_links: list[LinkEdge] = []
+    result = EscalationResult()
+    result.representations[source.url] = "rendered"
+    result.rendered[source.url] = {
+        "ok": True,
+        "final_url": source.url,
+        "html": (
+            "<html><head><title>App</title></head><body>"
+            '<a href="/products/1">Rendered product link</a>'
+            "</body></html>"
+        ),
+    }
+
+    apply_rendered_evidence([source, target], raw_links, result)
+
+    assert source.outlinks == 1
+    assert len(raw_links) == 1
+    edge = raw_links[0]
+    assert edge.source == source.url
+    assert edge.destination == target.url
+    assert edge.anchor == "Rendered product link"
+    assert edge.nofollow is False
+
+
+def test_a_rendered_link_already_seen_in_raw_html_is_not_duplicated():
+    """The raw crawl already recorded this exact edge -- apply_rendered_evidence
+    must not add a second one just because the rendered DOM repeats it, or a
+    check counting inlinks would see the rendered pass as new evidence of a
+    link that was never lost in the first place."""
+    from seohead.crawl.collect import PageRecord
+    from seohead.crawl.spider import LinkEdge
+
+    source = PageRecord(url="https://example.com/app/1", content_type="text/html")
+    target = PageRecord(url="https://example.com/products/1", content_type="text/html")
+    raw_links = [LinkEdge(source.url, target.url, "Product link", False, "content")]
+    result = EscalationResult()
+    result.representations[source.url] = "rendered"
+    result.rendered[source.url] = {
+        "ok": True,
+        "final_url": source.url,
+        "html": (
+            "<html><head><title>App</title></head><body>"
+            '<a href="/products/1">Product link</a>'
+            "</body></html>"
+        ),
+    }
+
+    apply_rendered_evidence([source, target], raw_links, result)
+
+    assert source.outlinks == 1
+    assert len(raw_links) == 1
+
+
 # ── #143: an empty-shell render must never overwrite a healthy raw record ───
 
 

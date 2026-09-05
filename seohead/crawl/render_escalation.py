@@ -337,7 +337,7 @@ _RENDER_UNTOUCHED_FIELDS = frozenset(
 
 def apply_rendered_evidence(
     pages: list[Any],
-    raw_links: Iterable[Any],
+    raw_links: list[Any],
     escalation: EscalationResult,
 ) -> None:
     """Fold each re-fetched page's fuller HTML back into its ``PageRecord``.
@@ -383,11 +383,23 @@ def apply_rendered_evidence(
     found, never the fuller fetch alone: a link hydration removes is a real
     finding (#18), not a link that never existed, and dropping it here would
     make that finding invisible to every check built on outlink counts.
+
+    That union changes ``PageRecord.outlinks`` but, on its own, leaves
+    ``raw_links`` -- the sole source ``build_evidence`` reads for the
+    ``all_inlinks`` frame -- exactly as the static crawl left it. Every graph
+    check (anchor text, inlink composition, link score, ...) reads that frame,
+    not the outlink count, so a rendered-only href reaching a page the crawl
+    already collected must also become a ``LinkEdge`` here, mutating
+    ``raw_links`` in place, or the graph a rendered page claims to have
+    measured stays invisible to everything built on it (#245). This is
+    evidence about a link the page already carries, not new crawl work: it
+    never enqueues a destination the static crawl had not already reached.
     """
     from dataclasses import replace
     from urllib.parse import urlsplit
 
     from seohead.crawl.collect import _apply_body
+    from seohead.crawl.spider import LinkEdge
 
     raw_links_by_page: dict[str, set[str]] = {}
     for edge in raw_links:
@@ -424,9 +436,29 @@ def apply_rendered_evidence(
                 setattr(record, f.name, getattr(scratch, f.name))
 
         rendered_hrefs = {link["href"] for link in parsed.get("links") or []}
-        merged = raw_links_by_page.get(target_url, set()) | rendered_hrefs
+        raw_hrefs = raw_links_by_page.get(target_url, set())
+        merged = raw_hrefs | rendered_hrefs
         host = (urlsplit(final_url).hostname or "").lower()
         record.outlinks = len(merged)
         record.external_outlinks = sum(
             1 for href in merged if (urlsplit(href).hostname or "").lower() != host
         )
+
+        # Exactly the hrefs that just widened outlinks above and are therefore
+        # missing from raw_links -- new evidence about this page's own rendered
+        # DOM, keyed by href the same way outlinks was computed, not a second,
+        # possibly-diverging notion of "new".
+        new_hrefs = rendered_hrefs - raw_hrefs
+        if new_hrefs:
+            by_href = {link["href"]: link for link in parsed.get("links") or []}
+            for href in new_hrefs:
+                link = by_href.get(href, {})
+                raw_links.append(
+                    LinkEdge(
+                        source=target_url,
+                        destination=href,
+                        anchor=(link.get("text") or "")[:200],
+                        nofollow=bool(link.get("nofollow")),
+                        position=link.get("position") or "",
+                    )
+                )

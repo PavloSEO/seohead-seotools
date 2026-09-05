@@ -3,6 +3,7 @@ the audit — this is where a checkpoint path, a duration budget, and a finish
 reason actually reach the crawler and the report. No network: the crawler
 itself is replaced with a fake."""
 
+import dataclasses
 import json
 
 import seohead.crawl.spider as spider_mod
@@ -329,3 +330,291 @@ def test_raw_mode_never_imports_playwright(tmp_path, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fail_on_playwright)
 
     handlers.crawl_site(url="https://example.com/")
+
+
+# ── #242: resume must not depend on output.write_pages_jsonl ────────────────
+
+
+def test_resume_reconstructs_pages_even_when_the_jsonl_export_is_disabled(tmp_path, monkeypatch):
+    """The handler used to tie the only PageRecord sidecar spider.crawl_site can
+    reload on resume to output.write_pages_jsonl, so an operator who disabled
+    the human-readable export also -- silently -- disabled resume: a restored
+    seen set suppressed the already-fetched page's URL without restoring its
+    PageRecord, and the resumed run reported a smaller, non-partial corpus.
+    Runs the real spider (not a fake) because the defect lived entirely in
+    which path the handler wired into it, not in the spider's own reload
+    logic, which already worked."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Response:
+        status_code: int
+        text: str
+        headers: dict
+
+        @property
+        def content(self) -> bytes:
+            return self.text.encode("utf-8")
+
+    def make_fetcher(*, interrupt_b_once: bool):
+        interrupted = False
+
+        def fetch(url: str) -> _Response:
+            nonlocal interrupted
+            path = url.split("example.com", 1)[-1]
+            if path == "/robots.txt":
+                return _Response(200, "User-agent: *\nAllow: /", {"content-type": "text/plain"})
+            if path == "/":
+                return _Response(
+                    200,
+                    "<html><body><a href='/b'>B</a></body></html>",
+                    {"content-type": "text/html"},
+                )
+            if path == "/b":
+                if interrupt_b_once and not interrupted:
+                    interrupted = True
+                    raise KeyboardInterrupt
+                return _Response(
+                    200, "<html><body>second page</body></html>", {"content-type": "text/html"}
+                )
+            raise AssertionError(f"unexpected URL {url}")
+
+        return fetch
+
+    original_crawl_site = spider_mod.crawl_site
+
+    def run(out_dir, fetch):
+        config = out_dir.parent / f"{out_dir.name}.json"
+        config.write_text(json.dumps({"output": {"dir": str(out_dir), "write_pages_jsonl": False}}))
+
+        def injected(*args, **kwargs):
+            return original_crawl_site(*args, fetcher=fetch, **kwargs)
+
+        monkeypatch.setattr(spider_mod, "crawl_site", injected)
+        return handlers.crawl_site(url="https://example.com/", config=str(config))
+
+    out_dir = tmp_path / "resumed"
+
+    interrupted = run(out_dir, make_fetcher(interrupt_b_once=True))
+    assert interrupted["partial"] is True
+    assert not (out_dir / "pages.jsonl").exists()
+
+    resumed = run(out_dir, make_fetcher(interrupt_b_once=False))
+
+    assert resumed["resumed"] is True
+    assert resumed["partial"] is False
+    assert resumed["urls_collected"] == 2
+    audit = json.loads((out_dir / "audit.json").read_text())
+    assert audit["summary"]["totals"]["urls_crawled"] == 2
+    # The export stayed off throughout, as configured.
+    assert not (out_dir / "pages.jsonl").exists()
+
+
+def test_the_private_pages_sidecar_is_removed_once_the_crawl_finishes(tmp_path, monkeypatch):
+    """Nothing is left to resume into once finish_reason is 'finished', so the
+    private sidecar used only because write_pages_jsonl was off must not
+    linger next to a finished run's output as a stale, hidden copy."""
+    captured = {}
+
+    def fake(*args, **kwargs):
+        captured["out_path"] = kwargs["out_path"]
+        result = SpiderResult()
+        result.finish_reason = "finished"
+        return result
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+    config = tmp_path / "crawl.json"
+    out_dir = tmp_path / "run"
+    config.write_text(json.dumps({"output": {"dir": str(out_dir), "write_pages_jsonl": False}}))
+
+    handlers.crawl_site(url="https://example.com/", config=str(config))
+
+    assert captured["out_path"] == str(out_dir / ".pages_resume.jsonl")
+    assert not (out_dir / ".pages_resume.jsonl").exists()
+
+
+# ── #244: pages.jsonl must match audit.json after render escalation ─────────
+
+
+def test_pages_jsonl_is_rewritten_to_match_audit_json_after_render_escalation(
+    tmp_path, monkeypatch
+):
+    """The spider streams pages.jsonl during the static crawl, before handler-
+    level render escalation exists to mutate result.pages in place. Without a
+    rewrite afterward, pages.jsonl keeps static title/word-count/representation
+    for a page whose in-memory record and audit.json both moved on to
+    rendered -- breaking the per-page provenance guarantee the artifact makes."""
+    out_dir = tmp_path / "run"
+    pages = [
+        PageRecord(url="https://example.com/", content_type="text/html", outlinks=1),
+        PageRecord(url="https://example.com/app/1", content_type="text/html"),
+    ]
+
+    def fake_spider(*args, **kwargs):
+        page_path = kwargs["out_path"]
+        with open(page_path, "w", encoding="utf-8") as fh:
+            for page in pages:
+                fh.write(json.dumps(dataclasses.asdict(page)) + "\n")
+        result = SpiderResult()
+        result.pages = pages
+        result.links = [LinkEdge("https://example.com/", "https://example.com/app/1", "app", False)]
+        result.start_page_evidence = {"html": "<html><body><a href='/app/1'>app</a></body></html>"}
+        return result
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake_spider)
+
+    import seohead.tools.render as render_mod
+
+    monkeypatch.setattr(
+        render_mod,
+        "render_check",
+        lambda url, **kwargs: {"ok": True, "js_dependent": "/app/" in url, "empty_shell": None},
+    )
+    monkeypatch.setattr(
+        render_mod,
+        "render_document",
+        lambda url, *a, **kw: {
+            "ok": True,
+            "final_url": url,
+            "html": "<html><head><title>Rendered app</title></head><body>one two three</body></html>",
+        },
+    )
+
+    config = tmp_path / "crawl.json"
+    config.write_text(
+        json.dumps(
+            {
+                "rendering": {
+                    "mode": "js",
+                    "escalation": {"sample_per_pattern": 1, "max_render_urls": 10},
+                }
+            }
+        )
+    )
+    out = handlers.crawl_site(url="https://example.com/", config=str(config), out_dir=str(out_dir))
+
+    assert out["render_escalation"]["render_requests"] == 1
+    saved = [json.loads(line) for line in (out_dir / "pages.jsonl").read_text().splitlines()]
+    saved_app = next(page for page in saved if page["url"].endswith("/app/1"))
+    audit = json.loads((out_dir / "audit.json").read_text())
+    audit_app = next(page for page in audit["pages"] if page["url"].endswith("/app/1"))
+
+    assert pages[1].representation == "rendered"
+    assert saved_app["representation"] == "rendered"
+    assert audit_app["metrics"]["representation"] == "rendered"
+
+
+# ── #246: partial native crawls withhold whole-graph link findings ──────────
+
+
+def _partial_link_graph_result(*, partial: bool, finish_reason: str) -> SpiderResult:
+    base = "https://example.test"
+
+    def page(path: str, depth: int, outlinks: int) -> PageRecord:
+        return PageRecord(
+            url=f"{base}{path}",
+            status_code=200,
+            content_type="text/html",
+            title=path or "/",
+            h1="H",
+            crawl_depth=depth,
+            outlinks=outlinks,
+        )
+
+    core_paths = [f"/c{number}" for number in range(1, 13)]
+    pages = [page("/", 0, len(core_paths) + 1), page("/lonely", 1, 0)]
+    pages.extend(page(path, 1, len(core_paths)) for path in core_paths)
+
+    links = [LinkEdge(f"{base}/", f"{base}{path}", path, False) for path in core_paths]
+    links.append(LinkEdge(f"{base}/", f"{base}/lonely", "lonely", False))
+    for source in core_paths:
+        links.append(LinkEdge(f"{base}{source}", f"{base}/", "hub", False))
+        links.extend(
+            LinkEdge(f"{base}{source}", f"{base}{target}", target, False)
+            for target in core_paths
+            if target != source
+        )
+
+    result = SpiderResult(
+        pages=pages,
+        links=links,
+        partial=partial,
+        finish_reason=finish_reason,
+        start_page_evidence={"html": "<html><body>measured static page</body></html>"},
+    )
+    if partial:
+        result.stopped_reason = "url limit reached before the frontier was exhausted"
+    return result
+
+
+def test_low_link_score_is_withheld_on_a_partial_native_crawl(monkeypatch):
+    """LOW_LINK_SCORE, like the three checks beside it in
+    aggregate.GRAPH_WIDE_FINDING_CHECKS, is a whole-graph verdict: a URL-limit
+    crawl's unfetched frontier could still hold the edge that would clear
+    /lonely, so the finding must be withheld and named in checks_skipped
+    rather than published against an admittedly incomplete graph."""
+    monkeypatch.setattr(
+        spider_mod,
+        "crawl_site",
+        lambda *a, **kw: _partial_link_graph_result(partial=True, finish_reason="url_limit"),
+    )
+    out = handlers.crawl_site(url="https://example.test/")
+    assert out["partial"] is True
+    assert out["summary"]["by_check"].get("LOW_LINK_SCORE", 0) == 0
+
+    monkeypatch.setattr(
+        spider_mod,
+        "crawl_site",
+        lambda *a, **kw: _partial_link_graph_result(partial=False, finish_reason="finished"),
+    )
+    complete = handlers.crawl_site(url="https://example.test/")
+    assert complete["partial"] is False
+    assert complete["summary"]["by_check"].get("LOW_LINK_SCORE") == 1
+
+
+def test_inlink_boilerplate_only_is_withheld_on_a_partial_native_crawl(tmp_path, monkeypatch):
+    """INLINK_BOILERPLATE_ONLY is a universal claim -- 'never linked from body
+    content' -- computed by crawl_site itself rather than through
+    seohead.sf.core.aggregate, so it needs its own partial-crawl guard rather
+    than joining GRAPH_WIDE_FINDING_CHECKS. A url-limit crawl that only saw a
+    footer link to /target must not publish the finding; the same graph on a
+    finished crawl must."""
+    base = "https://example.test"
+
+    def page(path: str, depth: int) -> PageRecord:
+        return PageRecord(
+            url=f"{base}{path}",
+            status_code=200,
+            content_type="text/html",
+            title=path or "/",
+            h1="H",
+            crawl_depth=depth,
+            outlinks=1,
+        )
+
+    def result(*, partial: bool, finish_reason: str) -> SpiderResult:
+        pages = [page("/", 0), page("/target", 1), page("/context", 1)]
+        links = [LinkEdge(f"{base}/", f"{base}/target", "target", False, "footer")]
+        return SpiderResult(
+            pages=pages,
+            links=links,
+            partial=partial,
+            finish_reason=finish_reason,
+            start_page_evidence={"html": "<html><body>measured static page</body></html>"},
+        )
+
+    config = tmp_path / "crawl.json"
+    config.write_text(json.dumps({"link_position": {"classify": True}}))
+
+    monkeypatch.setattr(
+        spider_mod, "crawl_site", lambda *a, **kw: result(partial=True, finish_reason="url_limit")
+    )
+    partial_out = handlers.crawl_site(url=f"{base}/", config=str(config))
+    assert partial_out["summary"]["by_check"].get("INLINK_BOILERPLATE_ONLY", 0) == 0
+    assert f"{base}/target" in partial_out["link_position"]["pages_boilerplate_only"]
+
+    monkeypatch.setattr(
+        spider_mod, "crawl_site", lambda *a, **kw: result(partial=False, finish_reason="finished")
+    )
+    complete_out = handlers.crawl_site(url=f"{base}/", config=str(config))
+    assert complete_out["summary"]["by_check"].get("INLINK_BOILERPLATE_ONLY") == 1
