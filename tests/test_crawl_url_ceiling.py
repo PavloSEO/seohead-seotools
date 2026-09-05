@@ -23,7 +23,14 @@ from seohead.crawl.spider import LinkEdge
 # measured against these dataclasses at these widths. Adding a field does not
 # invalidate the ceiling by itself, but it does invalidate the arithmetic that
 # justifies it, and nothing else in the suite would notice.
-FIELD_COUNTS_THE_CEILING_WAS_COMPUTED_AGAINST = {LinkEdge: 8, PageRecord: 43}
+# PageRecord grew from 43 to 44 fields with the addition of ``body_unavailable``
+# (#243: an oversized 2xx HTML response must say so explicitly instead of leaving
+# every parser-derived field silently at its default). One extra empty-string
+# field does not change the order of magnitude behind MAX_URLS_CEILING's own
+# byte estimate; see seohead/crawl/settings.py for that comment, which a future
+# change is still responsible for re-measuring if the per-record cost class
+# actually moves.
+FIELD_COUNTS_THE_CEILING_WAS_COMPUTED_AGAINST = {LinkEdge: 8, PageRecord: 44}
 
 
 def test_both_crawlers_read_the_same_ceiling() -> None:
