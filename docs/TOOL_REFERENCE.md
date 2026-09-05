@@ -526,7 +526,7 @@ Turn an audit document into a file: xlsx, docx, csv, md or json. Pass the dict r
 
 | Argument | Type | Default |
 |---|---|---|
-| `audit` | `dict` | `required` |
+| `audit` | `dict | str` | `required` |
 | `fmt` | `str` | `'xlsx'` |
 | `out` | `str | None` | `None` |
 
@@ -899,7 +899,7 @@ Build tasks.json and tasks.md from an existing audit.json.
 | `out` | `str` | `'report'` |
 | `config` | `str | None` | `None` |
 
-**Cost** — network: yes · writes files: yes · idempotent: no · spends money: no
+**Cost** — network: no · writes files: yes · idempotent: no · spends money: no
 
 **Behavior and failure modes**
 

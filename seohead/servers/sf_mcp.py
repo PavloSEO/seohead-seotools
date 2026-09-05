@@ -94,6 +94,9 @@ def register(mcp):  # pragma: no cover - needs the SDK
     create_files = ToolAnnotations(
         readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
     )
+    create_local_files = ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
     read_files = ToolAnnotations(
         readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
     )
@@ -170,7 +173,7 @@ def register(mcp):  # pragma: no cover - needs the SDK
         missing = [k for k in EXPORT_MATCHERS if k not in found]
         return {"found": found, "missing": missing}
 
-    @mcp.tool(annotations=create_files, structured_output=True)
+    @mcp.tool(annotations=create_local_files, structured_output=True)
     def sf_audit_tasks(
         json_path: str, out: str = "report", config: str | None = None
     ) -> dict[str, Any]:

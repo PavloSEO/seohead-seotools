@@ -192,8 +192,9 @@ the declared set against the URLs the crawl actually reaches by following a link
 in `audit.json` as `summary.sitemap`, with three disjoint sets: URLs declared and linked (healthy),
 URLs declared but never linked from any crawled page (orphaned — reported via `SITEMAP_ORPHAN`),
 and URLs linked but never declared (reported via `URL_NOT_IN_SITEMAP`). With no explicit
-`--sitemap`, setting `sitemaps.auto_discover` in `--config` seeds from whatever sitemap robots.txt
-declares.
+`--sitemap`, setting `sitemaps.auto_discover` in `--config` seeds from every sitemap robots.txt
+declares — a site can list more than one `Sitemap:` directive, and each one is fetched and its
+URLs unioned, not just the first.
 
 Three properties are deliberate:
 
