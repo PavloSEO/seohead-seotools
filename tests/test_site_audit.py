@@ -167,7 +167,13 @@ def test_one_good_root_keeps_urls_and_names_the_failed_root():
     assert sitemap["errors"] == [{"url": SECOND_SITEMAP, "error": "404"}]
     # A non-fatal partial result still has to surface in the document, not only in
     # the raw site payload -- findings feed the Markdown/DOCX/XLSX report writers.
-    assert any(SECOND_SITEMAP in f["text"] for f in result["findings"])
+    named = [f for f in result["findings"] if SECOND_SITEMAP in f["text"]]
+    assert named
+    # And it has to surface at the severity that keeps it visible. classify()
+    # matches SEVERITY_RULES by plain substring, so a finding whose wording drifts
+    # by one word silently becomes a notice and sorts to the bottom of every
+    # report -- under exactly the partial evidence it was written to raise.
+    assert [f["severity"] for f in named] == ["critical"]
 
 
 def test_all_successful_multi_root_shape_is_unchanged():

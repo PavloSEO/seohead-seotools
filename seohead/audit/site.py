@@ -300,8 +300,13 @@ def audit_site(
                 # Some roots still produced URLs, so this is not a hard failure —
                 # but the unavailable roots must still surface to report writers
                 # instead of disappearing behind the successful ones.
+                # The wording is not free: classify() matches SEVERITY_RULES by
+                # plain substring, and its marker is "unavailable or return
+                # errors". Writing "returned" here instead left this finding
+                # classified as a notice -- sorted to the bottom of every report,
+                # under exactly the partial evidence it exists to raise.
                 merged["findings"] = [
-                    "Sitemap source unavailable or returned errors: "
+                    "Sitemap source unavailable or return errors: "
                     f"{err.get('url') or '(unknown root)'} — {err.get('error')}"
                     for err in errors
                 ]
