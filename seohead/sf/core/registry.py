@@ -418,8 +418,12 @@ CHECKS: dict[str, dict[str, Any]] = {
     "SITEMAP_FETCH_INCOMPLETE": {
         "severity": "notice",
         "source": "sitemap",
-        "message": "Some child sitemaps could not be fetched because of network or availability errors",
-        "fix": "Check that every child sitemap is reachable and retry the audit in case the sitemap service was temporarily slow.",
+        "message": "Some child sitemaps could not be fetched or parsed",
+        "fix": (
+            "Check that every child sitemap is reachable, retry in case the service was "
+            "temporarily slow, and validate the XML -- a 200 response with malformed markup "
+            "(e.g. an unescaped '&' in a URL) fails here the same way a network error does."
+        ),
     },
     # 8.x — heuristics beyond SF
     "HTML_BLOAT": {
