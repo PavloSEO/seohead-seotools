@@ -611,6 +611,9 @@ def check_canonical_chain(ctx: AuditContext) -> None:
             path.append(nxt)
             seen.add(nxt)
             cur = nxt
+        # #176 audit: a representative read, but only for display — the walk above already
+        # decided the chain from the edge map alone, so which variant's URL string gets
+        # printed here changes nothing about whether or how CANONICAL_CHAIN fires.
         chain = []
         for n in path:
             tgt = ctx.page_by_norm.get(n)
@@ -647,20 +650,29 @@ def check_canonical_to_redirect(ctx: AuditContext) -> None:
             continue  # external / not crawled — cannot classify
         if any(t.status_code is not None and 200 <= int(t.status_code) < 300 for t in targets):
             continue
-        target = targets[0]
-        code = target.status_code
-        redirect_url = ctx.redirect_map.get(target.url)
-        is_redirect = (code is not None and 300 <= code <= 399) or bool(redirect_url)
-        if is_redirect:
-            ctx.add(
-                "CANONICAL_TO_REDIRECT",
-                target_url=page.url,
-                details={
-                    "canonical": canonical,
-                    "canonical_status_code": code,
-                    "redirect_url": redirect_url or target.url,
-                },
-            )
+        # #176: reading targets[0] made the verdict depend on crawl order — a 404 crawled
+        # before its 301 twin under the same normalised key hid a real CANONICAL_TO_REDIRECT.
+        # The normalised key can't say which literal variant the canonical tag actually named,
+        # so any target that answers with a redirect is enough to report one, exactly the mirror
+        # of the "any 2xx clears it" guard above.
+        redirecting = [
+            (t, ctx.redirect_map.get(t.url) or t.url)
+            for t in targets
+            if (t.status_code is not None and 300 <= int(t.status_code) <= 399)
+            or ctx.redirect_map.get(t.url)
+        ]
+        if not redirecting:
+            continue  # every target under the key is a plain non-2xx, non-redirect response
+        target, redirect_url = redirecting[0]
+        ctx.add(
+            "CANONICAL_TO_REDIRECT",
+            target_url=page.url,
+            details={
+                "canonical": canonical,
+                "canonical_status_code": target.status_code,
+                "redirect_url": redirect_url,
+            },
+        )
 
 
 def check_unlinked_canonical(ctx: AuditContext) -> None:
@@ -687,6 +699,10 @@ def check_unlinked_canonical(ctx: AuditContext) -> None:
     for source_norm, target_norm in edges.items():
         sources_by_target[target_norm].append(source_norm)
     for target_norm, source_norms in sources_by_target.items():
+        # #176 audit: correct by construction. The claim here is about the live page's own
+        # inlink count, and the redirecting twin under a shared key never carries that count
+        # (SF attributes Inlinks to the URL that actually receives them) — the 2xx-preferring
+        # representative is the only variant this check could mean.
         target = ctx.page_by_norm.get(target_norm)
         if target is None:
             continue  # canonical points outside the crawl — cannot classify
@@ -745,6 +761,8 @@ def check_pagination_series(ctx: AuditContext) -> None:
     has_predecessor = set(next_map.values())
     reported: set[str] = set()
 
+    # #176 audit: display only, like the equivalent helper in check_canonical_chain — the
+    # walk over next_map already decided the series and the loop before any URL is printed.
     def _url_of(n: str) -> str:
         page = ctx.page_by_norm.get(n)
         return page.url if page is not None else n
@@ -776,6 +794,10 @@ def check_pagination_series(ctx: AuditContext) -> None:
             continue
         if start in has_predecessor:
             continue  # not the head of its series
+        # #176 audit: correct by construction, same reasoning as check_unlinked_canonical —
+        # is_indexable and inlinks are properties of the live page, and a redirecting twin
+        # under this key would report neither, so the 2xx-preferring representative is the
+        # only variant "is this series head unlinked" can mean.
         page = ctx.page_by_norm.get(start)
         if page is None or not page.is_indexable or _rec(page).get("crawl_depth") == 0:
             continue
