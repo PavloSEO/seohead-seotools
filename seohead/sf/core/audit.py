@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from ..config import apply_profile, load_config
+from ..config import apply_profile, load_config, validate_config
 from .aggregate import aggregate
 from .context import AuditContext
 from .heuristics import run_heuristics
@@ -95,6 +95,10 @@ def run_audit(
     # from robots.txt (unless the user pinned --sitemap or toggled live-recheck).
     if input_mode in CRAWL_MODES and live_recheck is None and not sitemap_url:
         cfg.setdefault("live_recheck", {})["enabled"] = True
+    # Every override above is final by this point — validate before anything is
+    # crawled or parsed, so a bad config fails loudly instead of shipping a
+    # corrupted score (issue #211).
+    validate_config(cfg)
 
     # --- obtain the exports directory ------------------------------------
     sf_version: str | None = None
