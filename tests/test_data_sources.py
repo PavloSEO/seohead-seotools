@@ -8,7 +8,17 @@ import urllib.request
 
 import pytest
 
-from seohead.data_sources import arsenkin, credentials, spend, yandex_cloud
+from seohead.data_sources import (
+    arsenkin,
+    credentials,
+    crtsh,
+    crux,
+    indexnow,
+    spend,
+    wayback,
+    yandex_cloud,
+)
+from seohead.data_sources import gsc as gsc_core
 
 # --- Credentials -----------------------------------------------------------
 
@@ -698,3 +708,382 @@ def test_split_list_keeps_comma_inside_quotes():
     ]
     assert _split_list("'first, with a comma','second'") == ["first, with a comma", "second"]
     assert _split_list('"alpha, beta",gamma') == ["alpha, beta", "gamma"]
+
+
+# --- Wayback Machine CDX (keyless, issue #97) -------------------------------
+
+
+_CDX_HEADER = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
+
+
+def test_wayback_history_parses_a_recorded_cdx_response():
+    """Fixture shape recorded from a real ``.../cdx/search/cdx?...&output=json`` response."""
+    body = json.dumps(
+        [
+            _CDX_HEADER,
+            [
+                "com,example)/",
+                "20200101000000",
+                "https://example.com/",
+                "text/html",
+                "200",
+                "ABCD1234",
+                "1024",
+            ],
+            [
+                "com,example)/",
+                "20230601000000",
+                "https://example.com/",
+                "text/html",
+                "404",
+                "EFGH5678",
+                "512",
+            ],
+        ]
+    )
+    result = wayback.history("https://example.com/", fetcher=lambda url: body)
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert result["snapshots"][0]["statuscode"] == "200"
+    assert result["snapshots"][1]["statuscode"] == "404"
+    assert result["snapshots"][1]["archived_url"] == (
+        "https://web.archive.org/web/20230601000000/https://example.com/"
+    )
+
+
+def test_wayback_history_builds_the_query_from_optional_filters():
+    captured = {}
+
+    def fetcher(url):
+        captured["url"] = url
+        return ""
+
+    wayback.history(
+        "https://example.com/", limit=5, from_date="2024", to_date="20260101", fetcher=fetcher
+    )
+    assert "url=https%3A%2F%2Fexample.com%2F" in captured["url"]
+    assert "limit=5" in captured["url"]
+    assert "from=2024" in captured["url"]
+    assert "to=20260101" in captured["url"]
+
+
+def test_wayback_history_empty_response_is_not_an_error():
+    """No snapshot at all is a fact, not a failure: the CDX server returns a fully empty body."""
+    result = wayback.history("https://example.com/never-archived", fetcher=lambda url: "")
+    assert result == {
+        "ok": True,
+        "url": "https://example.com/never-archived",
+        "count": 0,
+        "snapshots": [],
+    }
+
+
+def test_wayback_history_non_json_response_is_reported_not_raised():
+    result = wayback.history("https://example.com/", fetcher=lambda url: "<html>error</html>")
+    assert result["ok"] is False
+    assert "not JSON" in result["error"]
+
+
+def test_wayback_history_network_error_is_reported_not_raised():
+    def fetcher(url):
+        raise urllib.error.URLError("simulated network failure")
+
+    result = wayback.history("https://example.com/", fetcher=fetcher)
+    assert result["ok"] is False
+    assert "request failed" in result["error"]
+
+
+def test_wayback_history_requires_a_url():
+    with pytest.raises(ValueError):
+        wayback.history("")
+
+
+# --- Certificate Transparency / crt.sh (keyless, issue #97) -----------------
+
+
+def test_crtsh_subdomains_parses_a_recorded_response():
+    """Fixture shape recorded from a real ``crt.sh/?q=%.example.com&output=json`` response."""
+    body = json.dumps(
+        [
+            {"common_name": "example.com", "name_value": "example.com\nwww.example.com"},
+            {"common_name": "*.app.example.com", "name_value": "*.app.example.com"},
+            {"common_name": "unrelated-domain.test", "name_value": "unrelated-domain.test"},
+        ]
+    )
+    result = crtsh.subdomains("example.com", fetcher=lambda url: body)
+    assert result["ok"] is True
+    assert result["subdomains"] == ["app.example.com", "example.com", "www.example.com"]
+    assert result["count"] == 3
+
+
+def test_crtsh_subdomains_empty_response_is_not_an_error():
+    result = crtsh.subdomains("example.com", fetcher=lambda url: "")
+    assert result == {"ok": True, "domain": "example.com", "count": 0, "subdomains": []}
+
+
+def test_crtsh_subdomains_non_json_response_is_reported_not_raised():
+    """crt.sh serves an HTML page under load instead of its JSON API; that must not read as zero."""
+    result = crtsh.subdomains("example.com", fetcher=lambda url: "<html>overloaded</html>")
+    assert result["ok"] is False
+    assert "overloaded" in result["error"] or "not JSON" in result["error"]
+
+
+def test_crtsh_subdomains_network_error_is_reported_not_raised():
+    def fetcher(url):
+        raise urllib.error.URLError("simulated network failure")
+
+    result = crtsh.subdomains("example.com", fetcher=fetcher)
+    assert result["ok"] is False
+
+
+def test_crtsh_subdomains_requires_a_domain():
+    with pytest.raises(ValueError):
+        crtsh.subdomains("")
+
+
+# --- Google Search Console (credential-gated skeleton, issue #97) ----------
+
+
+def test_gsc_search_analytics_missing_credential_never_reaches_the_network(monkeypatch, tmp_path):
+    monkeypatch.delenv("GSC_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(credentials, "CONFIG_ROOT", tmp_path)
+
+    def fail_fetcher(payload, token):
+        raise AssertionError("must not reach the network without a token")
+
+    result = gsc_core.search_analytics(
+        "sc-domain:example.com",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+        fetcher=fail_fetcher,
+    )
+    assert result == {
+        "ok": False,
+        "error": (
+            f"credential not found: store it in {tmp_path / 'gsc' / 'access_token'} or set "
+            "$GSC_ACCESS_TOKEN. See docs/SETUP.md for how to obtain a Search Console OAuth token."
+        ),
+    }
+
+
+def test_gsc_search_analytics_parses_a_recorded_response():
+    body = json.dumps(
+        {
+            "rows": [
+                {
+                    "keys": ["technical seo"],
+                    "clicks": 12,
+                    "impressions": 400,
+                    "ctr": 0.03,
+                    "position": 8.4,
+                },
+            ]
+        }
+    )
+    result = gsc_core.search_analytics(
+        "sc-domain:example.com",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+        token="fake-token",
+        fetcher=lambda payload, token: body,
+    )
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert result["rows"][0]["clicks"] == 12
+    assert result["rows"][0]["keys"] == ["technical seo"]
+
+
+def test_gsc_inspect_url_parses_a_recorded_response():
+    body = json.dumps(
+        {
+            "inspectionResult": {
+                "indexStatusResult": {
+                    "verdict": "PASS",
+                    "coverageState": "Submitted and indexed",
+                    "indexingState": "INDEXING_ALLOWED",
+                    "googleCanonical": "https://example.com/",
+                    "userCanonical": "https://example.com/",
+                }
+            }
+        }
+    )
+    result = gsc_core.inspect_url(
+        "sc-domain:example.com",
+        "https://example.com/",
+        token="fake-token",
+        fetcher=lambda payload, token: body,
+    )
+    assert result["ok"] is True
+    assert result["coverage_state"] == "Submitted and indexed"
+    assert result["verdict"] == "PASS"
+
+
+def _make_http_error(code: int, body: str) -> urllib.error.HTTPError:
+    import io
+
+    return urllib.error.HTTPError(
+        url="https://example.invalid",
+        code=code,
+        msg="error",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=io.BytesIO(body.encode()),
+    )
+
+
+def test_gsc_http_error_extracts_the_api_message_without_leaking_the_token():
+    def fetcher(payload, token):
+        raise _make_http_error(403, json.dumps({"error": {"message": "no permission"}}))
+
+    result = gsc_core.search_analytics(
+        "sc-domain:example.com",
+        start_date="2026-01-01",
+        end_date="2026-01-31",
+        token="secret-bearer-token",
+        fetcher=fetcher,
+    )
+    assert result["ok"] is False
+    assert result["status"] == 403
+    assert "permission" in result["error"]
+    assert "secret-bearer-token" not in result["error"]
+
+
+def test_gsc_query_handler_rejects_an_unknown_mode():
+    from seohead.servers.handlers import gsc_query
+
+    with pytest.raises(ValueError):
+        gsc_query(site_url="sc-domain:example.com", mode="bogus")
+
+
+def test_gsc_query_handler_requires_inspection_url_for_inspect_mode():
+    from seohead.servers.handlers import gsc_query
+
+    with pytest.raises(ValueError):
+        gsc_query(site_url="sc-domain:example.com", mode="inspect_url")
+
+
+# --- Chrome UX Report / CrUX (credential-gated skeleton, issue #97) --------
+
+
+def test_crux_query_missing_credential_never_reaches_the_network(monkeypatch, tmp_path):
+    monkeypatch.delenv("CRUX_API_KEY", raising=False)
+    monkeypatch.setattr(credentials, "CONFIG_ROOT", tmp_path)
+
+    def fail_fetcher(payload, api_key):
+        raise AssertionError("must not reach the network without an API key")
+
+    result = crux.query(url="https://example.com/", fetcher=fail_fetcher)
+    assert result["ok"] is False
+    assert "crux/api_key" in result["error"]
+
+
+def test_crux_query_parses_a_recorded_response():
+    body = json.dumps(
+        {
+            "record": {
+                "key": {"formFactor": "PHONE"},
+                "collectionPeriod": {"firstDate": {"year": 2026, "month": 1, "day": 1}},
+                "metrics": {
+                    "largest_contentful_paint": {"percentiles": {"p75": 2100}},
+                    "cumulative_layout_shift": {"percentiles": {"p75": "0.05"}},
+                },
+            }
+        }
+    )
+    result = crux.query(url="https://example.com/", api_key="fake-key", fetcher=lambda p, k: body)
+    assert result["ok"] is True
+    assert result["form_factor"] == "PHONE"
+    assert result["metrics"]["largest_contentful_paint"]["p75"] == 2100
+
+
+def test_crux_query_404_means_no_data_not_a_failure():
+    def fetcher(payload, api_key):
+        raise _make_http_error(404, json.dumps({"error": {"message": "not found"}}))
+
+    result = crux.query(origin="https://tiny-site.example", api_key="fake-key", fetcher=fetcher)
+    assert result == {
+        "ok": True,
+        "target": "https://tiny-site.example",
+        "metrics": {},
+        "note": "no CrUX data",
+    }
+
+
+def test_crux_query_requires_exactly_one_of_url_or_origin():
+    with pytest.raises(ValueError):
+        crux.query(api_key="fake-key")
+    with pytest.raises(ValueError):
+        crux.query(url="https://example.com/", origin="https://example.com", api_key="fake-key")
+
+
+def test_crux_query_key_travels_in_a_header_not_the_request_url():
+    """The key must never be able to leak through a URL echoed into a log or an exception."""
+    import inspect
+
+    source = inspect.getsource(crux._default_fetcher)
+    assert "X-goog-api-key" in source
+    assert "?" not in source.split("urllib.request.Request(")[1].split(",")[0]
+
+
+# --- IndexNow (credential-gated skeleton, issue #97) ------------------------
+
+
+def test_indexnow_submit_missing_credential_never_reaches_the_network(monkeypatch, tmp_path):
+    monkeypatch.delenv("INDEXNOW_KEY", raising=False)
+    monkeypatch.setattr(credentials, "CONFIG_ROOT", tmp_path)
+
+    def fail_fetcher(payload):
+        raise AssertionError("must not reach the network without a key")
+
+    result = indexnow.submit(["https://example.com/a"], host="example.com", fetcher=fail_fetcher)
+    assert result["ok"] is False
+    assert "indexnow/key" in result["error"]
+
+
+def test_indexnow_submit_success_names_google_as_not_adopted():
+    result = indexnow.submit(
+        ["https://example.com/a", "https://example.com/b"],
+        host="example.com",
+        key="fake-key",
+        fetcher=lambda payload: (200, ""),
+    )
+    assert result["ok"] is True
+    assert result["submitted"] == 2
+    assert result["not_adopted_by"] == ["Google"]
+
+
+def test_indexnow_submit_rejects_an_oversized_batch_before_touching_credentials_or_network():
+    def fail_fetcher(payload):
+        raise AssertionError("must not reach the network over the batch limit")
+
+    urls = [f"https://example.com/{i}" for i in range(indexnow.MAX_URLS_PER_BATCH + 1)]
+    result = indexnow.submit(urls, host="example.com", key="fake-key", fetcher=fail_fetcher)
+    assert result["ok"] is False
+    assert "10000" in result["error"] or "10,000" in result["error"]
+
+
+def test_indexnow_submit_reports_the_documented_status_message():
+    result = indexnow.submit(
+        ["https://example.com/a"],
+        host="example.com",
+        key="fake-key",
+        fetcher=lambda payload: (403, ""),
+    )
+    assert result["ok"] is False
+    assert "key" in result["error"]
+
+
+def test_indexnow_submit_network_error_is_reported_not_raised():
+    def fetcher(payload):
+        raise urllib.error.URLError("simulated network failure")
+
+    result = indexnow.submit(
+        ["https://example.com/a"], host="example.com", key="fake-key", fetcher=fetcher
+    )
+    assert result["ok"] is False
+
+
+def test_indexnow_submit_requires_urls_and_host():
+    with pytest.raises(ValueError):
+        indexnow.submit([], host="example.com")
+    with pytest.raises(ValueError):
+        indexnow.submit(["https://example.com/a"], host="")

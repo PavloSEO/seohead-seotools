@@ -18,7 +18,7 @@ If you know what you want, the other three layers are faster:
 
 **It is a crawler and an analysis layer.** It fetches a site the way a search engine's crawler
 would — one host, at a rate you choose, honouring robots.txt by default — records what came
-back, and applies 121 checks to that evidence. Then a set of specialised tools answer questions
+back, and applies 138 checks to that evidence. Then a set of specialised tools answer questions
 the crawl raised: does JavaScript change what a crawler sees, is the structured data a connected
 graph, how heavy are the images really.
 
@@ -142,14 +142,18 @@ complete one.
 | `summary.check_coverage` | how many checks *could* run |
 | `summary.health_score_basis` | whether the score compares to anything |
 
-Three words mean three different things and are constantly confused:
+Four words mean four different things and are constantly confused:
 
 - **fired** — the check ran and found something.
 - **skipped** — the check *could not run*, and the reason is named: a missing export column, a
   page property nobody recorded. This is not "zero issues".
-- **silent** — the check ran and found nothing. This is the good one.
+- **disabled** — the operator turned the check off in config (`checks.<ID>.enabled: false`).
+  Named separately from `skipped` so a deliberate switch is never read as missing evidence, and
+  named at all so it is never read as `silent`.
+- **silent** — the check *was invoked* and found nothing. This is the good one. `checks_silent_ids`
+  names the population; a check no code path ever calls is a defect, not a silent one.
 
-A health score computed from 16 of 121 checks is not a health score. The audit says so in
+A health score computed from 16 of 138 checks is not a health score. The audit says so in
 `health_score_basis`, and where coverage is too low the score is withheld rather than averaged
 out of whatever happened to be available. **Report that sentence next to the score, always.**
 
@@ -163,14 +167,22 @@ A check that fired on more than half the pages is almost always wrong — the to
 the *unusual*. On one live 124-page site, one check produced 392 of 529 findings: 74% of the
 report, and every one false. That was visible in one line, before reading a single URL.
 
+The report now says it for you. Any check covering more than half the crawled pages is listed
+under **"Look at these before trusting the rest"**, above the findings rather than in an
+appendix, and the same list is in `audit.json` as `summary.implausible_checks`. It is not a
+failure: a site really may have no meta description anywhere. It is the one minute of checking
+that would have caught all three of the defects live crawls found (#94, #95, #96).
+
 **And scan the run:**
 
 ```bash
 seohead log-scan --run ./run
 ```
 
-Eight rules, each written from a defect that shipped past the whole test suite. Exit 2 means
-two numbers in the same run disagree with each other. Twenty seconds here is cheaper than a
+Nine rules, each written from a defect that shipped past the whole test suite. Exit 2 means
+two numbers in the same run disagree with each other. Beside them, under `review`, sit the
+checks that describe most of the site: not a contradiction, since a uniform site makes them
+true, so they never change the exit code -- only ask for a minute of your attention. Twenty seconds here is cheaper than a
 client asking why a 739 KB file is listed as 1.27 MB.
 
 ---

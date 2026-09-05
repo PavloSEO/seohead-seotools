@@ -49,6 +49,67 @@ def test_query_and_fragment_are_ignored_in_the_pattern_key():
     assert url_pattern("https://example.com/x?a=1#top") == url_pattern("https://example.com/x")
 
 
+def test_distinct_root_level_static_pages_do_not_collapse():
+    """#149: a bare `/<slug>` at the root has no shared parent segment, so a long
+    descriptive slug there is a hand-written page name, not a template instance --
+    unlike `/blog/<slug>`, which does share one (see test_slug_like_segments_collapse_too).
+    """
+    urls = [
+        "https://example.com/contact-us",
+        "https://example.com/case-studies",
+        "https://example.com/testimonials",
+        "https://example.com/documentation",
+        "https://example.com/pricing-plans",
+    ]
+    assert len({url_pattern(u) for u in urls}) == len(urls)
+
+
+def test_root_level_numeric_and_date_segments_still_collapse():
+    """Unlike a descriptive slug, a number, UUID or date is structurally an
+    identifier wherever it sits -- no shared parent segment needed."""
+    assert url_pattern("https://example.com/42") == url_pattern("https://example.com/43")
+    assert url_pattern("https://example.com/2024-01-15") == url_pattern(
+        "https://example.com/2024-06-30"
+    )
+    assert url_pattern("https://example.com/3fa85f64-5717-4562-b3fc-2c963f66afa6") == url_pattern(
+        "https://example.com/7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    )
+
+
+def test_a_js_only_page_is_still_probed_when_it_no_longer_shares_a_pattern():
+    """The end-to-end case #149 reported: five root-level static pages plus one
+    genuinely JS-only page (documentation), sample_per_pattern=2. Before the fix,
+    all five shared one pattern key and only two of them (never `documentation`)
+    were ever probed, so the JS-only page's representation stayed "static" with no
+    error and no flag -- a silent false clean.
+    """
+    pages = [
+        _Page("https://example.com/contact-us"),
+        _Page("https://example.com/case-studies"),
+        _Page("https://example.com/testimonials"),
+        _Page("https://example.com/documentation"),
+        _Page("https://example.com/pricing-plans"),
+    ]
+    probed_urls = []
+
+    def probe(u):
+        probed_urls.append(u)
+        return {"ok": True, "needs_escalation": "documentation" in u}
+
+    def render_fetch(u):
+        return {"ok": True, "html": "<html><body>full</body></html>", "final_url": u}
+
+    result = escalate(
+        pages,
+        _config(sample_per_pattern=2),
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label="rendered",
+    )
+    assert "https://example.com/documentation" in probed_urls
+    assert result.representations["https://example.com/documentation"] == "rendered"
+
+
 def test_select_samples_caps_each_pattern_at_n():
     urls = [f"https://example.com/product/{i}" for i in range(10)]
     samples = select_samples(urls, sample_per_pattern=2)
@@ -170,6 +231,71 @@ def test_the_render_budget_is_a_separate_ceiling_from_the_sample():
     )
     assert result.render_requests == 3
     assert result.render_budget_exhausted is True
+
+
+def test_the_render_budget_is_spent_breadth_first_across_escalated_patterns():
+    """#147: two probe-positive patterns of 5 URLs each and a budget of 5. Spending
+    the budget sequentially (in patterns_escalated's sorted order) rendered the
+    first pattern's 5 pages and left the second at zero -- both patterns still
+    appeared, indistinguishably, in patterns_escalated. Breadth-first spending
+    means the second pattern is not shut out just because it sorts second, and
+    render_counts/patterns_partially_rendered make the shortfall visible either way.
+    """
+    blog = [_Page(f"https://example.com/blog/{i}") for i in range(5)]
+    docs = [_Page(f"https://example.com/docs/{i}") for i in range(5)]
+
+    def probe(_url):
+        return {"ok": True, "needs_escalation": True}
+
+    def render_fetch(u):
+        return {"ok": True, "html": "<html></html>", "final_url": u}
+
+    result = escalate(
+        blog + docs,
+        _config(max_render_urls=5),
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label="rendered",
+    )
+    assert result.patterns_escalated == [
+        "https://example.com/blog/*",
+        "https://example.com/docs/*",
+    ]
+    assert result.render_requests == 5
+    assert result.render_budget_exhausted is True
+    # Neither escalated pattern is silently starved -- both got at least one
+    # render, and the counts are exact rather than merely non-zero.
+    assert result.render_counts == {
+        "https://example.com/blog/*": 3,
+        "https://example.com/docs/*": 2,
+    }
+    # Both are audibly incomplete: 3 of 5 and 2 of 5, not "escalated" in a way
+    # indistinguishable from a pattern that got all 5.
+    assert result.patterns_partially_rendered == [
+        "https://example.com/blog/*",
+        "https://example.com/docs/*",
+    ]
+
+
+def test_a_pattern_fully_rendered_within_budget_is_not_flagged_partial():
+    pages = [_Page(f"https://example.com/blog/{i}") for i in range(3)]
+
+    def probe(_url):
+        return {"ok": True, "needs_escalation": True}
+
+    def render_fetch(u):
+        return {"ok": True, "html": "<html></html>", "final_url": u}
+
+    result = escalate(
+        pages,
+        _config(max_render_urls=3),
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label="rendered",
+    )
+    assert result.render_counts == {"https://example.com/blog/*": 3}
+    assert result.patterns_partially_rendered == []
+    assert result.render_budget_exhausted is False
 
 
 def test_only_patterns_that_probe_positive_are_escalated_others_stay_static():

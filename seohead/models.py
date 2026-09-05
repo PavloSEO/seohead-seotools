@@ -53,16 +53,54 @@ class LinkInfo(_LinkInfoOptional):
     """One `<a href>` extracted from a page."""
 
     href: str
+    # The href attribute exactly as written, before resolution against the document base —
+    # the only place a protocol-relative ("//host/path") form is still visible (issue #125).
+    raw_href: str
     text: str
     rel: str
+    # The anchor's own target attribute (e.g. "_blank"), "" when absent. Kept alongside `rel`
+    # so a crawl can tell a cross-origin new-tab link from an ordinary one (issue #125).
+    target: str
     nofollow: bool
     external: bool
+
+
+class FormInfo(TypedDict):
+    """One `<form>` extracted from a page (issue #125)."""
+
+    method: str
+    # Resolved against the document base; the page's own URL when the attribute is absent or
+    # empty, per the HTML standard's own default for form submission.
+    action: str
+    has_password: bool
 
 
 class _ParsedPageOptional(TypedDict, total=False):
     # Only present when the caller opts in via options["url_sources"]=True
     # (off by default) — see parser.parse_html.
     url_sources: list[dict[str, str]]
+
+
+class DocumentPosition(TypedDict):
+    """Where key elements sit relative to `<head>`, as `parser.parse_html`'s
+    parse tree resolved them -- not as the source text suggests (issue #123).
+
+    A browser closes `<head>` at the first element that does not belong there,
+    so a canonical or robots directive placed after one silently stops
+    applying; the page still reads fine in the source. Each `*_outside_head`
+    flag is `None` when the element is simply absent -- a different, already
+    covered finding -- and a bool only once it exists.
+    """
+
+    head_count: int
+    body_count: int
+    head_not_first: bool
+    invalid_head_elements: list[str]
+    title_outside_head: bool | None
+    meta_description_outside_head: bool | None
+    canonical_outside_head: bool | None
+    directives_outside_head: bool | None
+    hreflang_outside_head: bool | None
 
 
 class ParsedPage(_ParsedPageOptional):
@@ -72,7 +110,12 @@ class ParsedPage(_ParsedPageOptional):
     meta_description: str | None
     robots: str | None
     robots_meta: list[str]
+    # Same values as robots_meta, prefixed "<name>: " for every tag but the
+    # generic one -- see parser.robots_meta_scoped. Native-crawl evidence joins
+    # this, not robots_meta, so a Bingbot/Yandex-only directive keeps its scope.
+    robots_meta_scoped: list[str]
     canonical: str | None
+    position: DocumentPosition
     # Static Lighthouse audits (issue #59) — see seohead.sf.core.rules and
     # seohead.sf.core.lighthouse for the correspondence and doc links.
     charset: str | None
@@ -84,6 +127,7 @@ class ParsedPage(_ParsedPageOptional):
     jsonld: list[Any]
     jsonld_invalid: list[dict[str, Any]]
     links: list[LinkInfo]
+    forms: list[FormInfo]
     text: str
     # The whole body, and the content area alone. word_count follows the
     # content area, because a nav-and-footer word count describes the template

@@ -105,3 +105,24 @@ def test_the_same_url_twice_in_one_sitemap_is_not_a_cross_file_duplicate():
     ]
     _check_protocol_limits(ctx, [], entries, {})
     assert _fired(ctx, "SITEMAP_URL_DUPLICATED") == []
+
+
+def test_a_trailing_slash_only_difference_across_sitemaps_is_still_a_duplicate():
+    """Same raw-string-diff shape as #145's SITEMAP_DESYNC: "/a" in one sitemap and "/a/"
+    in another is one page declared twice, not two distinct URLs that happen to look
+    alike."""
+    ctx = _Ctx()
+    summary: dict = {}
+    entries = [
+        {"loc": "https://example.com/a", "source": "https://example.com/sitemap-1.xml"},
+        {"loc": "https://example.com/a/", "source": "https://example.com/sitemap-2.xml"},
+    ]
+    _check_protocol_limits(ctx, [], entries, summary)
+
+    fired = _fired(ctx, "SITEMAP_URL_DUPLICATED")
+    assert len(fired) == 1
+    assert fired[0][2]["sitemaps"] == [
+        "https://example.com/sitemap-1.xml",
+        "https://example.com/sitemap-2.xml",
+    ]
+    assert summary["urls_in_multiple_sitemaps"] == 1

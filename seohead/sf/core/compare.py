@@ -17,6 +17,11 @@ finding's own fingerprint plus the URL it was found on:
 "left" is progress. "disappeared" is not progress — the URL that was broken is
 simply no longer part of what was measured, which is a different fact and must
 not be reported as a fix.
+
+An audit-wide finding (no ``target_url`` — e.g. TITLE_TEMPLATED, which
+describes the crawl as a whole) has no page to appear or disappear, so it can
+only ever land in "entered" or "left": the condition it describes now holds,
+or it no longer does.
 """
 
 from __future__ import annotations
@@ -32,7 +37,9 @@ def _key(issue: dict[str, Any]) -> tuple[str, str]:
     """(check, target_url) — the same finding on the same page, across runs.
 
     Not the fingerprint alone: the fingerprint already folds in target_url, so
-    this is equivalent, but naming both parts keeps the four sets legible.
+    this is equivalent, but naming both parts keeps the four sets legible. An
+    audit-wide issue has no target_url and keys on "" — that is never a real
+    URL, so it cannot collide with a page-level finding of the same check.
     """
     return (issue.get("check", ""), str(issue.get("target_url") or ""))
 
@@ -42,7 +49,13 @@ def _crawled_urls(audit: dict[str, Any]) -> set[str]:
 
 
 def _by_key(audit: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    return {_key(issue): issue for issue in audit.get("issues", []) if issue.get("target_url")}
+    """Every issue, keyed for diffing — including audit-wide ones (issue #213).
+
+    Dropping issues with no target_url here made a real TITLE_TEMPLATED delta
+    vanish from every bucket and the summary; compare must account for a
+    finding it was actually given, not just the ones that name a page.
+    """
+    return {_key(issue): issue for issue in audit.get("issues", [])}
 
 
 def preflight(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
@@ -54,11 +67,21 @@ def preflight(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
     for label, audit in (("before", before), ("after", after)):
         if audit.get("run", {}).get("crawl_valid") is False:
             warnings.append(f"{label} crawl is marked invalid — it measured nothing usable")
-        if audit.get("run", {}).get("crawl_partial"):
-            warnings.append(
-                f"{label} crawl is partial — a 'disappeared' finding on it may only mean "
-                "the crawl did not reach that URL, not that the URL is gone"
-            )
+    # A partial baseline and a partial current crawl poison opposite buckets, not
+    # the same one (issue #212): a page the before crawl never reached looks
+    # brand new to it, so "appeared" — not "disappeared" — is the bucket that
+    # baseline can no longer prove; symmetrically, a page the after crawl never
+    # reached looks gone to it, so "disappeared" is what that side poisons.
+    if before.get("run", {}).get("crawl_partial"):
+        warnings.append(
+            "before crawl is partial — an 'appeared' finding may only mean the before "
+            "crawl did not reach that URL, not that the URL is new"
+        )
+    if after.get("run", {}).get("crawl_partial"):
+        warnings.append(
+            "after crawl is partial — a 'disappeared' finding may only mean the after "
+            "crawl did not reach that URL, not that the URL is gone"
+        )
     before_cfg = before.get("run", {}).get("crawl_config")
     after_cfg = after.get("run", {}).get("crawl_config")
     if before_cfg is not None and after_cfg is not None and before_cfg != after_cfg:
@@ -88,6 +111,10 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     after_urls = _crawled_urls(after)
     before_issues = _by_key(before)
     after_issues = _by_key(after)
+    # A partial baseline cannot prove a URL it never reached is genuinely new —
+    # only that it did not see it (issue #212). Without this, every finding on
+    # a URL outside the truncated baseline is misreported as "appeared".
+    before_partial = bool(before.get("run", {}).get("crawl_partial"))
 
     entered: list[dict[str, Any]] = []
     left: list[dict[str, Any]] = []
@@ -99,14 +126,27 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         url = key[1]
         in_before = key in before_issues
         in_after = key in after_issues
-        url_in_before_crawl = url in before_urls
-        url_in_after_crawl = url in after_urls
 
         if in_before and in_after:
             continue  # unchanged: matched in both, not a difference
+
+        # An audit-wide finding (no target_url, key[1] == "") describes the
+        # crawl as a whole rather than a page, so it has no page-presence to
+        # test and can only enter or leave (issue #213) — never appear or
+        # disappear, which both assert something about a URL's existence.
+        if not url:
+            if in_after and not in_before:
+                entered.append(dict(after_issues[key]))
+            else:
+                left.append(dict(before_issues[key]))
+            continue
+
+        url_in_before_crawl = url in before_urls
+        url_in_after_crawl = url in after_urls
+
         if in_after and not in_before:
             record = dict(after_issues[key])
-            if url_in_before_crawl:
+            if url_in_before_crawl or before_partial:
                 entered.append(record)  # existed before, is a new finding now
             else:
                 appeared.append(record)  # the URL itself is new to this crawl

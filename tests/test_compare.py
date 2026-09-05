@@ -108,11 +108,21 @@ def test_output_is_deterministic_regardless_of_input_dict_order():
 # ── preflight warnings ────────────────────────────────────────────────────
 
 
-def test_a_partial_before_crawl_warns_about_disappeared_findings():
+def test_a_partial_before_crawl_warns_about_appeared_findings():
+    """Issue #212: a truncated baseline poisons "appeared", not "disappeared" —
+    a URL it never reached looks brand new to it, not gone from the current
+    crawl."""
     before = _audit(["https://e.com/a"], [("X", "https://e.com/a")], crawl_partial=True)
     after = _audit([], [])
     warnings = preflight(before, after)
-    assert any("disappeared" in w and "before" in w for w in warnings)
+    assert any("appeared" in w and "before" in w for w in warnings)
+
+
+def test_a_partial_after_crawl_warns_about_disappeared_findings():
+    before = _audit(["https://e.com/a"], [])
+    after = _audit([], [], crawl_partial=True)
+    warnings = preflight(before, after)
+    assert any("disappeared" in w and "after" in w for w in warnings)
 
 
 def test_an_invalid_crawl_warns_plainly():
@@ -164,3 +174,79 @@ def test_a_document_missing_issues_is_refused_by_name():
     after = {"run": {}, "pages": []}
     with pytest.raises(CompareError, match="after"):
         compare(before, after)
+
+
+# ── partial baseline (issue #212) ────────────────────────────────────────
+#
+# A truncated baseline cannot prove a URL it never reached is genuinely new
+# -- only that it wasn't seen. The whole value of compare mode is telling a
+# fix apart from a deletion; letting a partial baseline manufacture false
+# "appeared" findings breaks exactly that.
+
+
+def test_a_partial_baseline_does_not_report_a_preexisting_url_as_appeared():
+    before = _audit(["https://e.com/home"], [], crawl_partial=True)
+    after = _audit(
+        ["https://e.com/home", "https://e.com/preexisting-404"],
+        [("BROKEN_PAGE_4XX", "https://e.com/preexisting-404")],
+    )
+    result = compare(before, after)
+    assert result["appeared"] == []
+    assert [i["target_url"] for i in result["entered"]] == ["https://e.com/preexisting-404"]
+
+
+def test_a_partial_baseline_warns_about_appeared_not_disappeared():
+    before = _audit(["https://e.com/home"], [], crawl_partial=True)
+    after = _audit(["https://e.com/home"], [])
+    warnings = preflight(before, after)
+    assert any("appeared" in w and "before" in w for w in warnings)
+    assert not any("disappeared" in w and "before" in w for w in warnings)
+
+
+def test_a_full_baseline_still_reports_a_genuinely_new_url_as_appeared():
+    """crawl_partial absent (a complete baseline) keeps the useful signal."""
+    before = _audit(["https://e.com/home"], [])
+    after = _audit(["https://e.com/home", "https://e.com/new"], [("BROKEN", "https://e.com/new")])
+    result = compare(before, after)
+    assert [i["target_url"] for i in result["appeared"]] == ["https://e.com/new"]
+
+
+# ── audit-wide findings (issue #213) ─────────────────────────────────────
+#
+# A finding with no target_url (e.g. TITLE_TEMPLATED) describes the crawl as
+# a whole, not a page — it must still participate in the delta instead of
+# being silently dropped, but it cannot appear/disappear since there is no
+# page whose presence changed.
+
+
+def _global_audit(urls, checks):
+    return {
+        "run": {},
+        "pages": [{"url": u} for u in urls],
+        "issues": [{"check": c, "target_url": None} for c in checks],
+    }
+
+
+def test_a_new_audit_wide_finding_is_entered_not_dropped():
+    before = _global_audit(["https://e.com/a"], [])
+    after = _global_audit(["https://e.com/a"], ["TITLE_TEMPLATED"])
+    result = compare(before, after)
+    assert result["summary"]["entered"] == 1
+    assert [i["check"] for i in result["entered"]] == ["TITLE_TEMPLATED"]
+    assert result["summary"]["by_check"]["TITLE_TEMPLATED"]["entered"] == 1
+
+
+def test_a_resolved_audit_wide_finding_is_left_not_dropped():
+    before = _global_audit(["https://e.com/a"], ["TITLE_TEMPLATED"])
+    after = _global_audit(["https://e.com/a"], [])
+    result = compare(before, after)
+    assert result["summary"]["left"] == 1
+    assert [i["check"] for i in result["left"]] == ["TITLE_TEMPLATED"]
+
+
+def test_an_audit_wide_finding_never_lands_in_appeared_or_disappeared():
+    before = _global_audit(["https://e.com/a"], [])
+    after = _global_audit(["https://e.com/a", "https://e.com/b"], ["TITLE_TEMPLATED"])
+    result = compare(before, after)
+    assert result["appeared"] == []
+    assert result["disappeared"] == []

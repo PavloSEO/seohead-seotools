@@ -94,26 +94,38 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
 
 
 def _seed_urls_from_sitemap(url: str, sitemap: str | None, auto_discover: bool) -> dict[str, Any]:
-    """Resolve and expand the sitemap that should seed a crawl, if any.
+    """Resolve and expand the sitemap(s) that should seed a crawl, if any.
 
-    Returns ``{"sitemap_url": <the sitemap fetched, or None>, "declared": [...]}``.
-    An explicit ``sitemap`` wins; otherwise, with ``auto_discover``, the
-    ``Sitemap:`` directive in robots.txt is used. Neither given means no
-    seeding — the crawl behaves exactly as it did before this feature existed.
+    Returns ``{"sitemap_url": <first source, or None>, "sitemap_urls": [...],
+    "declared": [...]}``. An explicit ``sitemap`` wins and is the sole source;
+    otherwise, with ``auto_discover``, robots.txt can declare more than one
+    ``Sitemap:`` directive and every one of them is independent (RFC-wise there
+    is no "the" sitemap), so all are fetched and their URLs unioned. Neither
+    given means no seeding — the crawl behaves exactly as it did before this
+    feature existed.
     """
     from seohead.tools import sitemap as sitemap_tool
 
-    target = sitemap
-    if not target and auto_discover:
+    if sitemap:
+        targets = [sitemap]
+    elif auto_discover:
         from seohead.tools.robots import check_robots
 
-        discovered = check_robots(url).get("sitemaps") or []
-        target = discovered[0] if discovered else None
-    if not target:
-        return {"sitemap_url": None, "declared": []}
-    expanded = sitemap_tool.crawl(target)
-    declared = [entry["loc"] for entry in expanded.get("urls") or []]
-    return {"sitemap_url": target, "declared": declared}
+        targets = list(check_robots(url).get("sitemaps") or [])
+    else:
+        targets = []
+    if not targets:
+        return {"sitemap_url": None, "sitemap_urls": [], "declared": []}
+    declared: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        expanded = sitemap_tool.crawl(target)
+        for entry in expanded.get("urls") or []:
+            loc = entry.get("loc")
+            if loc and loc not in seen:
+                seen.add(loc)
+                declared.append(loc)
+    return {"sitemap_url": targets[0], "sitemap_urls": targets, "declared": declared}
 
 
 def _run_render_escalation(
@@ -282,11 +294,16 @@ def crawl_site(
     ``sitemap`` (or ``sitemaps.auto_discover`` in ``config``) seeds the crawl
     from a sitemap's declared URLs, in addition to following links from
     ``url``, and reconciles the two sources — see
-    ``seohead.crawl.reconcile.reconcile_sitemap``.
+    ``seohead.crawl.reconcile.reconcile_sitemap``. The same URL also feeds
+    ``seohead.sf.core.sitemap_coverage.run_sitemap``, which independently
+    re-fetches it to check the sitemap protocol's own limits and whether
+    robots.txt declares it; with none given, those checks skip by name
+    rather than guess at a default sitemap location.
     """
     import json
     import os
     from datetime import datetime, timezone
+    from urllib.parse import urlsplit
 
     from seohead.crawl import cache as http_cache
     from seohead.crawl import settings as crawl_config
@@ -297,9 +314,11 @@ def crawl_site(
     from seohead.sf.config import load_config
     from seohead.sf.core.aggregate import aggregate
     from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.heuristics import run_heuristics
     from seohead.sf.core.inlinks import run_inlinks
     from seohead.sf.core.loader import LoadedExports
     from seohead.sf.core.rules import run_rules
+    from seohead.sf.core.sitemap_coverage import run_sitemap
 
     if not url and not urls:
         raise ValueError("url or urls required")
@@ -328,6 +347,14 @@ def crawl_site(
     # resumed run's result.links whole again (see spider.crawl_site), a correctness need
     # distinct from whether the operator also wants pages.jsonl as a human-readable export.
     links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
+    # Same "tied to out_dir, gated by its own toggle" shape as pages_path: a
+    # decision log is a diagnostic artifact, not something a resumed run
+    # depends on (issue #134).
+    decisions_path = (
+        os.path.join(out_dir, "decisions.jsonl")
+        if out_dir and settings["output"]["write_decisions_jsonl"]
+        else None
+    )
     max_seconds = settings["limits"]["max_crawl_seconds"]
     # One cache per run, shared by every worker thread a concurrent crawl starts — see
     # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
@@ -339,7 +366,7 @@ def crawl_site(
         invalidate=settings["cache"]["invalidate"],
     )
 
-    sitemap_seed = {"sitemap_url": None, "declared": []}
+    sitemap_seed = {"sitemap_url": None, "sitemap_urls": [], "declared": []}
     if url and (sitemap or settings["sitemaps"]["auto_discover"]):
         sitemap_seed = _seed_urls_from_sitemap(url, sitemap, settings["sitemaps"]["auto_discover"])
 
@@ -356,6 +383,7 @@ def crawl_site(
             seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
             links_path=links_path,
+            decisions_path=decisions_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
             # crawl with no out_dir has nothing to resume into anyway.
@@ -381,6 +409,7 @@ def crawl_site(
             crawl_hyperlinks=settings["discovery"]["hyperlinks"]["crawl"],
             store_external_links=settings["discovery"]["external"]["store"],
             crawl_redirects=settings["discovery"]["redirects"]["crawl"],
+            capture_link_attributes=settings["link_attributes"]["capture"],
         )
         discovery = {
             "mode": "spider",
@@ -394,6 +423,7 @@ def crawl_site(
             "effective_concurrency": result.effective_concurrency,
             "resume_note": result.resume_note,
             "sitemap_url": sitemap_seed["sitemap_url"],
+            "sitemap_urls": sitemap_seed["sitemap_urls"],
             "sitemap_seeded": len(result.seed_urls),
         }
     else:
@@ -414,8 +444,17 @@ def crawl_site(
             cache=cache,
             extra_request_headers=settings["http"]["headers"] or None,
             adaptive=settings["speed"]["adaptive"],
+            robots_policy=settings["robots"]["policy"],
+            robots_token=settings["robots"]["user_agent_token"],
+            resolve_redirect_destination=settings["discovery"]["resolve_redirect_destination"],
         )
-        discovery = {"mode": "list"}
+        discovery = {
+            "mode": "list",
+            # #21: the configured policy must be stated, not merely applied — a report that
+            # says nothing here is indistinguishable from one that silently ignored it.
+            "directive_policy": settings["robots"]["policy"],
+            "robots_blocked": len(result.robots_blocked),
+        }
 
     requires_rendering = False
     requires_rendering_reason = ""
@@ -437,6 +476,11 @@ def crawl_site(
                 "probe_requests": escalation.probe_requests,
                 "render_requests": escalation.render_requests,
                 "render_budget_exhausted": escalation.render_budget_exhausted,
+                # Which escalated patterns the budget actually reached, and
+                # which it ran out on before finishing -- patterns_escalated
+                # alone cannot tell the two apart (#147).
+                "render_counts": escalation.render_counts,
+                "patterns_partially_rendered": escalation.patterns_partially_rendered,
             }
 
         # Re-evaluated after escalation so a run that actually renders its
@@ -474,8 +518,41 @@ def crawl_site(
     # hyperlink graph when one exists (see crawl/evidence.py), so the checks it
     # feeds now answer for real instead of only reaching their skip branch.
     run_inlinks(ctx)
+    # Same gap, two more modules (issue #165): DOM size, HTML weight, templated
+    # titles and the near-duplicate/exact-duplicate heuristic fallback all live in
+    # heuristics.py and were never reached from a crawl either. DOM depth/nodes and
+    # the near-duplicate fallback need HTML stored to disk (``input.html_store_dir``),
+    # which a native crawl never writes -- they land on their own existing "no
+    # stored HTML" skip branch rather than gaining new evidence here. HTML weight
+    # and templated-title detection need only Size (bytes), Word Count and Title,
+    # which build_evidence already puts on every page, so those genuinely fire.
+    run_heuristics(ctx)
 
-    sitemap_summary: dict[str, Any] = {}
+    # ``run_sitemap`` covers the sitemap-protocol and robots.txt checks that need a
+    # live network fetch (SITEMAP_TOO_LARGE, SITEMAP_STALE_LASTMOD, SITEMAP_NOT_IN_ROBOTS,
+    # ROBOTS_BLOCKS_RESOURCES, ...) and, before this, was never called from crawl_site
+    # either (issue #165) -- those checks were silently uninvoked on every native crawl,
+    # sitemap or not. It is given the same sitemap URL used to seed this crawl, if any;
+    # with none, it reaches its own honest per-check skip branches instead of guessing
+    # at a default sitemap location. Its own declared-vs-crawled comparison
+    # (SITEMAP_DESYNC and the "in_sitemap_and_linked"-shaped summary keys) is cruder
+    # than the dedicated reconciliation below, so those three summary keys are
+    # overwritten by it further down rather than the other way around.
+    measured = run_sitemap(
+        ctx,
+        sitemap_url=sitemap_seed["sitemap_url"],
+        compare_with_crawl=not sitemap_seed["declared"],
+    )
+    # Only surfaced when something was actually measured. run_sitemap always
+    # returns its keys, and a run with no sitemap at all would otherwise report
+    # urls_in_sitemap: 0 -- which reads as "the sitemap is empty" when the truth
+    # is "there was no sitemap". The checks themselves still ran and skipped by
+    # name above; it is the summary that must not invent a zero.
+    sitemap_summary: dict[str, Any] = (
+        dict(measured)
+        if (measured.get("sitemaps") or measured.get("declared_in_robots") is not None)
+        else {}
+    )
     if sitemap_seed["declared"]:
         # "Reached by following links" — not merely fetched, since a seeded
         # URL is fetched regardless of whether anything links to it. Three
@@ -483,14 +560,44 @@ def crawl_site(
         # pipeline already uses for the same distinction (SITEMAP_ORPHAN,
         # URL_NOT_IN_SITEMAP), so audit.json has one schema either way.
         observed = [edge.destination for edge in result.links]
-        sitemap_summary = reconcile_sitemap(
+        reconciled = reconcile_sitemap(
             sitemap_seed["declared"], observed, _sitemap_comparable_pages(result, url)
         )
-        sitemap_summary["sitemap_url"] = sitemap_seed["sitemap_url"]
-        for orphan_url in sitemap_summary["in_sitemap_not_linked"]:
+        reconciled["sitemap_url"] = sitemap_seed["sitemap_url"]
+        reconciled["sitemap_urls"] = sitemap_seed["sitemap_urls"]
+        for orphan_url in reconciled["in_sitemap_not_linked"]:
             ctx.add("SITEMAP_ORPHAN", target_url=orphan_url, details={"in_sitemap": True})
-        for extra_url in sitemap_summary["linked_not_in_sitemap"]:
+        for extra_url in reconciled["linked_not_in_sitemap"]:
             ctx.add("URL_NOT_IN_SITEMAP", target_url=extra_url)
+        # The site-level verdict belongs to whichever module did the comparison,
+        # and here that is this one -- run_sitemap was told to skip it by name
+        # (compare_with_crawl above) precisely so the two never answer the same
+        # question with two different degrees of rigour. The per-URL findings
+        # above say which URLs disagree; this says whether the disagreement is
+        # large enough to be a fact about the site rather than a handful of URLs.
+        comparable_total = max(
+            len(reconciled["in_sitemap_and_linked"]) + len(reconciled["linked_not_in_sitemap"]), 1
+        )
+        crawl_only_pct = round(100 * len(reconciled["linked_not_in_sitemap"]) / comparable_total, 1)
+        sitemap_only_pct = round(
+            100 * len(reconciled["in_sitemap_not_linked"]) / max(len(sitemap_seed["declared"]), 1),
+            1,
+        )
+        threshold = ctx.thresholds["sitemap_desync_pct_warn"]
+        if crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
+            ctx.add(
+                "SITEMAP_DESYNC",
+                target_url=url,
+                details={
+                    "in_crawl_not_in_sitemap": len(reconciled["linked_not_in_sitemap"]),
+                    "in_sitemap_not_in_crawl": len(reconciled["in_sitemap_not_linked"]),
+                    "crawl_not_in_sitemap_pct": crawl_only_pct,
+                    "sitemap_not_in_crawl_pct": sitemap_only_pct,
+                    "examples_missing_from_sitemap": reconciled["linked_not_in_sitemap"][:20],
+                    "examples_in_sitemap_not_crawled": reconciled["in_sitemap_not_linked"][:20],
+                },
+            )
+        sitemap_summary.update(reconciled)
 
     # Same "native crawl produces evidence the SF export never carries" shape
     # as the sitemap reconciliation above: classification runs inside the
@@ -509,6 +616,29 @@ def crawl_site(
                     occurrences_count=page["inlinks_total"],
                     details={"by_position": page["by_position"]},
                 )
+
+    # Same shape again (issue #125): pure functions over the crawl's own LinkEdge/FormEdge
+    # evidence, never through the SF-export analyzer. Localhost outlinks, the per-target
+    # follow/nofollow mix, and both form checks need only fields every crawl already
+    # records; the cross-origin and protocol-relative checks additionally need
+    # link_attributes.capture (off by default -- see its own docstring).
+    if url:
+        from seohead.crawl import link_findings
+
+        crawl_host = urlsplit(start_norm).hostname or ""
+        for item in link_findings.outlinks_to_localhost(result.links):
+            ctx.add("OUTLINK_TO_LOCALHOST", target_url=item["target_url"], details=item)
+        for dest in link_findings.follow_and_nofollow_inlinks(result.links, crawl_host):
+            ctx.add("FOLLOW_AND_NOFOLLOW_INLINKS", target_url=dest)
+        for item in link_findings.form_url_insecure(result.forms):
+            ctx.add("FORM_URL_INSECURE", target_url=item["target_url"], details=item)
+        for item in link_findings.forms_on_http_pages_with_password(result.forms):
+            ctx.add("FORM_ON_HTTP_URL", target_url=item["target_url"], details=item)
+        if settings["link_attributes"]["capture"]:
+            for item in link_findings.unsafe_cross_origin_links(result.links):
+                ctx.add("UNSAFE_CROSS_ORIGIN_LINK", target_url=item["target_url"], details=item)
+            for item in link_findings.protocol_relative_links(result.links):
+                ctx.add("PROTOCOL_RELATIVE_LINK", target_url=item["target_url"], details=item)
 
     audit = aggregate(
         ctx,
@@ -834,10 +964,26 @@ def ai_bots_check(url: str | None = None, robots_text: str | None = None) -> dic
             client, _ = http_client(20.0)
             with client:
                 resp = client.get(robots_url)
-            robots_text = resp.text
-            fetched = {"robots_url": robots_url, "status_code": resp.status_code}
         except Exception as exc:  # Tool boundary: network failures are result data, not crashes.
             return {"ok": False, "url": robots_url, "error": str(exc)}
+        code = resp.status_code
+        if code >= 500:
+            # A server error is "we could not read the rules", not "there are no
+            # rules" — #135 established the same distinction for the native
+            # crawler's own robots fetch. Reporting every AI bot allowed here
+            # would be a false permission grant on evidence that never loaded.
+            return {
+                "ok": False,
+                "url": url,
+                "robots_url": robots_url,
+                "status_code": code,
+                "error": f"robots.txt returned {code}; rules could not be read",
+            }
+        # A 4xx robots.txt means "no restrictions" per RFC 9309, same as
+        # tools.robots.check_robots; the response body (an error page, not
+        # rules) is discarded rather than handed to the parser.
+        robots_text = resp.text if code < 400 else ""
+        fetched = {"robots_url": robots_url, "status_code": code}
     else:
         fetched = {}
     result = ai_bots_core.check_ai_access(robots_text)
@@ -928,8 +1074,11 @@ def log_scan(
 ) -> dict[str, Any]:
     """Report claims a finished run makes that cannot all be true at once.
 
-    ``run`` is a directory holding ``audit.json`` and/or ``pages.jsonl`` — whatever
-    ``crawl-site --out-dir`` or ``sf run --out`` wrote. ``images_dir`` is an
+    ``run`` is a directory holding ``audit.json``, ``pages.jsonl`` and/or
+    ``decisions.jsonl`` — whatever ``crawl-site --out-dir`` or ``sf run --out`` wrote.
+    ``decisions.jsonl`` (issue #134) is the per-URL exclusion log a native crawl writes
+    beside ``pages.jsonl``; it lets a rule catch a contradiction that never survives into
+    ``audit.json`` at all, not only one visible in the finished output. ``images_dir`` is an
     ``images-download`` output directory, whose manifest lets a recorded size be compared
     against the file itself.
 
@@ -1319,6 +1468,109 @@ def metrika_report(
     }
 
 
+def wayback_history(
+    url: str | None = None,
+    limit: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict[str, Any]:
+    """Every recorded Wayback Machine snapshot of a URL: when it changed, and what it looked like.
+
+    Free and keyless. Answers what a crawl cannot: *when* a page started returning its current
+    status, and what content preceded it — the difference between a bug report and a restoration
+    plan. A URL the archive never captured is not an error; it returns an empty list.
+    """
+    if not url:
+        raise ValueError("url required")
+    from seohead.data_sources import wayback as core
+
+    return core.history(url, limit=limit, from_date=from_date, to_date=to_date)
+
+
+def crtsh_subdomains(domain: str | None = None) -> dict[str, Any]:
+    """Subdomains discovered from public Certificate Transparency logs (crt.sh).
+
+    Free and keyless. Every TLS certificate ever issued for a domain is public record, so this
+    finds hosts that no page ever links to — the gap `mirror-check` and `regions-check` both
+    currently rely on being told about by hand.
+    """
+    if not domain:
+        raise ValueError("domain required")
+    from seohead.data_sources import crtsh as core
+
+    return core.subdomains(domain)
+
+
+def gsc_query(
+    site_url: str | None = None,
+    mode: str = "search_analytics",
+    start_date: str = "28daysAgo",
+    end_date: str = "today",
+    dimensions: list[str] | None = None,
+    row_limit: int = 1000,
+    inspection_url: str | None = None,
+) -> dict[str, Any]:
+    """Google Search Console: search performance (``mode=search_analytics``) or Google's own
+    indexing verdict for one URL (``mode=inspect_url``).
+
+    Requires an own, verified property and an OAuth2 bearer token — see
+    ``seohead sources-doctor`` and docs/SETUP.md. A missing token returns an explicit failure
+    naming what to configure; it never fabricates a result.
+    """
+    if not site_url:
+        raise ValueError("site_url required")
+    from seohead.data_sources import gsc as core
+
+    if mode == "inspect_url":
+        if not inspection_url:
+            raise ValueError("inspection_url required for mode=inspect_url")
+        return core.inspect_url(site_url, inspection_url)
+    if mode != "search_analytics":
+        raise ValueError("mode must be search_analytics or inspect_url")
+    return core.search_analytics(
+        site_url,
+        start_date=start_date,
+        end_date=end_date,
+        dimensions=dimensions,
+        row_limit=row_limit,
+    )
+
+
+def crux_report(
+    url: str | None = None,
+    origin: str | None = None,
+    form_factor: str | None = None,
+    metrics: list[str] | None = None,
+) -> dict[str, Any]:
+    """Field Core Web Vitals (LCP, INP, CLS) as real Chrome users experienced them, at the 75th
+    percentile — the honest counterpart to a synthesized lab score (see `render-check` and
+    issue #59). Pass exactly one of ``url``/``origin``. Requires a Chrome UX Report API key.
+    """
+    from seohead.data_sources import crux as core
+
+    return core.query(url=url, origin=origin, form_factor=form_factor, metrics=metrics)
+
+
+def indexnow_submit(
+    urls: list[str] | None = None,
+    host: str | None = None,
+    key_location: str | None = None,
+) -> dict[str, Any]:
+    """Push changed URLs to Bing, Yandex, Naver, and Seznam in one call.
+
+    Google has not joined IndexNow as of 2026 — a submission here does not affect Google's crawl
+    schedule. Requires a self-generated key, published at ``https://<host>/<key>.txt`` before the
+    first call; see docs/SETUP.md.
+    """
+    if not urls:
+        raise ValueError("urls required")
+    if not host:
+        raise ValueError("host required")
+    from seohead.data_sources import indexnow as core
+
+    return core.submit(urls, host=host, key_location=key_location)
+
+
 def regions_tree(save_to: str | None = None) -> dict[str, Any]:
     """Fetch the authoritative Yandex region tree used by the ``regions[]`` parameter.
 
@@ -1348,6 +1600,9 @@ def sources_doctor() -> dict[str, Any]:
         "yandex_cloud_folder": ("yandex-wordstat/folder_id", "YANDEX_CLOUD_FOLDER_ID"),
         "yandex_metrika": ("yandex-metrika/token", "YANDEX_METRIKA_TOKEN"),
         "dataforseo": ("dataforseo/login", "DATAFORSEO_LOGIN"),
+        "gsc": ("gsc/access_token", "GSC_ACCESS_TOKEN"),
+        "crux": ("crux/api_key", "CRUX_API_KEY"),
+        "indexnow": ("indexnow/key", "INDEXNOW_KEY"),
     }
     sources = {
         name: {
@@ -1412,6 +1667,11 @@ _RAW_HANDLERS = {
     "metrika_report": metrika_report,
     "google_keywords": google_keywords,
     "google_serp": google_serp,
+    "wayback_history": wayback_history,
+    "crtsh_subdomains": crtsh_subdomains,
+    "gsc_query": gsc_query,
+    "crux_report": crux_report,
+    "indexnow_submit": indexnow_submit,
 }
 
 # Journaling sits here rather than in each interface: the CLI and the MCP server

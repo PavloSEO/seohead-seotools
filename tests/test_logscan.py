@@ -13,11 +13,15 @@ from seohead.servers import handlers
 from seohead.tools import logscan
 
 
-def _write_run(tmp_path, pages, audit):
+def _write_run(tmp_path, pages, audit, decisions=None):
     (tmp_path / "pages.jsonl").write_text(
         "\n".join(json.dumps(p) for p in pages) + "\n", encoding="utf-8"
     )
     (tmp_path / "audit.json").write_text(json.dumps(audit), encoding="utf-8")
+    if decisions is not None:
+        (tmp_path / "decisions.jsonl").write_text(
+            "\n".join(json.dumps(d) for d in decisions) + "\n", encoding="utf-8"
+        )
     return str(tmp_path)
 
 
@@ -174,6 +178,48 @@ def test_canonical_reported_as_a_redirect_while_that_url_answered_200(tmp_path):
     assert "canonical_to_redirect_has_no_answering_twin" in rules
 
 
+# ── #134: decisions.jsonl tells the truth about a run's own scope check ──────
+
+
+def test_a_url_excluded_as_outside_host_whose_host_is_the_crawl_host(tmp_path):
+    """The contradiction issue #134 asks for by name: invisible in audit.json — which only
+    ever records the ``outside_host`` *count* in ``run.excluded`` — because the URL and the
+    host it was compared against exist only in the decision log."""
+    pages = [_page("https://example.com/")]
+    decisions = [
+        {
+            "type": "exclude",
+            "url": "https://example.com/off-by-mistake",
+            "reason": "outside_host",
+            "host": "example.com",
+        }
+    ]
+    run = _write_run(tmp_path, pages, {"summary": {"by_check": {}}, "issues": []}, decisions)
+    result = logscan.scan(logscan.load_run(run))
+    found = [
+        a for a in result["anomalies"] if a["rule"] == "outside_host_exclusion_matches_its_own_host"
+    ]
+    assert len(found) == 1
+    assert found[0]["target"] == "https://example.com/off-by-mistake"
+    assert found[0]["observed"] == "example.com"
+
+
+def test_a_genuine_cross_host_exclusion_is_not_flagged(tmp_path):
+    pages = [_page("https://example.com/")]
+    decisions = [
+        {
+            "type": "exclude",
+            "url": "https://other.example/x",
+            "reason": "outside_host",
+            "host": "example.com",
+        }
+    ]
+    run = _write_run(tmp_path, pages, {"summary": {"by_check": {}}, "issues": []}, decisions)
+    result = logscan.scan(logscan.load_run(run))
+    assert result["anomaly_count"] == 0
+    assert result["read"]["decisions"] == 1
+
+
 # ── bookkeeping contradictions ───────────────────────────────────────────────
 
 
@@ -237,3 +283,46 @@ def test_the_cli_exits_zero_on_a_clean_run(tmp_path):
     from seohead.cli import main
 
     assert main(["log-scan", "--run", _clean_run(tmp_path)]) == 0
+
+
+def test_scan_names_a_check_that_describes_most_of_the_site(tmp_path):
+    """Issue #98: the report's own implausibility list must reach log-scan, so a run
+    whose findings are dominated by one check is caught without a person reading it."""
+    from seohead.tools.logscan import RunArtifacts, scan
+
+    run = RunArtifacts(
+        audit={
+            "summary": {
+                "by_check": {"URL_NOT_IN_SITEMAP": 392},
+                "implausible_checks": [
+                    {"check": "URL_NOT_IN_SITEMAP", "pages": 124, "share": 0.743}
+                ],
+            },
+            "issues": [],
+            "run": {},
+        }
+    )
+
+    result = scan(run)
+
+    named = [a for a in result["review"] if a["rule"] == "check_describes_most_of_the_site"]
+    assert len(named) == 1
+    assert named[0]["target"] == "URL_NOT_IN_SITEMAP"
+    assert "74%" in named[0]["message"]
+    # It is a prompt to look, not a contradiction: it must not reach the bucket
+    # that makes log-scan exit non-zero.
+    assert not [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]
+
+
+def test_scan_stays_quiet_when_no_check_dominates(tmp_path):
+    """An empty implausibility list is the ordinary case and must produce no anomaly —
+    a scanner that cried on every run would be ignored on the run that mattered."""
+    from seohead.tools.logscan import RunArtifacts, scan
+
+    run = RunArtifacts(
+        audit={"summary": {"by_check": {}, "implausible_checks": []}, "issues": [], "run": {}}
+    )
+
+    result = scan(run)
+
+    assert not [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]

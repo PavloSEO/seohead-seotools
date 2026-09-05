@@ -61,6 +61,9 @@ def build_server():  # -> FastMCP
     paid = ToolAnnotations(
         readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True
     )
+    submit = ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True
+    )
 
     @mcp.tool(annotations=fetch, structured_output=True)
     def seo_parse(
@@ -95,7 +98,10 @@ def build_server():  # -> FastMCP
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
     def seo_crawl_site(
-        url: str,
+        url: str = "",
+        urls: list[str] | None = None,
+        sitemap: str | None = None,
+        config: str | None = None,
         max_urls: int = 200,
         max_depth: int = 5,
         min_delay: float = 0.5,
@@ -103,18 +109,34 @@ def build_server():  # -> FastMCP
         concurrency: int = 1,
         out_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Crawl a site from a start URL by following links, then audit the result
-        through the same checks used for Screaming Frog exports. Same host only,
-        politeness adapts to the origin. Checks whose evidence a native crawl
-        cannot produce are reported as skipped, never as clean.
+        """Crawl a site from a start URL by following links, or fetch an explicit
+        ``urls`` list instead of following links at all, then audit the result
+        through the same checks used for Screaming Frog exports. One of ``url``
+        or ``urls`` is required. Same host only when following links, politeness
+        adapts to the origin. Checks whose evidence a native crawl cannot produce
+        are reported as skipped, never as clean.
+
+        Pass ``urls`` instead of ``url`` for list mode: fetch exactly that set,
+        depth 0, no link discovery -- the migration-audit shape (a redirect map,
+        a Search Console export). ``max_depth`` and ``concurrency`` have nothing
+        to discover in that mode and are ignored.
 
         ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
         anyway, and report what a compliant crawler would have missed) or
-        "ignore" (do not fetch it at all). ``concurrency`` is a per-origin
-        ceiling the adaptive throttle grows into, not a fixed thread count."""
+        "ignore" (do not fetch it at all) -- applied in list mode too, and named
+        in the result's ``discovery.directive_policy``, not only enforced
+        silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
+        grows into, not a fixed thread count. ``sitemap`` seeds the crawl from a
+        sitemap's declared URLs in addition to following links from ``url``, and
+        reconciles the two sources (declared vs. observed). ``config`` is a path
+        to a crawler config file (JSON) on this machine, the same file
+        ``crawl-site --config`` reads."""
         return _checked(
             handlers.crawl_site(
-                url=url,
+                url=url or None,
+                urls=urls,
+                sitemap=sitemap,
+                config=config,
                 max_urls=max_urls,
                 max_depth=max_depth,
                 min_delay=min_delay,
@@ -478,7 +500,9 @@ def build_server():  # -> FastMCP
         )
 
     @mcp.tool(annotations=create_files, structured_output=True)
-    def seo_report_build(audit: dict, fmt: str = "xlsx", out: str | None = None) -> dict[str, Any]:
+    def seo_report_build(
+        audit: dict | str, fmt: str = "xlsx", out: str | None = None
+    ) -> dict[str, Any]:
         """Turn an audit document into a file: xlsx, docx, csv, md or json. Pass the dict
         returned by seo_site_audit, an SF Analyzer audit.json from sf_audit_run (or a
         path to either one's JSON) — both schemas are recognized and normalized before
@@ -677,6 +701,87 @@ def build_server():  # -> FastMCP
         where it is read from, and where the spend journal lives. Call this before planning
         a paid run — a missing key is cheaper to find now than mid-collection."""
         return _checked(handlers.sources_doctor())
+
+    @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_wayback_history(
+        url: str,
+        limit: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Every recorded Wayback Machine snapshot of a URL, oldest first: timestamp, HTTP
+        status, and MIME type at capture time. Free and keyless. Answers what a crawl cannot —
+        *when* a page started returning its current status, and what preceded it. A URL the
+        archive never captured is not an error; it comes back with an empty snapshot list."""
+        return _checked(
+            handlers.wayback_history(url=url, limit=limit, from_date=from_date, to_date=to_date)
+        )
+
+    @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_crtsh_subdomains(domain: str) -> dict[str, Any]:
+        """Subdomains discovered from public Certificate Transparency logs (crt.sh). Free and
+        keyless. Every TLS certificate ever issued for a domain is public record, so this finds
+        hosts no page links to — the gap seo_mirror_check and seo_regions_check both currently
+        rely on being told about by hand. crt.sh is a free public service without an SLA; a
+        slow or unavailable response is reported as a failure, never as "zero subdomains"."""
+        return _checked(handlers.crtsh_subdomains(domain=domain))
+
+    @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_gsc_query(
+        site_url: str,
+        mode: str = "search_analytics",
+        start_date: str = "28daysAgo",
+        end_date: str = "today",
+        dimensions: list[str] | None = None,
+        row_limit: int = 1000,
+        inspection_url: str | None = None,
+    ) -> dict[str, Any]:
+        """Google Search Console: search performance for a verified property
+        (mode=search_analytics: clicks, impressions, position, CTR) or Google's own indexing
+        verdict for one URL (mode=inspect_url).
+
+        Requires an OAuth2 bearer token for an own, verified property — see seo_sources_doctor
+        and docs/SETUP.md for how to obtain one. A missing token returns an explicit failure
+        naming what to configure; it never fabricates a result."""
+        return _checked(
+            handlers.gsc_query(
+                site_url=site_url,
+                mode=mode,
+                start_date=start_date,
+                end_date=end_date,
+                dimensions=dimensions,
+                row_limit=row_limit,
+                inspection_url=inspection_url,
+            )
+        )
+
+    @mcp.tool(annotations=fetch, structured_output=True)
+    def seo_crux_report(
+        url: str | None = None,
+        origin: str | None = None,
+        form_factor: str | None = None,
+        metrics: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Field Core Web Vitals (LCP, INP, CLS) as real Chrome users experienced them, at the
+        75th percentile — the honest counterpart to seo_render_check's synthesized-score-free
+        design (issue #59). Pass exactly one of url/origin. Requires a Chrome UX Report API key.
+        A target with too little real-user traffic is not an error; CrUX has nothing to report
+        for it, which comes back here as an empty metrics object."""
+        return _checked(
+            handlers.crux_report(url=url, origin=origin, form_factor=form_factor, metrics=metrics)
+        )
+
+    @mcp.tool(annotations=submit, structured_output=True)
+    def seo_indexnow_submit(
+        urls: list[str], host: str, key_location: str | None = None
+    ) -> dict[str, Any]:
+        """Push up to 10,000 changed URLs to Bing, Yandex, Naver, and Seznam in one call.
+
+        IMPORTANT: Google has not joined IndexNow as of 2026 — this does not affect Google's
+        crawl schedule. Requires a self-generated key published at https://<host>/<key>.txt
+        before the first call; see docs/SETUP.md. Natural pairing: submit exactly the URLs
+        seo_compare_crawls reports as new or changed."""
+        return _checked(handlers.indexnow_submit(urls=urls, host=host, key_location=key_location))
 
     # Register Screaming Frog crawl-export tools on the same local connector.
     from seohead.servers import sf_mcp

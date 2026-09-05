@@ -109,6 +109,27 @@ DEFAULT_DIR = "~/.cache/seohead/http_cache"
 # above).
 CRAWLER_IDENTITY_HEADERS = ("user-agent",)
 
+# A 304 has no payload. These fields therefore still describe the cached body, not the
+# revalidation response, and replacing them would make a replayed PageRecord inconsistent with
+# the bytes it parses. Other metadata (including Cache-Control, ETag, Vary and X-Robots-Tag) is
+# current response metadata and must replace the stored value.
+_REVALIDATION_PAYLOAD_HEADERS = frozenset(
+    {
+        "content-digest",
+        "content-encoding",
+        "content-language",
+        "content-length",
+        "content-location",
+        "content-range",
+        "content-type",
+        "digest",
+        "location",
+        "repr-digest",
+        "trailer",
+        "transfer-encoding",
+    }
+)
+
 # Stats counters, each incremented at exactly the moment its outcome is final. Total network
 # round trips saved by the cache is ``hits + revalidations`` (a revalidation still costs one
 # small request, but never re-transfers the body).
@@ -312,21 +333,38 @@ class ResponseCache:
         return CacheOutcome("miss")
 
     def refresh(self, entry: CacheEntry, response_headers: dict[str, str]) -> None:
-        """A 304 confirmed the stored body is still current: reset its freshness clock."""
+        """Apply a 304's current metadata while retaining the stored response body."""
         if self._disabled:
             return
-        max_age, no_store = freshness_lifetime(response_headers)
+        response_headers = {name.lower(): value for name, value in response_headers.items()}
+        headers = dict(entry.headers)
+        headers.update(
+            {
+                name: value
+                for name, value in response_headers.items()
+                if name not in _REVALIDATION_PAYLOAD_HEADERS
+            }
+        )
+        max_age, no_store = freshness_lifetime(headers)
         if no_store:
             self._forget(entry)
             self._bump("bypassed")
             return
+
+        old_vary = {name.lower() for name in entry.vary_headers}
+        vary_headers = [name.strip() for name in headers.get("vary", "").split(",") if name.strip()]
+        new_vary = {name.lower() for name in vary_headers}
+        entry.headers = headers
         entry.stored_at = time.time()
         entry.max_age = max_age
-        # A 304 may carry a renewed validator even when the body itself is unchanged.
-        for name in ("etag", "last-modified"):
-            if response_headers.get(name):
-                entry.headers[name] = response_headers[name]
-        self._write(entry)
+        if headers.get("vary", "").strip() == "*" or new_vary != old_vary:
+            # A new Vary selection needs request values that this entry did not record. Dropping
+            # it is conservative: this revalidation still serves the confirmed body now, while
+            # the next lookup fetches a representation under its new cache key.
+            entry.vary_headers = vary_headers
+            self._forget(entry)
+        else:
+            self._write(entry)
         self._bump("revalidations")
 
     def store(

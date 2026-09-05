@@ -119,9 +119,16 @@ def build_command(
 
     # For Basic-Auth staging environments and form-based logins, SF accepts an
     # authentication profile previously saved from the GUI under
-    # Config -> Authentication -> Profiles -> Save.
+    # Config -> Authentication -> Profiles -> Save. Unlike seospiderconfig,
+    # this path is never a set-up-once default with a documented fallback —
+    # it is only ever present because a caller explicitly asked for it, so a
+    # typo or a deleted profile must stop the crawl rather than start it
+    # unauthenticated: a login page can still produce exports that look like
+    # a complete, ordinary crawl (#216).
     auth_path = sf.get("auth_config")
-    if auth_path and os.path.isfile(auth_path):
+    if auth_path:
+        if not os.path.isfile(auth_path):
+            raise FileNotFoundError(f"sf_cli.auth_config not found: {auth_path!r}")
         cmd += ["--auth-config", os.path.abspath(auth_path)]
 
     tabs = list(exports.get("tabs", []))
@@ -368,6 +375,11 @@ def run_sf(
     # yet still exits with status 0, causing export loading to fail later.
     output_folder = os.path.abspath(output_folder)
     os.makedirs(output_folder, exist_ok=True)
+    # Snapshot before anything runs so a reused --out cannot let a prior run's
+    # export folder stand in for this one (#215): the folder this run
+    # produced is judged by what appeared after this point, never by what was
+    # already sitting there.
+    before = _dir_entries(output_folder)
     config = _apply_rate_limit(config, output_folder, log)
     cmd = build_command(
         cli, source_arg=arg, source_value=source, output_folder=output_folder, config=config
@@ -398,16 +410,18 @@ def run_sf(
         raise RuntimeError(
             f"Screaming Frog CLI failed (exit {proc.returncode}).\n{(proc.stderr or '')[-4000:]}"
         )
-    exports_dir = _latest_export_dir(output_folder)
-    if not _has_exports(exports_dir):
+    exports_dir = _new_export_dir(output_folder, before)
+    if exports_dir is None or not _has_exports(exports_dir):
         # SF may return status 0 even after a startup failure, such as a FATAL
-        # output-directory error. Without this guard, callers see "Required
-        # export 'internal_all' not found" and investigate exports instead of the
-        # failed process launch.
+        # output-directory error, or after reusing an --out where nothing new
+        # got written at all. Without this guard, callers see "Required export
+        # 'internal_all' not found" (or worse, a stale prior run's export) and
+        # investigate exports instead of the failed process launch.
         tail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-2000:]
         raise RuntimeError(
-            f"Screaming Frog CLI exited 0 but wrote no exports to {exports_dir} — "
-            "the crawl produced nothing, or SF never started (check the output below).\n"
+            f"Screaming Frog CLI exited 0 but wrote no exports to {output_folder} — "
+            "the crawl produced nothing, SF never started, or it reused an existing "
+            "--out without writing anything new (check the output below).\n"
             f"SF output (tail):\n{tail or '(empty)'}"
         )
     return exports_dir
@@ -422,13 +436,28 @@ def _has_exports(folder: str) -> bool:
     return any(n.lower().endswith((".csv", ".xlsx", ".xls", ".gsheet")) for n in names)
 
 
-def _latest_export_dir(output_folder: str) -> str:
-    """SF writes a timestamped subfolder; pick the newest, else the folder itself."""
-    subdirs = [
-        os.path.join(output_folder, d)
-        for d in os.listdir(output_folder)
-        if os.path.isdir(os.path.join(output_folder, d))
-    ]
-    if not subdirs:
+def _dir_entries(folder: str) -> tuple[set[str], set[str]]:
+    """Split a folder's direct entries into (subdirectory names, file names)."""
+    dirs: set[str] = set()
+    files: set[str] = set()
+    for name in os.listdir(folder):
+        (dirs if os.path.isdir(os.path.join(folder, name)) else files).add(name)
+    return dirs, files
+
+
+def _new_export_dir(output_folder: str, before: tuple[set[str], set[str]]) -> str | None:
+    """The folder this run wrote exports to, or None if nothing new appeared.
+
+    SF writes a fresh timestamped subfolder on a real run; comparing today's
+    listing against the ``before`` snapshot — rather than picking "whatever
+    subfolder is newest" — is what keeps an already-present, older export
+    folder from being mistaken for this run's output (#215).
+    """
+    before_dirs, before_files = before
+    dirs, files = _dir_entries(output_folder)
+    new_dirs = dirs - before_dirs
+    if new_dirs:
+        return max((os.path.join(output_folder, d) for d in new_dirs), key=os.path.getmtime)
+    if files - before_files:
         return output_folder
-    return max(subdirs, key=os.path.getmtime)
+    return None

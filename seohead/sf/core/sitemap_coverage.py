@@ -22,6 +22,7 @@ from typing import Any
 from defusedxml import ElementTree as ET
 
 from seohead.recon.net import http_client, validate_url
+from seohead.tools.sitemap import normalize_url
 
 from .context import AuditContext
 from .normalize import find_column, normalize_value
@@ -41,6 +42,32 @@ def _host(url: str) -> str:
         return urllib.parse.urlparse(url).netloc.lower()
     except (ValueError, AttributeError):
         return ""
+
+
+def _normalized_index(urls: list[str]) -> dict[str, str]:
+    """Normalised key -> the URL as it was actually written, first occurrence wins.
+
+    Comparison has to happen on the normalised key, or a trailing-slash-only difference
+    between a sitemap's declared URL and the matching crawled page reads as two distinct
+    URLs — 100% desync where the two are actually the same page (#145). This uses
+    ``normalize_url`` from ``seohead.tools.sitemap``, the same canonicalisation
+    ``seohead.crawl.reconcile.reconcile_sitemap`` already compares on for the native crawl
+    path, rather than adding a third notion of "same URL" to the toolkit. The set-building
+    glue around it (this function) is duplicated from ``reconcile._normalized_index`` rather
+    than imported: ``seohead/crawl/__init__.py`` documents that the crawl engine may not
+    import ``seohead.sf``, and the two are kept from depending on each other's internals in
+    the other direction too — the SF-export summary already names its three desync keys to
+    match ``reconcile_sitemap``'s by convention, not by sharing code.
+    """
+    out: dict[str, str] = {}
+    for url in urls:
+        if not url:
+            continue
+        try:
+            out.setdefault(normalize_url(url), url)
+        except ValueError:
+            continue  # not an absolute URL; cannot be compared, so it is dropped
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -104,8 +131,21 @@ def _parse_sitemap_bytes(
 ) -> list[dict[str, Any]]:
     """Return [{loc, lastmod}], recursing through <sitemapindex> with guards.
 
-    Child sitemaps that can't be fetched are appended to ``failures`` (so the
-    caller can report a partial parse instead of silently undercounting).
+    Child sitemaps that can't be fetched *or parsed* are appended to ``failures`` (so the
+    caller can report a partial parse instead of silently undercounting) — a document that
+    came back 200 with an unescaped ``&`` or a stray DOCTYPE is not the same fact as "no
+    sitemap exists here", and reporting it as one is worse than naming the failure (#146).
+
+    This uses ``defusedxml``'s strict, non-recovering parser rather than the lenient,
+    ``recover=True`` lxml parser ``seohead/tools/sitemap.py`` uses for the same document
+    shape: that module reads a sitemap already vetted as this site's own declared list,
+    where recovering a mangled entry is a straightforward win; this one runs the DTD/entity
+    guard below on bytes that may come from a sitemap-index child on an operator-supplied
+    host, and #148 is a reminder that lxml's own tolerant mode (``huge_tree=True``) already
+    trades away a safeguard once — stacking a second, recovering parser on top of that on the
+    less-trusted path is not a trade worth making silently. Two parsers giving two answers on
+    the same bytes is still the underlying defect; the fix here is that a rejection is now
+    named instead of swallowed, not that the two converge.
 
     ``documents``, when given, collects one record per sitemap document actually parsed:
     its URL, its uncompressed byte size and how many entries it declares. Those are the two
@@ -115,10 +155,14 @@ def _parse_sitemap_bytes(
     """
     # Reject DTDs/entities outright — sitemaps never use them (XXE / billion-laughs guard).
     if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+        if failures is not None and source:
+            failures.append(source)
         return []
     try:
         root = ET.fromstring(data)
     except ET.ParseError:
+        if failures is not None and source:
+            failures.append(source)
         return []
     tag = root.tag.split("}")[-1]
     out: list[dict[str, Any]] = []
@@ -184,6 +228,25 @@ def _base_url(ctx: AuditContext) -> str | None:
         if len(parts) >= 3:
             counts[f"{parts[0]}//{parts[2]}"] += 1
     return counts.most_common(1)[0][0] if counts else None
+
+
+def _site_target(ctx: AuditContext, base: str | None) -> str | None:
+    """A site-wide finding's URL, in the form this run actually recorded it.
+
+    ``_base_url`` returns a bare origin because that is what a robots.txt or
+    sitemap fetch needs. A finding is read by a person, though, and an origin
+    without a path matches no row in ``pages.jsonl`` -- so a site-wide finding
+    aimed at it names a URL the reader cannot look up in the very run that
+    reported it. Prefer the crawled home page; fall back to the origin only
+    when the crawl never fetched one.
+    """
+    if base is None:
+        return None
+    for candidate in (base, base + "/"):
+        for page in ctx.pages:
+            if page.url == candidate:
+                return page.url
+    return base
 
 
 # --------------------------------------------------------------------------
@@ -265,18 +328,27 @@ def _check_protocol_limits(
                 details={"bytes": doc["bytes"], "limit": MAX_SITEMAP_BYTES_PER_FILE},
             )
 
+    # Grouped on the normalised key (#145's fix applied here too): a URL declared as
+    # "/a" in one sitemap and "/a/" in another is one duplicated page, not two distinct
+    # ones that happen to look alike.
     sources: dict[str, list[str]] = {}
+    display: dict[str, str] = {}
     for entry in entries:
         loc = entry.get("loc")
         source = entry.get("source") or ""
         if not loc:
             continue
-        seen = sources.setdefault(loc, [])
+        try:
+            key = normalize_url(loc)
+        except ValueError:
+            key = loc
+        display.setdefault(key, loc)
+        seen = sources.setdefault(key, [])
         if source and source not in seen:
             seen.append(source)
-    duplicated = {loc: srcs for loc, srcs in sources.items() if len(srcs) > 1}
-    for loc, srcs in sorted(duplicated.items()):
-        ctx.add("SITEMAP_URL_DUPLICATED", target_url=loc, details={"sitemaps": srcs})
+    duplicated = {key: srcs for key, srcs in sources.items() if len(srcs) > 1}
+    for key, srcs in sorted(duplicated.items()):
+        ctx.add("SITEMAP_URL_DUPLICATED", target_url=display[key], details={"sitemaps": srcs})
     if duplicated:
         summary["urls_in_multiple_sitemaps"] = len(duplicated)
 
@@ -284,7 +356,9 @@ def _check_protocol_limits(
 # --------------------------------------------------------------------------
 # main entry
 # --------------------------------------------------------------------------
-def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, Any]:
+def run_sitemap(
+    ctx: AuditContext, sitemap_url: str | None = None, compare_with_crawl: bool = True
+) -> dict[str, Any]:
     summary: dict[str, Any] = {}
     cfg_live = ctx.config.get("live_recheck", {})
     ua = cfg_live.get(
@@ -309,15 +383,21 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
     sitemaps_declared: list[str] = []
     want_network = bool(sitemap_url) or cfg_live.get("enabled", False)
     base = _base_url(ctx)
+    fetch_failures: list[str] = []
+    # Whether a sitemap was actually pursued over the network, as opposed to merely
+    # requested-but-unable (no base host) — the SITEMAP_DESYNC skip reason below needs this
+    # to tell "nobody asked for a sitemap" apart from "one was fetched and came back unusable"
+    # (#146: those used to report the same false "no sitemap URL set" reason).
+    network_attempted = bool(want_network and base)
 
-    if want_network and base:
+    if network_attempted:
         robots = _fetch(f"{base}/robots.txt", ua, timeout)
         if robots is not None:
             robots_text = robots.decode("utf-8", "replace")
             sitemaps_declared = SITEMAP_DIRECTIVE.findall(robots_text)
             declared_in_robots = bool(sitemaps_declared)
             if not declared_in_robots:
-                ctx.add("SITEMAP_NOT_IN_ROBOTS", target_url=base)
+                ctx.add("SITEMAP_NOT_IN_ROBOTS", target_url=_site_target(ctx, base))
             # robots blocking render-critical resources breaks Google's rendering
             disallows = re.findall(r"(?im)^\s*disallow:\s*(\S+)", robots_text)
             res_re = re.compile(
@@ -326,14 +406,15 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
             blocked_res = [d for d in disallows if res_re.search(d)]
             if blocked_res:
                 ctx.add(
-                    "ROBOTS_BLOCKS_RESOURCES", target_url=base, details={"rules": blocked_res[:10]}
+                    "ROBOTS_BLOCKS_RESOURCES",
+                    target_url=_site_target(ctx, base),
+                    details={"rules": blocked_res[:10]},
                 )
         targets = [sitemap_url] if sitemap_url else (sitemaps_declared or [f"{base}/sitemap.xml"])
         # SSRF allow-list: the base host plus the hosts of explicitly-given sitemaps.
         allowed_hosts = {_host(base)} | {_host(t) for t in targets if t}
         allowed_hosts.discard("")
         seen = set(targets)
-        fetch_failures: list[str] = []
         for sm_url in targets:
             data = _fetch(sm_url, ua, timeout)
             if data:
@@ -358,12 +439,36 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
                 target_url=base,
                 details={"failed_count": len(fetch_failures), "examples": fetch_failures[:10]},
             )
+    else:
+        # No sitemap URL is known (no export, no explicit sitemap_url, live_recheck
+        # off) or the crawl never resolved a base host to check robots.txt against
+        # -- either way robots.txt was never fetched, so nothing here can honestly
+        # answer whether it declares a sitemap or blocks a resource path.
+        reason = (
+            "no sitemap URL to check (no export, no --sitemap, and live_recheck disabled)"
+            if not want_network
+            else "could not determine the crawled site's base URL"
+        )
+        ctx.skip("SITEMAP_NOT_IN_ROBOTS", reason)
+        ctx.skip("ROBOTS_BLOCKS_RESOURCES", reason)
+        ctx.skip("SITEMAP_FETCH_INCOMPLETE", reason)
 
     _check_protocol_limits(ctx, sitemap_documents, sitemap_entries, summary)
+    # Both lists come only from the live parse above; an export never fills them
+    # (see _urls_from_export/sf_in for the export-driven half). No document at all
+    # means the protocol-limit checks have nothing to measure; no entry at all
+    # means there is nothing to compare across sitemaps or date-check.
+    if not sitemap_documents:
+        reason = "no sitemap document was fetched to measure"
+        ctx.skip("SITEMAP_TOO_MANY_URLS", reason)
+        ctx.skip("SITEMAP_TOO_LARGE", reason)
+    if not sitemap_entries:
+        reason = "no sitemap entries were fetched to compare"
+        ctx.skip("SITEMAP_URL_DUPLICATED", reason)
+        ctx.skip("SITEMAP_STALE_LASTMOD", reason)
 
     # Prefer the richer source for the URL set / lastmod analysis.
     sitemap_locs = [e["loc"] for e in sitemap_entries] or sf_in
-    sitemap_set = set(sitemap_locs)
 
     # --- 3. lastmod staleness -------------------------------------------
     lastmod_summary = _analyze_lastmod(ctx, sitemap_entries)
@@ -371,25 +476,52 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
         summary["lastmod"] = lastmod_summary
 
     # --- 4. desync (both directions) ------------------------------------
-    indexable = {p.url for p in ctx.indexable_html_pages()}
-    in_sitemap_not_crawl = sorted(sitemap_set - {p.url for p in ctx.pages})
-    in_crawl_not_sitemap = sorted(indexable - sitemap_set) if sitemap_set else []
+    # Compared on normalize_url()'s key, not the raw written string: a sitemap URL and its
+    # matching crawled page differing only by a trailing slash used to read as two disjoint
+    # URLs, so a trailing-slash-only mismatch reported 100% desync where the native crawl
+    # path's own reconcile_sitemap() reports 0% on the same input (#145).
+    sitemap_index = _normalized_index(sitemap_locs)
+    pages_index = _normalized_index([p.url for p in ctx.pages])
+    indexable_index = _normalized_index([p.url for p in ctx.indexable_html_pages()])
+    sitemap_keys = set(sitemap_index)
+    pages_keys = set(pages_index)
+    # Declared, named from the sitemap's own text — nothing crawled matches this key at all.
+    in_sitemap_not_crawl = sorted(sitemap_index[k] for k in sitemap_keys - pages_keys)
+    # Named from the crawl's own text — declared side only decides membership, not display.
+    in_crawl_not_sitemap = (
+        sorted(indexable_index[k] for k in set(indexable_index) - sitemap_keys)
+        if sitemap_keys
+        else []
+    )
 
-    # mark pages with sitemap membership
+    # mark pages with sitemap membership, same normalised key as the diff above so a page is
+    # not falsely marked absent from the sitemap over a trailing slash.
     for page in ctx.pages:
-        if sitemap_set:
-            page.metrics["is_in_sitemap"] = page.url in sitemap_set
+        if sitemap_keys:
+            try:
+                page.metrics["is_in_sitemap"] = normalize_url(page.url) in sitemap_keys
+            except ValueError:
+                page.metrics["is_in_sitemap"] = False
 
-    if sitemap_set:
+    if sitemap_keys and not compare_with_crawl:
+        # The caller reconciles the sitemap against its own crawl and owns these
+        # findings (see seohead.crawl.reconcile.reconcile_sitemap, wired in
+        # handlers.crawl_site). Emitting here as well would answer one question
+        # twice with two different degrees of rigour -- and this side compares
+        # against the whole page list rather than the comparable subset, so it
+        # is the cruder of the two. Skipping by name keeps the check accounted
+        # for; it is not silently absent.
+        ctx.skip("SITEMAP_DESYNC", "the caller reconciles the sitemap against its own crawl")
+    elif sitemap_keys:
         threshold = ctx.thresholds["sitemap_desync_pct_warn"]
         # direction 1: indexable pages crawled but missing from the sitemap
-        crawl_only_pct = round(100 * len(in_crawl_not_sitemap) / max(len(indexable), 1), 1)
+        crawl_only_pct = round(100 * len(in_crawl_not_sitemap) / max(len(indexable_index), 1), 1)
         # direction 2: sitemap URLs the crawl never reached (orphan / unlinked / EN half / depth)
-        sitemap_only_pct = round(100 * len(in_sitemap_not_crawl) / max(len(sitemap_set), 1), 1)
+        sitemap_only_pct = round(100 * len(in_sitemap_not_crawl) / max(len(sitemap_keys), 1), 1)
         if crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
             ctx.add(
                 "SITEMAP_DESYNC",
-                target_url=base,
+                target_url=_site_target(ctx, base),
                 details={
                     "in_crawl_not_in_sitemap": len(in_crawl_not_sitemap),
                     "in_sitemap_not_in_crawl": len(in_sitemap_not_crawl),
@@ -399,29 +531,42 @@ def run_sitemap(ctx: AuditContext, sitemap_url: str | None = None) -> dict[str, 
                     "examples_in_sitemap_not_crawled": in_sitemap_not_crawl[:20],
                 },
             )
-    else:
+    elif not network_attempted:
         ctx.skip("SITEMAP_DESYNC", "no sitemap URL set (no export and network disabled)")
+    elif fetch_failures:
+        # Network was enabled and every declared sitemap document was reached, but not one
+        # of them yielded a usable URL set (fetch error, or a parse failure such as an
+        # unescaped '&' -- #146). That is not the same fact as "no sitemap exists", and
+        # reporting it that way hid a real defect on the target site behind a skip reason
+        # that was itself false.
+        ctx.skip(
+            "SITEMAP_DESYNC",
+            f"sitemap fetch/parse failed for all {len(fetch_failures)} attempted "
+            f"document(s): {fetch_failures[:5]}",
+        )
+    else:
+        ctx.skip("SITEMAP_DESYNC", "sitemap fetched but declared zero URLs")
 
     summary.update(
         {
             "declared_in_robots": declared_in_robots,
             "sitemaps": sitemaps_declared or ([sitemap_url] if sitemap_url else []),
-            "urls_in_sitemap": len(sitemap_set),
-            "urls_in_crawl_indexable": len(indexable),
+            "urls_in_sitemap": len(sitemap_keys),
+            "urls_in_crawl_indexable": len(indexable_index),
             "in_sitemap_not_in_crawl": len(in_sitemap_not_crawl),
             "in_crawl_not_in_sitemap": len(in_crawl_not_sitemap),
             "non_200_in_sitemap": len(_urls_from_export(ctx, "sitemap_non_200")),
             "non_indexable_in_sitemap": len(_urls_from_export(ctx, "sitemap_non_indexable")),
         }
     )
-    if sitemap_set:
+    if sitemap_keys:
         # Same three key names the native crawler's own reconciliation uses
         # (seohead.crawl.reconcile.reconcile_sitemap), so a consumer of
         # audit.json's summary.sitemap does not need two schemas depending on
         # which crawl mode produced the report. Full lists, not the capped
         # 20-item examples above — this is the first-class output, not a
         # threshold-gated issue detail.
-        summary["in_sitemap_and_linked"] = sorted(sitemap_set & {p.url for p in ctx.pages})
+        summary["in_sitemap_and_linked"] = sorted(pages_index[k] for k in sitemap_keys & pages_keys)
         summary["in_sitemap_not_linked"] = in_sitemap_not_crawl
         summary["linked_not_in_sitemap"] = in_crawl_not_sitemap
     return summary

@@ -418,8 +418,12 @@ CHECKS: dict[str, dict[str, Any]] = {
     "SITEMAP_FETCH_INCOMPLETE": {
         "severity": "notice",
         "source": "sitemap",
-        "message": "Some child sitemaps could not be fetched because of network or availability errors",
-        "fix": "Check that every child sitemap is reachable and retry the audit in case the sitemap service was temporarily slow.",
+        "message": "Some child sitemaps could not be fetched or parsed",
+        "fix": (
+            "Check that every child sitemap is reachable, retry in case the service was "
+            "temporarily slow, and validate the XML -- a 200 response with malformed markup "
+            "(e.g. an unescaped '&' in a URL) fails here the same way a network error does."
+        ),
     },
     # 8.x — heuristics beyond SF
     "HTML_BLOAT": {
@@ -735,6 +739,73 @@ CHECKS: dict[str, dict[str, Any]] = {
         "message": "HTML response is served uncompressed above the size where gzip/br would help",
         "fix": "Enable gzip, Brotli, or deflate compression for text responses on the origin server or CDN.",
     },
+    # --- extension: element position & document skeleton (issue #123) ---
+    "TITLE_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "The <title> element is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so <title> is read from <head> again.",
+    },
+    "DESC_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "The meta description is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the description is read from <head> again.",
+    },
+    "CANONICAL_OUTSIDE_HEAD": {
+        "severity": "critical",
+        "source": "SF-derived",
+        "message": "The canonical link is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the canonical is read from <head> again; Google ignores a canonical outside <head>.",
+    },
+    "DIRECTIVES_OUTSIDE_HEAD": {
+        "severity": "critical",
+        "source": "SF-derived",
+        "message": "A robots-directive meta tag is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the directive is read from <head> again; a noindex/nofollow outside <head> does not apply.",
+    },
+    "HREFLANG_OUTSIDE_HEAD": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "An hreflang alternate link is outside <head> once the parser resolves the document",
+        "fix": "Move whatever precedes it in <head> — usually an element the head content model does not allow — so the alternate is read from <head> again.",
+    },
+    "HEAD_MISSING": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Document has no <head> element",
+        "fix": "Add a <head> element; a browser inserts one implicitly, but every metadata tag then depends on exactly where it lands.",
+    },
+    "HEAD_MULTIPLE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Document has more than one <head> element",
+        "fix": "Merge into a single <head>; a browser keeps both as siblings rather than combining their contents.",
+    },
+    "BODY_MISSING": {
+        "severity": "warning",
+        "source": "SF-derived",
+        "message": "Document has no <body> element",
+        "fix": "Add a <body> element; a browser inserts one implicitly around the visible content.",
+    },
+    "BODY_MULTIPLE": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "Document has more than one <body> element",
+        "fix": "Merge into a single <body>; a browser keeps both as siblings rather than combining their contents.",
+    },
+    "INVALID_HEAD_ELEMENT": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "An element the head content model does not allow is written inside <head>",
+        "fix": "Move title/base/link/meta/style/script/noscript/template content into <head> and everything else into <body>; an invalid element is what forces the parser to close <head> early.",
+    },
+    "HEAD_NOT_FIRST": {
+        "severity": "notice",
+        "source": "SF-derived",
+        "message": "<head> is not the first element under <html> once the parser resolves the document",
+        "fix": "Fix the markup order so <head> opens immediately after <html>, before any <body> content.",
+    },
     # --- extension: export-dependent native filters (active when the export is available) ---
     "MIXED_CONTENT": {
         "severity": "warning",
@@ -785,6 +856,53 @@ CHECKS: dict[str, dict[str, Any]] = {
         "fix": "Add a contextual link to the page from relevant body copy; a page reachable "
         "only through boilerplate is not linked the way a page in the content graph is.",
     },
+    # 9.B — link security & forms (issue #125). Same construction as INLINK_BOILERPLATE_ONLY
+    # just above: computed directly from a native crawl's own LinkEdge/FormEdge evidence
+    # (seohead.crawl.link_findings), added by the handler layer rather than through a
+    # registered export requirement, because an SF export carries neither a form inventory
+    # nor a link's rel/target/raw-href.
+    "UNSAFE_CROSS_ORIGIN_LINK": {
+        "severity": "warning",
+        "source": "crawl:link_findings",
+        "message": 'A target="_blank" link declares neither rel="noopener" nor rel="noreferrer"',
+        "fix": 'Add rel="noopener" (or "noreferrer") so the opened page cannot reach back '
+        "into this one through window.opener.",
+    },
+    "PROTOCOL_RELATIVE_LINK": {
+        "severity": "notice",
+        "source": "crawl:link_findings",
+        "message": 'Link href is written in the protocol-relative "//host/path" form',
+        "fix": "Write an explicit https:// href; a protocol-relative one silently follows "
+        "whatever scheme served the current page, including a plain-HTTP embed.",
+    },
+    "OUTLINK_TO_LOCALHOST": {
+        "severity": "warning",
+        "source": "crawl:link_findings",
+        "message": "A link points at a loopback address (localhost, 127.0.0.1, ::1, ...)",
+        "fix": "Replace the development/staging reference with the production URL.",
+    },
+    "FOLLOW_AND_NOFOLLOW_INLINKS": {
+        "severity": "notice",
+        "source": "crawl:link_findings",
+        "message": "The page receives both a followed and a nofollow internal link",
+        "fix": "Decide deliberately whether the page should be crawl-priority or not, and "
+        "make every internal link to it agree.",
+    },
+    "FORM_URL_INSECURE": {
+        "severity": "critical",
+        "source": "crawl:link_findings",
+        "message": "A form submits to an http:// action, so its data leaves the browser "
+        "unencrypted regardless of the page's own scheme",
+        "fix": "Point the form's action at an https:// URL.",
+    },
+    "FORM_ON_HTTP_URL": {
+        "severity": "critical",
+        "source": "crawl:link_findings",
+        "message": "A form with a password field is served from a plain-HTTP page, so the "
+        "credentials themselves travel unencrypted before the action URL is even reached",
+        "fix": "Serve the page itself over HTTPS; an HTTPS form action does not protect "
+        "input typed on an HTTP page.",
+    },
 }
 
 
@@ -823,6 +941,15 @@ CHECK_REQUIRES: dict[str, tuple[str, ...]] = {
     "STRUCTURED_DATA_MISSING": ("structured_data_missing",),
     "HREFLANG_ERROR": ("hreflang",),
     "HREFLANG_BROKEN_TARGET": ("all_hreflang",),
+    # These three read an SF-native Sitemaps:* comparison export directly
+    # (seohead.sf.core.sitemap_coverage._emit_from_export) and have no other
+    # evidence source -- unlike SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP, which a
+    # native crawl answers itself from its own link graph and must stay off
+    # this list so crawl_site's own evidence is never overridden by an absent
+    # export (issue #165).
+    "SITEMAP_URL_4XX_5XX": ("sitemap_non_200",),
+    "SITEMAP_URL_3XX": ("sitemap_redirects",),
+    "SITEMAP_URL_NON_INDEXABLE": ("sitemap_non_indexable",),
 }
 
 

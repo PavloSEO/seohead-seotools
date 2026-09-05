@@ -90,6 +90,71 @@ def test_run_sf_empty_exports_is_loud(tmp_path, monkeypatch):
     assert "FATAL" in msg  # The message includes the relevant tail of SF output.
 
 
+def test_run_sf_rejects_a_stale_export_folder_from_a_prior_run(tmp_path, monkeypatch):
+    """#215: a zero-exit run that writes nothing new must not fall back to an old export."""
+    monkeypatch.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
+
+    output = tmp_path / "exports"
+    old = output / "previous-run"
+    old.mkdir(parents=True)
+    (old / "internal_all.csv").write_text("Address\nhttps://old.example/\n", encoding="utf-8")
+
+    def fake_run(cmd, *args, **kwargs):
+        class P:
+            returncode = 0
+            stdout = ""
+            stderr = "FATAL - startup failed"
+
+        return P()
+
+    monkeypatch.setattr(runner, "resolve_cli", lambda *a, **k: "/bin/sf")
+    monkeypatch.setattr(runner, "_run_watched", fake_run)
+
+    with pytest.raises(RuntimeError) as err:
+        runner.run_sf(
+            mode="crawl-list",
+            source=str(tmp_path / "urls.txt"),
+            output_folder=str(output),
+            config={},
+            log=lambda m: None,
+        )
+    assert "no exports" in str(err.value)
+
+
+def test_run_sf_accepts_a_genuinely_new_export_folder_beside_an_old_one(tmp_path, monkeypatch):
+    """A real new run must still succeed even when a prior run's folder is still there."""
+    monkeypatch.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
+
+    output = tmp_path / "exports"
+    old = output / "previous-run"
+    old.mkdir(parents=True)
+    (old / "internal_all.csv").write_text("Address\nhttps://old.example/\n", encoding="utf-8")
+
+    def fake_run(cmd, *args, **kwargs):
+        fresh = output / "2026-09-05"
+        fresh.mkdir()
+        (fresh / "internal_all.csv").write_text("Address\nhttps://new.example/\n", encoding="utf-8")
+
+        class P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return P()
+
+    monkeypatch.setattr(runner, "resolve_cli", lambda *a, **k: "/bin/sf")
+    monkeypatch.setattr(runner, "_run_watched", fake_run)
+
+    got = runner.run_sf(
+        mode="crawl",
+        source="https://example.com/",
+        output_folder=str(output),
+        config={},
+        log=lambda m: None,
+    )
+    assert got == str(output / "2026-09-05")
+
+
 def test_run_sf_accepts_only_the_in_memory_trusted_loopback_proxy(tmp_path, monkeypatch):
     proxy = "http://127.0.0.1:43123"
 

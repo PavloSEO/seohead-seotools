@@ -18,6 +18,11 @@ facts from the same run that cannot both be right, each anomaly naming both valu
 each came from, so the reader can check the claim rather than trust it.
 
 Pure and network-free: it reads artifacts a run already produced.
+
+``audit.json`` and ``pages.jsonl`` are outputs; ``decisions.jsonl`` (issue #134), when a native
+crawl wrote one, is closer to a trace of how they were produced — a wrong decision that still
+adds up to a consistent-looking output is invisible to a rule that reads only the outputs. See
+``rule_outside_host_exclusion_matches_its_own_host`` for the shape of that gap.
 """
 
 from __future__ import annotations
@@ -27,6 +32,12 @@ import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+# The one definition of "most of the site", shared with the aggregator that
+# writes summary.implausible_checks -- two thresholds would eventually differ
+# and the scanner would contradict the report it reads.
+from seohead.sf.core.aggregate import IMPLAUSIBLE_SHARE
 
 __all__ = ["RULES", "Anomaly", "RunArtifacts", "load_run", "scan"]
 
@@ -59,8 +70,10 @@ class RunArtifacts:
     audit: dict[str, Any] | None = None
     pages: list[dict[str, Any]] = field(default_factory=list)
     files: dict[str, int] = field(default_factory=dict)  # URL -> bytes on disk
+    decisions: list[dict[str, Any]] = field(default_factory=list)  # decisions.jsonl (issue #134)
     audit_path: str = ""
     pages_path: str = ""
+    decisions_path: str = ""
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -127,6 +140,11 @@ def load_run(run_dir: str, images_dir: str | None = None) -> RunArtifacts:
     if pages_path.is_file():
         artifacts.pages = _read_jsonl(pages_path)
         artifacts.pages_path = str(pages_path)
+
+    decisions_path = base / "decisions.jsonl"
+    if decisions_path.is_file():
+        artifacts.decisions = _read_jsonl(decisions_path)
+        artifacts.decisions_path = str(decisions_path)
 
     if images_dir:
         artifacts.files = _downloaded_sizes(Path(os.path.expanduser(images_dir)))
@@ -379,6 +397,89 @@ def rule_representation_is_recorded(run: RunArtifacts) -> list[Anomaly]:
     ]
 
 
+def rule_a_check_does_not_describe_most_of_the_site(run: RunArtifacts) -> list[Anomaly]:
+    """A check covering more than half the crawl, named for a reviewer (#98).
+
+    Sibling of ``rule_a_check_cannot_exceed_its_population`` above, and the weaker
+    of the two on purpose: firing more often than there are pages is arithmetically
+    impossible and always a defect, while covering most of the pages is merely
+    suspicious. Three defects found on live sites (#94, #95, #96) all looked like
+    this and all passed their own unit tests, so the report itself has to say it.
+
+    Read from the audit rather than recomputed: ``summary.implausible_checks`` is
+    the same measure the report prints, and a scanner that computed its own would
+    eventually disagree with the document it is scanning.
+    """
+    if not run.audit:
+        return []
+    flagged = (run.audit.get("summary") or {}).get("implausible_checks") or []
+    out = []
+    for row in flagged:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            Anomaly(
+                rule="check_describes_most_of_the_site",
+                message=(
+                    f"{row.get('check')} describes "
+                    f"{float(row.get('share') or 0):.0%} of the crawled pages -- true of some "
+                    "sites, and what a broken check looks like on the rest"
+                ),
+                observed=row.get("pages"),
+                expected=f"under {IMPLAUSIBLE_SHARE:.0%} of pages, for a check about the unusual",
+                target=str(row.get("check")),
+                sources={"observed": "audit.json:summary.implausible_checks"},
+            )
+        )
+    return out
+
+
+def rule_outside_host_exclusion_matches_its_own_host(run: RunArtifacts) -> list[Anomaly]:
+    """A URL rejected as off-host whose hostname is the crawl's own host (issue #134).
+
+    ``audit.json`` only ever sees the *count* of ``outside_host`` exclusions
+    (``run.excluded``); the URL and the host the crawl compared it against
+    exist only in ``decisions.jsonl``, so this contradiction is invisible to
+    every rule above that reads only ``audit`` and ``pages``. A mismatch here
+    is a scope bug, never a judgement call — the hostname literally recorded
+    alongside the decision is the one it was supposedly rejected against.
+    """
+    out = []
+    seen: set[str] = set()
+    for entry in run.decisions:
+        if entry.get("type") != "exclude":
+            continue
+        reason = entry.get("reason")
+        if reason not in ("outside_host", "redirect_off_host"):
+            continue
+        url = str(entry.get("url") or "")
+        crawl_host = str(entry.get("host") or "").lower()
+        if not url or not crawl_host or url in seen:
+            continue
+        if (urlsplit(url).hostname or "").lower() != crawl_host:
+            continue
+        seen.add(url)
+        out.append(
+            Anomaly(
+                rule="outside_host_exclusion_matches_its_own_host",
+                message=f"excluded as {reason}, but its host is the crawl's own host",
+                observed=urlsplit(url).hostname,
+                expected=f"a host other than {crawl_host!r}",
+                target=url,
+                sources={"observed": "decisions.jsonl:url", "expected": "decisions.jsonl:host"},
+            )
+        )
+    return out
+
+
+# Separate from RULES on purpose. An Anomaly is a pair of facts that cannot both
+# be true, and log-scan exits 2 for one. A check describing most of the site is
+# not that: on a site with no meta descriptions anywhere it is simply correct, so
+# treating it as a contradiction would fail every run on a uniform site and the
+# exit code would stop meaning anything. These are reported beside the anomalies,
+# under their own key, and never change the exit code (issue #98).
+REVIEW_RULES = (rule_a_check_does_not_describe_most_of_the_site,)
+
 RULES = (
     rule_recorded_size_matches_the_file,
     rule_text_ratio_is_a_percentage,
@@ -387,6 +488,7 @@ RULES = (
     rule_a_check_cannot_exceed_its_population,
     rule_summary_matches_the_issue_rows,
     rule_canonical_to_redirect_has_no_answering_twin,
+    rule_outside_host_exclusion_matches_its_own_host,
     rule_representation_is_recorded,
 )
 
@@ -405,15 +507,23 @@ def scan(run: RunArtifacts, max_per_rule: int = 20) -> dict[str, Any]:
         name = found[0].rule if found else rule.__name__.removeprefix("rule_")
         per_rule[name] = per_rule.get(name, 0) + len(found)
         anomalies.extend(a.as_dict() for a in found[:max_per_rule])
+    review: list[dict[str, Any]] = []
+    for rule in REVIEW_RULES:
+        review.extend(item.as_dict() for item in rule(run)[:max_per_rule])
     return {
         "ok": True,
         "anomalies": anomalies,
         "anomaly_count": sum(per_rule.values()),
+        # Not anomalies and deliberately not counted as such: things a person
+        # should confirm before trusting the report, which do not make the run
+        # self-contradictory and do not affect the exit code.
+        "review": review,
         "by_rule": {k: v for k, v in per_rule.items() if v},
         "read": {
             "audit": bool(run.audit),
             "pages": len(run.pages),
             "downloaded_files": len(run.files),
+            "decisions": len(run.decisions),
         },
         # Named so a clean result cannot be mistaken for a complete one: a rule that had no
         # artifact to read is silent for the same reason a rule that found nothing is.

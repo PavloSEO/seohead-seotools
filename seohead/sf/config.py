@@ -8,8 +8,20 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from typing import Any
+
+# The only severities the schema and the scoring weights know about (issue
+# #211): anything else silently drops out of by_severity and the weighted
+# penalty, which inflates the health score exactly when a check is supposed
+# to be hurting it.
+ALLOWED_SEVERITIES = ("critical", "warning", "notice")
+
+
+class ConfigError(ValueError):
+    """A config value that would corrupt scoring or violate the audit schema."""
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "sf_cli": {
@@ -208,3 +220,44 @@ def apply_profile(cfg: dict[str, Any]) -> dict[str, Any]:
     if profile == "lite":
         cfg = deep_merge(cfg, {"exports": LITE_EXPORTS})
     return cfg
+
+
+def validate_config(cfg: dict[str, Any]) -> None:
+    """Reject a config that would corrupt scoring or the audit.json schema.
+
+    Called once, after every CLI/MCP override has landed and before a single
+    check runs: a bad severity or weight must never reach an ``Issue``,
+    because by the time the health score exists the corruption is invisible
+    in the number (issue #211) and the report still validates against
+    nothing.
+    """
+    from seohead.sf.core.registry import CHECKS
+
+    errors: list[str] = []
+
+    def _bad_severity(where: str, check_id: str, severity: Any) -> None:
+        errors.append(
+            f"{where}[{check_id!r}] severity is {severity!r}; must be one of {ALLOWED_SEVERITIES}"
+        )
+
+    for check_id, severity in cfg.get("severity_overrides", {}).items():
+        if check_id not in CHECKS:
+            errors.append(f"severity_overrides names unknown check {check_id!r}")
+        elif severity not in ALLOWED_SEVERITIES:
+            _bad_severity("severity_overrides", check_id, severity)
+
+    for check_id, check_cfg in cfg.get("checks", {}).items():
+        if check_id not in CHECKS:
+            errors.append(f"checks names unknown check {check_id!r}")
+            continue
+        if "severity" in check_cfg and check_cfg["severity"] not in ALLOWED_SEVERITIES:
+            _bad_severity("checks", check_id, check_cfg["severity"])
+
+    for severity, weight in cfg.get("scoring", {}).get("weights", {}).items():
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            errors.append(f"scoring.weights[{severity!r}] is {weight!r}; must be a number")
+        elif not math.isfinite(weight) or weight < 0:
+            errors.append(f"scoring.weights[{severity!r}] is {weight!r}; must be finite and >= 0")
+
+    if errors:
+        raise ConfigError("; ".join(errors))

@@ -113,11 +113,20 @@ seohead duplicate-check --input '{"items":[{"id":"https://example.com/a","text":
   to its cause.
 
 ## Cost
-The cost lives in the text-collection step, not the clustering call itself — `duplicate-check`
-runs simhash+LSH in one local call with no paid API and near-instant response regardless of corpus
-size (the whole point of avoiding O(N²)). If text must be gathered live via `sitemap-crawl` +
-`parse`, that is one request per URL (N requests for N pages); reusing an existing SF crawl export
-avoids that entirely.
+`duplicate-check` runs simhash+LSH in one local call with no paid API, so the cost that matters
+most is usually the text-collection step, not the clustering call. But "avoids O(N²)" is not
+unconditional: LSH buckets by fingerprint, and a templated site's boilerplate can otherwise
+dominate every page's fingerprint and defeat the bucketing (a shared 600-token template plus a
+30-token unique tail used to put 99.7%+ of a corpus in one LSH bucket at every scale tested).
+`find_duplicates` now damps shingles shared by nearly the whole corpus (once it is large enough
+for that signal to mean anything — see the module docstring) precisely so this does not happen;
+measured on a synthetic templated corpus this took wall-clock time from 4.4s/32.4s/164.6s down to
+0.4s/2.2s/8.9s at n=1,000/4,000/10,000, and the false single-cluster collapse (previously nearly
+the entire corpus, e.g. 9,994/10,000) dropped to zero clusters when every page's own content is
+genuinely distinct. It is still not free at very large scale — n=10,000 remains real, non-trivial
+work, not "near-instant" — so budget for it on a crawl in the tens of thousands. If text must be
+gathered live via `sitemap-crawl` + `parse`, that is one request per URL (N requests for N pages);
+reusing an existing SF crawl export avoids that entirely.
 
 ## What to Deliver to the User
 1. **Duplicate clusters** with similarity scores and URL lists, prioritized by cluster size
@@ -131,8 +140,9 @@ avoids that entirely.
 ## Degradation
 No text (an empty list) → `count: 0, clusters: []`; do not crash. Very short texts produce
 an unstable simhash, so warn that results for pages with <50 words are approximate. LSH
-produces candidates, while the final decision uses the exact Hamming distance, so clusters
-will not contain false duplicates (the threshold is checked exactly).
+produces candidates, and a cluster is complete-linkage: every pairwise similarity inside a
+reported cluster — not only the pairs LSH happened to compare — is verified to meet the
+threshold, so a cluster never quietly contains a pair below it.
 
 ## Integrations
 Text sources: `sf-analyzer` (crawl), `parse` (live), `sitemap-crawl` (URL list).

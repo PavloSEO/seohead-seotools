@@ -8,6 +8,7 @@ missing column yields ``None``, never an exception.
 from __future__ import annotations
 
 import math
+import urllib.parse
 from collections.abc import Iterable
 from typing import Any
 
@@ -88,6 +89,19 @@ INTERNAL_FIELD_MAP: dict[str, list[str]] = {
     # (#18). An SF export simply never has this column, so it resolves to
     # None there, same as any other frame a list-mode run cannot fill.
     "representation": ["Representation"],
+    # Element-position evidence (issue #123): also not a default SF column —
+    # "was this element inside <head> once the parser resolved the tree"
+    # needs the parse tree itself, which only a native seohead crawl has.
+    # See seohead/sf/core/rules.py check_element_position/check_document_skeleton.
+    "title_outside_head": ["Title Outside Head"],
+    "meta_description_outside_head": ["Meta Description Outside Head"],
+    "canonical_outside_head": ["Canonical Outside Head"],
+    "directives_outside_head": ["Directives Outside Head"],
+    "hreflang_outside_head": ["Hreflang Outside Head"],
+    "head_count": ["Head Count"],
+    "body_count": ["Body Count"],
+    "head_not_first": ["Head Not First"],
+    "invalid_head_elements": ["Invalid Head Elements"],
 }
 
 # Canonical field -> headers for a ``*:Inlinks`` bulk export.
@@ -190,6 +204,8 @@ INT_FIELDS = frozenset(
         "validation_errors",
         "spelling_errors",
         "grammar_errors",
+        "head_count",
+        "body_count",
     }
 )
 FLOAT_FIELDS = frozenset(
@@ -205,8 +221,21 @@ FLOAT_FIELDS = frozenset(
 
 
 def norm_url(url: str | None) -> str:
-    """Normalize a URL for equality/index lookups (strip, drop trailing /, lower)."""
-    return (url or "").strip().rstrip("/").lower()
+    """Normalize a URL for equality/index lookups (strip, drop trailing /, fold scheme/host).
+
+    Scheme and host are case-insensitive per RFC 3986 and safe to fold; the path, query and
+    fragment are not — a case-sensitive server can serve ``/News`` and ``/news`` as different
+    resources, and lowercasing the whole URL silently merged them into one key, hiding a
+    broken or unreciprocated hreflang target and collapsing distinct link-graph nodes (#202).
+    The trailing-slash fold stays: it is a deliberate many-to-one tolerance for a canonical
+    written without one (see AuditContext._build_pages) and is unrelated to letter case.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    scheme, netloc, path, query, fragment = urllib.parse.urlsplit(url)
+    path = path.rstrip("/")
+    return urllib.parse.urlunsplit((scheme.lower(), netloc.lower(), path, query, fragment))
 
 
 def find_column(df: pd.DataFrame, candidates: Iterable[str]) -> str | None:

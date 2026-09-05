@@ -4,6 +4,57 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix four export-selection and run-validation defects that let an audit present a result it
+  could not support (#209, #210, #215, #216). `internal_all`'s matcher required only the
+  filename token `internal`, so a partial per-type Internal tab (e.g. `internal_html.csv`,
+  missing every non-HTML row) satisfied the required Internal:All master export with no
+  missing-master warning; the matcher now also requires `all`. `discover_exports` picked the
+  first candidate for a logical key in sorted filename order when two files matched it (e.g.
+  `internal_all.csv` and `internal-all.csv` both present with different rows), silently
+  discarding the other with nothing in run metadata to say a choice was made; it now raises,
+  naming every candidate. `run_sf` picked the newest timestamped subfolder under `--out`
+  regardless of when it was created, so a re-run that exited 0 without writing anything (a
+  startup failure Screaming Frog does not report as a nonzero exit) could return a prior
+  invocation's exports as if they were fresh; it now compares against a snapshot taken before
+  the process starts and fails loudly when nothing new appears. `build_command` added
+  `--auth-config` only when the given profile file already existed, silently starting an
+  unauthenticated crawl on a typo'd or deleted path — appropriate for the optional
+  `seospiderconfig` default, wrong for a profile the caller explicitly requested; a missing
+  explicit `sf_cli.auth_config` now raises before Screaming Frog starts.
+- Fix two content-extraction defects in `seohead/tools/parser.py` (#138, #140). `collapse_whitespace`
+  decoded HTML entities a second time on top of the single decode BeautifulSoup's lxml parser
+  already performs on every `tag.get_text()`/`tag.get(attr)` value it hands to that helper — a
+  silent no-op on ordinary markup, but on a page whose CMS or import pipeline already
+  double-escaped its entities (a real, common artifact) it turned visibly-broken entity soup into
+  clean-looking text and shortened the reported length below what a browser tab or a SERP snippet
+  actually renders, flipping length-based title/description checks in both directions. The helper
+  no longer decodes at all. Separately, link and URL-source extraction walked the whole document
+  unconditionally, so an `<a>`/`<img>` that existed only inside an inert `<template>` — never part
+  of the rendered document per the HTML spec, never requested by a browser or a crawler unless a
+  script clones it in — was reported as a real, on-page link and actually fetched by `spider.py`,
+  the same phantom-URL failure mode closed for `<base href>` in #4; both extractors now skip
+  `<template>` descendants. `<noscript>` is deliberately left reachable there, unlike in text
+  extraction: it is real, spec-defined fallback markup a JS-disabled client (and search engines'
+  non-rendering crawl pass) does load, and excluding it would hide a genuinely fetchable URL from
+  the auditor. Word count also no longer counts `<svg>`/`<math>` descendant text (an icon sprite's
+  accessibility `<title>`, glyph `<text>`, MathML notation) as body copy — a 20-icon header could
+  double a page's reported word count against its real content — and that exclusion list now lives
+  in one place (`content_area.TEXT_EXCLUDED_TAGS`) shared by both text extractors instead of two
+  copies that had already drifted out of sync.
+- Keep a link's full `rel` tokens, its `target` attribute, and its raw (pre-resolution) href,
+  and extract `<form>` elements — method, action, whether a password field is present (#125).
+  Six catalogued issues depended on those three facts being discarded: unsafe cross-origin
+  links (`target="_blank"` without `rel="noopener"`/`"noreferrer"`), protocol-relative links
+  (`//host/path`, before resolution), outlinks to localhost, a page receiving both a followed
+  and a nofollow internal link, an insecure form action, and a password form served from a
+  plain-HTTP page. All six are now `UNSAFE_CROSS_ORIGIN_LINK`, `PROTOCOL_RELATIVE_LINK`,
+  `OUTLINK_TO_LOCALHOST`, `FOLLOW_AND_NOFOLLOW_INLINKS`, `FORM_URL_INSECURE` and
+  `FORM_ON_HTTP_URL` in the registry. The form/localhost/nofollow-mix checks need only fields
+  every crawl already recorded, so those four run unconditionally; the cross-origin and
+  protocol-relative pair need `link_attributes.capture`, off by default,
+  because the extra per-edge data measured roughly +50% on a synthetic 3387-page,
+  150-link-per-page crawl — about +95 bytes/edge, +46 MiB total, `raw_href` alone accounting
+  for most of it. Registry grows from 121 to 127 checks.
 - Fix `report-build` silently rendering a zero-findings report for an SF Analyzer
   `audit.json` (#151). The documented recipe — `sf run --tasks` piped into
   `report-build --format docx`/`xlsx`/`csv`/`md` — read `findings`/flat page keys, which

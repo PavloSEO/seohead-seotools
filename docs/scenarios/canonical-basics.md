@@ -11,7 +11,7 @@ finds those, and stops before the ones that need a person.
 
 ## Covers
 
-- **Canonicals** — Missing · Canonical Is Relative · Contains Fragment URL
+- **Canonicals** — Missing · Canonical Is Relative · Contains Fragment URL · Outside <head>
 
 ## The chain
 
@@ -37,13 +37,32 @@ element, and `CANONICAL_FRAGMENT` for every canonical whose value contains a fra
 fragment case is worth stating plainly in the ticket: the part after `#` is never sent to the
 server, so a canonical pointing at one identifies nothing.
 
-**3. Read the counts, not the issue list, first.**
+**3. Read `CANONICAL_OUTSIDE_HEAD`, the classic case a source diff never catches.** A browser
+closes `<head>` at the first element that does not belong there — commonly a stray `<script>`
+or tag a plugin injected — and everything after that point, canonical included, is read from
+`<body>` instead. Google ignores it there. The tag looks perfectly correct in the source; only
+the parsed tree, which step 2's crawl already resolved, tells the difference:
+
+```json
+{
+  "check": "CANONICAL_OUTSIDE_HEAD",
+  "severity": "critical",
+  "target_url": "https://example.com/page",
+  "message": "The canonical link is outside <head> once the parser resolves the document"
+}
+```
+
+The same canonical in a clean `<head>` never fires this. Neither Screaming Frog's own crawl nor
+a plain export from it can raise it either — the fact only exists where the parse tree was
+actually built.
+
+**4. Read the counts, not the issue list, first.**
 
 `summary.by_check` is one line per check. If `CANONICAL_MISSING` is larger than
-`totals.html_pages`, the finding is arithmetic rather than a defect. Step 5 is the mechanical
+`totals.html_pages`, the finding is arithmetic rather than a defect. Step 6 is the mechanical
 version of that suspicion.
 
-**4. For the literal attribute value, read a Screaming Frog export instead.**
+**5. For the literal attribute value, read a Screaming Frog export instead.**
 
 ```bash
 seohead sf run --exports-dir ./exports --out report
@@ -55,13 +74,13 @@ column. A native crawl cannot raise it, because the parser has already resolved
 browser performs. Relative canonicals are legal and usually work; they stop working the moment
 the page is served under a second base, which is exactly when nobody is looking.
 
-**5. Scan the run before quoting a number from it.**
+**6. Scan the run before quoting a number from it.**
 
 ```bash
 seohead log-scan --run ./run
 ```
 
-**6. Hand it over.**
+**7. Hand it over.**
 
 ```bash
 seohead report-build --audit ./run/audit.json --format md --out ./canonicals.md

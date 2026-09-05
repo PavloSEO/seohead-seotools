@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from ..config import apply_profile, load_config
+from ..config import apply_profile, load_config, validate_config
 from .aggregate import aggregate
 from .context import AuditContext
 from .heuristics import run_heuristics
@@ -95,6 +95,10 @@ def run_audit(
     # from robots.txt (unless the user pinned --sitemap or toggled live-recheck).
     if input_mode in CRAWL_MODES and live_recheck is None and not sitemap_url:
         cfg.setdefault("live_recheck", {})["enabled"] = True
+    # Every override above is final by this point — validate before anything is
+    # crawled or parsed, so a bad config fails loudly instead of shipping a
+    # corrupted score (issue #211).
+    validate_config(cfg)
 
     # --- obtain the exports directory ------------------------------------
     sf_version: str | None = None
@@ -150,6 +154,10 @@ def run_audit(
         "profile": cfg.get("profile"),
         "exports_used": exports.found,
         "exports_missing": exports.missing,
+        # A cp1251 export decodes with no exception (#160) -- the codec is the
+        # only place left for a reviewer to spot a mojibake'd title instead of
+        # trusting that a successful run read the bytes correctly.
+        "exports_encodings": exports.encodings,
     }
     result = aggregate(ctx, run_meta, size_stats, sitemap_summary)
     log(

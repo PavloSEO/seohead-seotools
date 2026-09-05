@@ -126,6 +126,109 @@ def test_xpath_scope_without_a_selector_is_rejected():
         )
 
 
+# ── malformed selectors are rejected, not silently empty (issue #232) ────────
+
+
+def test_malformed_css_selector_is_rejected_not_treated_as_no_match():
+    """A typo'd selector must never reach the corpus scan: an always-empty
+    target from a syntax error is indistinguishable from a legitimately empty
+    one, and not_contains would otherwise report every fetched page as
+    lacking the term despite no filter ever having run successfully."""
+    documents = [
+        _doc("https://example.com/a", html="<p>banner</p>"),
+        _doc("https://example.com/b", html="<p>banner</p>"),
+    ]
+    with pytest.raises(ValueError, match="invalid CSS selector"):
+        run_filter(
+            documents,
+            {
+                "mode": "not_contains",
+                "scope": "element",
+                "selector": "div[",
+                "query": "banner",
+            },
+        )
+
+
+def test_malformed_xpath_expression_is_rejected_not_treated_as_no_match():
+    documents = [_doc("https://example.com/a", html="<p>banner</p>")]
+    with pytest.raises(ValueError, match="invalid XPath expression"):
+        run_filter(
+            documents,
+            {
+                "mode": "not_contains",
+                "scope": "xpath",
+                "selector": "//h1[",
+                "query": "banner",
+            },
+        )
+
+
+def test_malformed_regex_is_rejected_not_treated_as_no_match():
+    documents = [_doc("https://example.com/a", html="banner text")]
+    with pytest.raises(ValueError, match="invalid regex"):
+        run_filter(
+            documents,
+            {"mode": "not_contains", "kind": "regex", "scope": "raw", "query": "banner("},
+        )
+
+
+def test_valid_selector_with_zero_matches_is_still_a_real_absence_finding():
+    """A syntactically valid selector that simply never matches anything on the
+    corpus must still work exactly as before -- only a broken selector is
+    rejected, not a selector that legitimately finds nothing."""
+    documents = [
+        _doc("https://example.com/a", html="<p>banner</p>"),
+        _doc("https://example.com/b", html="<p>banner</p>"),
+    ]
+    result = run_filter(
+        documents,
+        {
+            "mode": "not_contains",
+            "scope": "element",
+            "selector": ".nonexistent-class",
+            "query": "banner",
+        },
+    )
+    assert result["count"] == 2
+    assert set(result["matching_pages"]) == {"https://example.com/a", "https://example.com/b"}
+
+
+# ── XPath element scope keeps nested and tail text (issue #233) ─────────────
+
+
+def test_xpath_element_scope_includes_nested_inline_markup():
+    """//h1 over <h1><strong>Special</strong> Title</h1> must match "Special
+    Title": node.text alone covers only the text before the first child and
+    silently drops everything nested or trailing after it."""
+    documents = [_doc("https://example.com/a", html="<h1><strong>Special</strong> Title</h1>")]
+    result = run_filter(
+        documents,
+        {"mode": "contains", "scope": "xpath", "selector": "//h1", "query": "Special Title"},
+    )
+    assert result["matching_pages"] == ["https://example.com/a"]
+
+
+def test_xpath_element_scope_includes_tail_text_after_a_nested_tag():
+    documents = [_doc("https://example.com/a", html="<p>Hello <b>world</b> and more</p>")]
+    result = run_filter(
+        documents,
+        {"mode": "contains", "scope": "xpath", "selector": "//p", "query": "and more"},
+    )
+    assert result["matching_pages"] == ["https://example.com/a"]
+
+
+def test_xpath_text_node_result_is_still_the_plain_string():
+    """A //h1/text() result already returns a plain string per node; the
+    element-node fix above must not change that path."""
+    documents = [_doc("https://example.com/a", html="<h1>Plain</h1>")]
+    result = run_filter(
+        documents,
+        {"mode": "contains", "scope": "xpath", "selector": "//h1/text()", "query": "Plain"},
+    )
+    assert result["matching_pages"] == ["https://example.com/a"]
+
+
 def test_representation_reports_static_or_rendered():
     static_docs = [_doc("https://example.com/a", html="<p>x</p>", rendered=False)]
     rendered_docs = [_doc("https://example.com/a", html="<p>x</p>", rendered=True)]

@@ -64,10 +64,13 @@ they are allowed by default unless a general ``Disallow`` rule applies.
 ```bash
 seohead llms-txt-check --url https://example.com --brand "SiteName"
 ```
-There are 9 checkpoints: an H1, ≥3 sections, ≥3 links, a brand/category mention,
+There are 9 checkpoints: an H1 (heading presence only, unless ``--brand`` is given, in
+which case the heading must name it), ≥3 sections, ≥3 links, a brand/category mention,
 product/proof/docs pages, and a size of ≤60 KB. The result is a 0–10 score plus a letter
-grade. A missing file produces ``ok: False`` and the finding “the website does not provide
-AI with ready-to-use context.” ``--brand`` checks whether the brand name is mentioned.
+grade. A 404 is a *measured* absence — ``ok: true``, ``exists: false``, score 0 — not a
+tool failure; only a genuine measurement failure (401/403/429/5xx, or a network error)
+returns ``ok: false``, because those never revealed whether the file exists at all.
+``--brand`` also checks whether the brand name is mentioned anywhere in the document.
 
 **Step 3. Content citability.** The formal scorer uses 4 dimensions worth 25 points each:
 ```bash
@@ -93,14 +96,19 @@ a letter grade.
   things (a manifest for models vs the actual page prose) — do not let a good llms.txt score mask
   pages that are not self-contained/citable, and do not let poor citability imply llms.txt is
   useless.
-- **Missing llms.txt.** This is a finding (`ok: False`), not a hard failure — weigh whether it is
-  worth recommending given the site's actual GEO ambitions (a small local-business site may not
-  need one) rather than treating it as universally mandatory.
+- **Missing llms.txt.** A confirmed-absent file (`ok: true`, `exists: false`) is a finding, not a
+  hard failure — weigh whether it is worth recommending given the site's actual GEO ambitions (a
+  small local-business site may not need one) rather than treating it as universally mandatory.
+  A 401/403/429/5xx result (`ok: false`) is a different situation: the check never measured
+  whether the file exists, so report it as unavailable and re-run rather than recommending
+  anything about presence or absence.
 
 ## Definition of done
 - [ ] `ai-bots-check` results are broken out `by_type` (training/retrieval/user), not reported as
   one flat allow/block list.
-- [ ] `llms-txt-check` results name each of the 9 checkpoints that failed, plus the score/grade.
+- [ ] `llms-txt-check` results name each of the 9 checkpoints that failed, plus the score/grade —
+  or, when the result is `exists: false` (a measured 404) or `ok: false` (an unmeasured
+  401/403/429/5xx/network error), that distinction is reported instead of a checkpoint list.
 - [ ] `citability-check` was run on 2–3 representative templates, each with its own score and
   per-dimension breakdown.
 - [ ] Every recommendation states which of the three levers (crawler access / llms.txt /
@@ -126,8 +134,10 @@ few seconds each, no paid API involved.
 
 ## Graceful Degradation
 If robots.txt cannot be retrieved, ``ai-bots-check`` returns an error; do not crash. A
-missing llms.txt is a finding (``ok: False``), not a failure. ``robots_text`` can be
-provided offline through ``--input``.
+confirmed-missing llms.txt (a measured 404: ``ok: true``, ``exists: false``) is a
+finding, not a failure. An unmeasured llms.txt fetch (401/403/429/5xx, or a network
+error: ``ok: false``) is a genuine failure — report it as unavailable rather than as
+absence. ``robots_text`` can be provided offline through ``--input``.
 
 ## Integrations
 `robots-check` is the source of robots rules. `schema-graph` covers the content side,

@@ -161,3 +161,52 @@ def test_narrowing_the_comparable_side_does_not_invent_orphans(monkeypatch):
 
     assert out["summary"]["sitemap"]["in_sitemap_not_linked"] == []
     assert "SITEMAP_ORPHAN" not in out["summary"]["by_check"]
+
+
+# ── auto-discovery of more than one declared sitemap (#200) ─────────────────
+
+
+def test_auto_discovery_seeds_from_every_declared_sitemap(monkeypatch, tmp_path):
+    """robots.txt can declare independent sitemaps for different content (pages,
+    products, ...); auto-discovery must expand every one of them, not just the
+    first, and seed the crawl from their de-duplicated URL union."""
+    import json
+
+    import seohead.tools.robots as robots_tool
+
+    first = "https://example.com/sitemap-pages.xml"
+    second = "https://example.com/sitemap-products.xml"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        robots_tool, "check_robots", lambda url: {"ok": True, "sitemaps": [first, second]}
+    )
+
+    def fake_sitemap_crawl(url: str, concurrency: int = 3) -> dict:
+        calls.append(url)
+        loc = "https://example.com/page-a" if url == first else "https://example.com/product-b"
+        return {"urls": [{"loc": loc}]}
+
+    monkeypatch.setattr(sitemap_tool, "crawl", fake_sitemap_crawl)
+
+    seeds: list[str] = []
+
+    def fake_spider(*_a: object, **kw: object) -> SpiderResult:
+        seeds.extend(kw.get("seed_urls") or [])
+        result = SpiderResult()
+        result.pages = [
+            PageRecord(url="https://example.com/", status_code=200, content_type="text/html")
+        ]
+        result.seed_urls = list(kw.get("seed_urls") or [])
+        return result
+
+    monkeypatch.setattr("seohead.crawl.spider.crawl_site", fake_spider)
+
+    config_path = tmp_path / "crawl.json"
+    config_path.write_text(json.dumps({"sitemaps": {"auto_discover": True}}))
+
+    out = handlers.crawl_site(url="https://example.com/", config=str(config_path))
+
+    assert calls == [first, second]
+    assert seeds == ["https://example.com/page-a", "https://example.com/product-b"]
+    assert out["discovery"]["sitemap_urls"] == [first, second]
