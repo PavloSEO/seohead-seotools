@@ -293,7 +293,7 @@ def test_missing_audit_file_is_reported_clearly():
 def test_empty_audit_still_produces_a_report(tmp_path):
     """An audit with no findings is a valid short report, not an error."""
     result = build_report(
-        {"domain": "example.com", "findings": [], "pages": [], "summary": {}},
+        {"schema": SCHEMA, "domain": "example.com", "findings": [], "pages": [], "summary": {}},
         fmt="md",
         path=str(tmp_path / "e.md"),
     )
