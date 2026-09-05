@@ -3,6 +3,8 @@
 import json
 
 from seohead.tools import schema_build
+from seohead.tools.parser import parse_html
+from seohead.tools.schema_org import check_schema
 
 PRODUCT_HTML = """
 <html><head>
@@ -90,6 +92,37 @@ def test_breadcrumb_added_only_when_present_and_links_to_page():
     assert crumbs, "BreadcrumbList must be present in the graph"
     assert crumbs[0]["@type"] == "BreadcrumbList"
     assert _entity(r["suggested_graph"])["breadcrumb"]["@id"] == "#breadcrumb"
+
+
+def test_template_jsonld_is_absent_from_parser_validator_and_generator():
+    html = """<html><body>
+    <template>
+      <script type="application/ld+json">{bad JSON}</script>
+      <script type="application/ld+json">{
+        "@context": "https://schema.org", "@type": "BreadcrumbList",
+        "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Draft"}]
+      }</script>
+    </template>
+    <main><h1>Published page</h1></main>
+    <script type="application/ld+json">{
+      "@context": "https://schema.org", "@type": "WebPage", "name": "Published page"
+    }</script>
+    </body></html>"""
+
+    parsed = parse_html(html, "https://example.test/page")
+    checked = check_schema(html=html)
+    built = schema_build.build_schema(
+        html=html, url="https://example.test/page", override_type="WebPage"
+    )
+
+    assert parsed["jsonld"] == [
+        {"@context": "https://schema.org", "@type": "WebPage", "name": "Published page"}
+    ]
+    assert parsed["jsonld_invalid"] == []
+    assert checked["blocks"] == checked["blocks_found"] == 1
+    assert checked["parse_errors"] == []
+    assert built["diff_vs_existing"]["entity_diff"]["no_jsonld"] is False
+    assert "breadcrumb" not in _entity(built["suggested_graph"])
 
 
 def test_no_organization_node_when_no_org_signals():
