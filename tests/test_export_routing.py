@@ -52,6 +52,11 @@ EXPORTS = {
     "hreflang_all.csv": None,
     "hreflang_contains_hreflang.csv": None,
     "all_outlinks.csv": None,
+    # A per-type Internal tab (Internal:HTML, Internal:Images, ...) is missing
+    # every row of the other types, so it must never satisfy the required
+    # Internal:All master table (#209).
+    "internal_html.csv": None,
+    "internal-all.csv": "internal_all",
 }
 
 

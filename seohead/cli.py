@@ -200,6 +200,8 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "crawl-site":
         if args.url:
             kw["url"] = args.url
+        if getattr(args, "urls", None):
+            kw["urls"] = _split_list(args.urls)
         for flag in (
             "config",
             "max_urls",
@@ -215,7 +217,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "sitemap-crawl":
         if args.url:
             kw["url"] = args.url
-        if args.concurrency:
+        if args.concurrency is not None:
             kw["concurrency"] = args.concurrency
     elif cmd == "images-download":
         if args.urls:
@@ -240,7 +242,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "keywords-cluster":
         pass  # keywords/algorithm come from --input JSON
     elif cmd == "duplicate-check":
-        if getattr(args, "threshold", None):
+        if getattr(args, "threshold", None) is not None:
             kw["threshold"] = args.threshold
         if getattr(args, "fingerprints", False):
             kw["with_fingerprints"] = True
@@ -257,9 +259,9 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["url"] = args.url
         if getattr(args, "urls", None):
             kw["urls"] = _split_list(args.urls)
-        if getattr(args, "limit", None):
+        if getattr(args, "limit", None) is not None:
             kw["limit"] = args.limit
-        if getattr(args, "concurrency", None):
+        if getattr(args, "concurrency", None) is not None:
             kw["concurrency"] = args.concurrency
         if getattr(args, "render", False):
             kw["render"] = True
@@ -290,7 +292,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["url"] = args.url
         if getattr(args, "extra", None):
             kw["extra"] = _split_list(args.extra)
-        if getattr(args, "limit", None):
+        if getattr(args, "limit", None) is not None:
             kw["limit"] = args.limit
         if getattr(args, "render", False):
             kw["render"] = True
@@ -307,12 +309,12 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             donors += _read_donors(args.donors_file)
         if donors:
             kw["donors"] = donors
-        if args.concurrency:
+        if args.concurrency is not None:
             kw["concurrency"] = args.concurrency
     if cmd == "keywords-expand":
         if args.phrase:
             kw["phrase"] = args.phrase
-        if args.limit:
+        if args.limit is not None:
             kw["limit"] = args.limit
         if getattr(args, "regions", None):
             kw["regions"] = _split_list(args.regions)
@@ -326,7 +328,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     if cmd == "keywords-exact":
         if getattr(args, "keywords", None):
             kw["keywords"] = _split_list(args.keywords)
-        if getattr(args, "region", None):
+        if getattr(args, "region", None) is not None:
             kw["region"] = args.region
         if getattr(args, "no_wait", False):
             kw["wait"] = False
@@ -337,7 +339,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["queries"] = _split_list(args.queries)
         if getattr(args, "region", None):
             kw["region"] = str(args.region)
-        if getattr(args, "top", None):
+        if getattr(args, "top", None) is not None:
             kw["top"] = args.top
     if cmd == "google-keywords":
         if getattr(args, "keywords", None):
@@ -346,9 +348,9 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             value = getattr(args, name, None)
             if value:
                 kw[name] = value
-        if getattr(args, "location_code", None):
+        if getattr(args, "location_code", None) is not None:
             kw["location_code"] = args.location_code
-        if getattr(args, "limit", None):
+        if getattr(args, "limit", None) is not None:
             kw["limit"] = args.limit
         if getattr(args, "difficulty", False):
             kw["difficulty"] = True
@@ -357,9 +359,9 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             value = getattr(args, name, None)
             if value:
                 kw[name] = value
-        if getattr(args, "location_code", None):
+        if getattr(args, "location_code", None) is not None:
             kw["location_code"] = args.location_code
-        if getattr(args, "depth", None):
+        if getattr(args, "depth", None) is not None:
             kw["depth"] = args.depth
     if cmd == "metrika-setup" and getattr(args, "counter", None):
         kw["counter_id"] = args.counter
@@ -370,7 +372,7 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             value = getattr(args, name, None)
             if value:
                 kw[name] = value
-        if getattr(args, "limit", None):
+        if getattr(args, "limit", None) is not None:
             kw["limit"] = args.limit
         if getattr(args, "paginate", False):
             kw["paginate"] = True
@@ -470,6 +472,11 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "(performs network lookups)",
         )
     if cmd == "crawl-site":
+        _source_flag(
+            sub,
+            "--urls",
+            help="comma-separated URL list: list mode, no discovery",
+        )
         sub.add_argument("--max-urls", type=int, help="URL budget (default 200)")
         sub.add_argument("--out-dir", help="directory for pages.jsonl and audit.json")
         sub.add_argument("--config", help="path to a crawler config file (JSON)")
@@ -602,17 +609,21 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         )
         sub.add_argument("--out", help="output file path")
     if cmd == "log-scan":
-        _source_flag(
-            sub, "--run", required=True, help="directory holding audit.json and/or pages.jsonl"
-        )
+        # Not `required=True`: that would reject a JSON-only `--input '{"run": ...}'` call before
+        # _build_kwargs ever runs, since argparse enforces required flags ahead of dispatch. The
+        # handler already raises a clear error when `run` is missing from both sources (#218).
+        _source_flag(sub, "--run", help="directory holding audit.json and/or pages.jsonl")
         sub.add_argument(
             "--images-dir",
             help="an images-download output directory, so a recorded size can be compared "
             "against the file on disk",
         )
     if cmd == "compare-crawls":
-        _source_flag(sub, "--before", required=True, help="path to the earlier audit.json")
-        _source_flag(sub, "--after", required=True, help="path to the later audit.json")
+        # See the log-scan comment above: `required=True` here would reject a JSON-only
+        # `--input '{"before": ..., "after": ...}'` call the same way (#218). compare_crawls
+        # already raises a clear error when either side is missing.
+        _source_flag(sub, "--before", help="path to the earlier audit.json")
+        _source_flag(sub, "--after", help="path to the later audit.json")
     if cmd == "regions-check":
         _source_flag(sub, "--url", help="any site page, usually the home page")
         sub.add_argument(

@@ -1,9 +1,15 @@
 """Unit tests for the pure (network-free) core functions."""
 
+import json
+from pathlib import Path
+
+import httpx
+
 from seohead.tools import (
     clusterer,
     downloader,
     hreflang,
+    logscan,
     optimizer,
     parser,
     redirects,
@@ -152,11 +158,158 @@ def test_compute_resize_fits_and_no_upscale():
     assert optimizer.compute_resize(400, 300, {"max_width": 1000}) == (400, 300)
 
 
+def _svg_visible_text(svg_text: str) -> list[str]:
+    from lxml import etree
+
+    root = etree.fromstring(svg_text.encode("utf-8"))
+    return ["".join(node.itertext()) for node in root.xpath('//*[local-name()="text"]')]
+
+
+def test_minify_svg_preserves_tspan_gap_and_xml_space_preserve():
+    # A bare regex whitespace collapse cannot tell a layout indent from the single
+    # space that is the only thing separating two <tspan>s, or from repeated spaces
+    # an author marked significant with xml:space="preserve" (#229).
+    source = (
+        '<svg xmlns="http://www.w3.org/2000/svg"><text><tspan>A</tspan> '
+        '<tspan>B</tspan></text><text xml:space="preserve">C  D</text></svg>'
+    )
+    assert _svg_visible_text(source) == ["A B", "C  D"]
+    assert _svg_visible_text(optimizer.minify_svg(source)) == ["A B", "C  D"]
+
+
+def test_optimize_files_preserves_svg_visible_text(tmp_path):
+    source_text = (
+        '<svg xmlns="http://www.w3.org/2000/svg"><text><tspan>A</tspan> '
+        '<tspan>B</tspan></text><text xml:space="preserve">C  D</text></svg>'
+    )
+    source = tmp_path / "source.svg"
+    source.write_text(source_text, encoding="utf-8")
+
+    result = optimizer.optimize_files([str(source)], {"out_dir": str(tmp_path / "out")})
+    output = Path(result["results"][0]["out"]).read_text(encoding="utf-8")
+
+    assert result["ok"] is True
+    assert _svg_visible_text(output) == _svg_visible_text(source_text)
+
+
 def test_downloader_host_only_url_gets_content_type_extension(tmp_path):
     target = downloader.target_path(
         "https://example.com/", str(tmp_path), "domain-path", "image/gif"
     )
     assert target == str(tmp_path / "example.com" / "example.com-image.gif")
+
+
+# ── downloader (network-free download_images loop) ───────────────────────────
+
+_SYNTHETIC_PNG = b"\x89PNG\r\n\x1a\nsynthetic-image"
+
+
+class _FakeStreamResponse:
+    status_code = 200
+
+    def __init__(self, url: str, body: bytes):
+        self.headers = {"content-type": "image/png"}
+        self.url = httpx.URL(url)
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def close(self):
+        pass
+
+    def iter_bytes(self):
+        yield self._body
+
+
+class _FakeStreamClient:
+    def __init__(self, request_headers: list[dict], final_url: str, body: bytes):
+        self.request_headers = request_headers
+        self.final_url = final_url
+        self._body = body
+
+    def stream(self, _method, _url, *, headers):
+        self.request_headers.append(dict(headers))
+        return _FakeStreamResponse(self.final_url, self._body)
+
+    def close(self):
+        pass
+
+
+def _patch_downloader_transport(monkeypatch, url, body=_SYNTHETIC_PNG):
+    """Replace the shared HTTP factory with a fake streaming client.
+
+    Returns the two lists the fake records into: client-construction headers and
+    per-request headers, so a test can assert on either without opening a socket.
+    """
+    factory_headers: list[dict] = []
+    request_headers: list[dict] = []
+
+    def fake_http_client(_timeout, **kwargs):
+        factory_headers.append(dict(kwargs["headers"]))
+        return _FakeStreamClient(request_headers, url, body), False
+
+    monkeypatch.setattr(downloader, "http_client", fake_http_client)
+    return factory_headers, request_headers
+
+
+def test_download_images_writes_manifest_log_scan_can_read(tmp_path, monkeypatch):
+    url = "https://assets.example.test/rendered-image"
+    _patch_downloader_transport(monkeypatch, url)
+    images = tmp_path / "images"
+
+    result = downloader.download_images([url], str(images), {"retries": 0})[0]
+
+    manifest = json.loads((images / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "images": [
+            {
+                "url": url,
+                "path": "assets.example.test/rendered-image.png",
+                "bytes": len(_SYNTHETIC_PNG),
+            }
+        ]
+    }
+
+    # A deliberately wrong recorded size must surface once log-scan can find the file.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "pages.jsonl").write_text(
+        json.dumps({"url": url, "size_bytes": len(_SYNTHETIC_PNG) + 1}) + "\n",
+        encoding="utf-8",
+    )
+    scan = logscan.scan(logscan.load_run(str(run_dir), str(images)))
+    assert scan["read"]["downloaded_files"] == 1
+    assert [a["rule"] for a in scan["anomalies"]] == ["size_matches_file"]
+    assert result["ok"] and not result.get("skipped")
+
+
+def test_download_images_skip_existing_reuses_manifest_for_extensionless_url(tmp_path, monkeypatch):
+    url = "https://assets.example.test/rendered-image"
+    _, request_headers = _patch_downloader_transport(monkeypatch, url)
+    images = tmp_path / "images"
+
+    first = downloader.download_images([url], str(images), {"retries": 0})[0]
+    second = downloader.download_images([url], str(images), {"retries": 0})[0]
+
+    assert len(request_headers) == 1  # the second call made no request at all
+    assert second["skipped"] is True
+    assert second["path"] == first["path"]
+    assert not (images / "rendered-image-1.png").exists()
+
+
+def test_download_images_sends_the_caller_user_agent(tmp_path, monkeypatch):
+    url = "https://assets.example.test/rendered-image"
+    factory_headers, request_headers = _patch_downloader_transport(monkeypatch, url)
+    images = tmp_path / "images"
+
+    downloader.download_images([url], str(images), {"retries": 0, "user_agent": "AuditAgent/1.0"})
+
+    assert factory_headers[0]["User-Agent"] == "AuditAgent/1.0"
+    assert request_headers[0]["User-Agent"] == "AuditAgent/1.0"
 
 
 # ── clusterer (local, needs sklearn) ─────────────────────────────────────────

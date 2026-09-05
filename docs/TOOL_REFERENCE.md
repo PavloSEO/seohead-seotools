@@ -82,14 +82,21 @@ Crawl a site from a start URL by following links, or fetch an explicit ``urls`` 
 
 **Behavior and failure modes**
 
+Pass ``urls`` instead of ``url`` for list mode: fetch exactly that set,
+depth 0, no link discovery -- the migration-audit shape (a redirect map,
+a Search Console export). ``max_depth`` and ``concurrency`` have nothing
+to discover in that mode and are ignored.
+
 ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
 anyway, and report what a compliant crawler would have missed) or
-"ignore" (do not fetch it at all). ``concurrency`` is a per-origin
-ceiling the adaptive throttle grows into, not a fixed thread count.
-``sitemap`` seeds the crawl from a sitemap's declared URLs in addition to
-following links from ``url``, and reconciles the two sources (declared
-vs. observed). ``config`` is a path to a crawler config file (JSON) on
-this machine, the same file ``crawl-site --config`` reads.
+"ignore" (do not fetch it at all) -- applied in list mode too, and named
+in the result's ``discovery.directive_policy``, not only enforced
+silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
+grows into, not a fixed thread count. ``sitemap`` seeds the crawl from a
+sitemap's declared URLs in addition to following links from ``url``, and
+reconciles the two sources (declared vs. observed). ``config`` is a path
+to a crawler config file (JSON) on this machine, the same file
+``crawl-site --config`` reads.
 
 ### `crawl-describe-settings`
 

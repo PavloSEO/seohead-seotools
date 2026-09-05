@@ -154,6 +154,15 @@ def check_redirect_type(ctx: AuditContext) -> None:
 # 7.C — title & meta description
 # --------------------------------------------------------------------------
 def check_titles(ctx: AuditContext) -> None:
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
+    # An absent Title column and a present-but-blank cell both read as `None` off the
+    # record, but they are different facts: one means the export never carried the
+    # measurement, the other that the page really has no title. Reporting the former as
+    # TITLE_MISSING manufactures a sitewide finding out of a column the run never had (#205).
+    if ctx.internal_df is None or find_column(ctx.internal_df, INTERNAL_FIELD_MAP["title"]) is None:
+        ctx.skip("TITLE_MISSING", "no Title column in Internal:All")
+        return
     t = ctx.thresholds
     for page in ctx.indexable_html_pages():
         rec = _rec(page)
@@ -188,6 +197,16 @@ def check_titles(ctx: AuditContext) -> None:
 
 
 def check_descriptions(ctx: AuditContext) -> None:
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
+    # Same distinction as check_titles (#205): an absent Meta Description column is not
+    # evidence that every page lacks one.
+    if (
+        ctx.internal_df is None
+        or find_column(ctx.internal_df, INTERNAL_FIELD_MAP["meta_description"]) is None
+    ):
+        ctx.skip("DESC_MISSING", "no Meta Description column in Internal:All")
+        return
     t = ctx.thresholds
     for page in ctx.indexable_html_pages():
         rec = _rec(page)
@@ -217,13 +236,25 @@ def check_descriptions(ctx: AuditContext) -> None:
 # 7.D — headings (incl. multiple H1)
 # --------------------------------------------------------------------------
 def check_headings(ctx: AuditContext) -> None:
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
     t = ctx.thresholds
     require_h2 = ctx.requirements.get("require_h2", False)
+    # Same distinction as check_titles (#205): an absent H1-1 column means the run never
+    # measured any page's H1, not that every page is missing one. H1_MULTIPLE/H1_TOO_LONG/
+    # H2_MISSING all read the same `h1` value, so they stay correctly silent on their own —
+    # only H1_MISSING turns "not measured" into a false page finding.
+    has_h1_column = (
+        ctx.internal_df is not None
+        and find_column(ctx.internal_df, INTERNAL_FIELD_MAP["h1"]) is not None
+    )
+    if not has_h1_column:
+        ctx.skip("H1_MISSING", "no H1-1 column in Internal:All")
     for page in ctx.indexable_html_pages():
         rec = _rec(page)
         h1 = rec.get("h1")
         h1_2 = rec.get("h1_2")
-        if not h1:
+        if has_h1_column and not h1:
             ctx.add("H1_MISSING", target_url=page.url)
         if h1_2:
             # Preserve each H1 value so reports identify which headings caused
@@ -434,7 +465,11 @@ def check_url_extra(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         url = page.url
         path = _path_of(url)
-        if "_" in path:
+        # An underscore is an underscore whether it is written literally or as its
+        # unreserved percent-escape (%5F/%5f); NON_ASCII and UPPERCASE already decode
+        # before judging the path (see _decoded_path), so this must too or an encoded
+        # spelling of an otherwise identical path escapes the check (#207).
+        if "_" in _decoded_path(url):
             ctx.add("URL_UNDERSCORES", target_url=url)
         if "//" in path:
             ctx.add("URL_MULTIPLE_SLASHES", target_url=url)

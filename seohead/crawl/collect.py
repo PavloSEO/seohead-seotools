@@ -31,12 +31,16 @@ from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import MAX_DELAY_S, Throttle
 from seohead.recon.net import UA, BlockedRedirectError, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
+from seohead.tools.robots import is_allowed, match_path, parse_robots
 
 SCHEMA_VERSION = "crawl.v1"
 
 MAX_URLS_CEILING = 10_000
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 DEFAULT_TIMEOUT_S = 15.0
+# Matches seohead.tools.redirects's own hop cap; a chain that has not landed by
+# then is a misconfiguration (or a loop), not a slow site.
+MAX_REDIRECT_CHAIN_HOPS = 10
 
 
 @dataclass
@@ -121,6 +125,12 @@ class PageRecord:
     # populations in one column would compare numbers that were never
     # measured the same way.
     representation: str = "static"
+    # Populated only when list mode is asked to resolve a redirect past its first hop (see
+    # discovery.resolve_redirect_destination). Empty means either this page was not a redirect
+    # or the option was off -- not "resolved to nowhere", which is what an empty final_url next
+    # to a non-empty redirect_url would wrongly suggest.
+    redirect_chain: list[dict[str, Any]] = field(default_factory=list)
+    final_url: str = ""
 
     @property
     def is_html(self) -> bool:
@@ -145,6 +155,11 @@ class CrawlResult:
     # True exactly when the run used mode="replay" — see seohead.crawl.cache. A replay run may
     # still contain live fetches for URLs never cached before; per-page cache_status says which.
     cache_replay: bool = False
+    # URLs robots.txt disallowed for the configured token, whether or not the policy actually
+    # kept them out of pages (see robots_policy on collect_urls) — spider.SpiderResult carries
+    # the same field for the same reason: what would be blocked must be visible under
+    # report_only too, not only when it changes what was fetched.
+    robots_blocked: list[str] = field(default_factory=list)
 
 
 def _text_of(value: Any) -> str:
@@ -513,6 +528,96 @@ def _classify_fetch_error(exc: BaseException) -> str:
     return ""
 
 
+def _robots_blocks(
+    url: str,
+    *,
+    robots_cache: dict[tuple[str, str], Any],
+    client: Any,
+    fetcher: Callable[[str], Any] | None,
+    user_agent: str,
+    robots_token: str,
+) -> bool:
+    """True when the URL's host disallows it for ``robots_token``.
+
+    List mode can touch many hosts in one run, so robots.txt is cached per
+    host as it is encountered rather than resolved once up front the way a
+    single-site crawl does (see ``seohead.crawl.spider._fetch_robots``) —
+    there is no one site to fetch it against ahead of time. A host whose
+    robots.txt cannot be read is treated as unrestricted: unlike a single-site
+    crawl, list mode has no whole-run "unavailable means stop", because every
+    URL here is independent by construction.
+    """
+    parts = urlsplit(url)
+    key = (parts.scheme, parts.netloc)
+    if key not in robots_cache:
+        robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+        text = ""
+        try:
+            response = (
+                fetcher(robots_url)
+                if fetcher
+                else client.get(robots_url, headers={"User-Agent": user_agent or UA})
+            )
+            status = getattr(response, "status_code", None)
+            if status is not None and status < 300:
+                text = getattr(response, "text", "") or ""
+        except Exception:
+            text = ""  # unreadable robots.txt: treated as no restrictions, same as a 4xx
+        robots_cache[key] = parse_robots(text)
+    return not is_allowed(robots_cache[key], match_path(url), robots_token or "*")
+
+
+def _resolve_redirect_destination(
+    record: PageRecord,
+    *,
+    client: Any,
+    fetcher: Callable[[str], Any] | None,
+    throttle: Throttle,
+    extra_headers: dict[str, str] | None,
+    user_agent: str,
+    max_response_bytes: int,
+    retry_on_timeout: int,
+    parse_options: dict[str, Any] | None,
+    cache: ResponseCache | None,
+    sleeper: Callable[[float], None],
+) -> None:
+    """Follow ``record``'s redirect past its first hop to where it actually lands.
+
+    ``record`` already carries hop one: list mode always fetches the URL as
+    given. This only continues past it — a migration audit needs the
+    destination a redirect map's row lands on, not merely confirmation that a
+    hop exists — stopping at ``MAX_REDIRECT_CHAIN_HOPS`` or a repeated URL (a
+    loop) rather than trusting the chain to end on its own. Depth stays
+    untouched: walking a redirect is not link discovery, so ``record`` still
+    reads ``crawl_depth == 0`` once this returns.
+    """
+    visited = {record.url}
+    current = record.redirect_url
+    chain: list[dict[str, Any]] = []
+    while current and current not in visited and len(chain) < MAX_REDIRECT_CHAIN_HOPS:
+        visited.add(current)
+        hop, _ = fetch_one(
+            current,
+            client=client,
+            fetcher=fetcher,
+            throttle=throttle,
+            extra_headers=extra_headers,
+            user_agent=user_agent,
+            max_response_bytes=max_response_bytes,
+            retry_on_timeout=retry_on_timeout,
+            parse_options=parse_options,
+            cache=cache,
+            wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
+        )
+        chain.append({"url": hop.url, "status_code": hop.status_code, "error": hop.error})
+        if not hop.redirect_url:
+            break
+        current = hop.redirect_url
+    record.redirect_chain = chain
+    if chain:
+        record.final_url = chain[-1]["url"]
+
+
 def collect_urls(
     urls: Iterable[str],
     *,
@@ -535,6 +640,9 @@ def collect_urls(
     cache: ResponseCache | None = None,
     extra_request_headers: dict[str, str] | None = None,
     adaptive: bool = True,
+    robots_policy: str = "ignore",
+    robots_token: str = "*",
+    resolve_redirect_destination: bool = False,
 ) -> CrawlResult:
     """Fetch an explicit list of URLs in the order given.
 
@@ -549,6 +657,17 @@ def collect_urls(
     wall-clock budget for the whole call; 0 means none. ``cache``, when given, is checked before
     the delay is applied, so a hit never waits for a delay slot it did not need — see
     ``fetch_one``.
+
+    ``robots_policy`` defaults to ``"ignore"`` here, not to ``"respect"`` the
+    way a fresh crawl config resolves it: list mode's very reason to exist is
+    checking exactly the URLs you handed it, so silently applying the
+    site-wide default the moment nobody says otherwise would be its own kind
+    of silent policy change. ``seohead.servers.handlers.crawl_site`` passes
+    the configured ``robots.policy`` explicitly, which is what makes the
+    policy "whatever the configuration says" rather than hard-coded either
+    way — see #21. ``"respect"`` drops a disallowed URL from ``pages``
+    entirely (into ``robots_blocked`` instead); ``"report_only"`` fetches it
+    anyway and only records that it would have been blocked.
     """
     limit = max(1, min(int(max_urls), MAX_URLS_CEILING))
     result = CrawlResult()
@@ -556,6 +675,7 @@ def collect_urls(
     started = clock()
 
     seen: set[str] = set()
+    robots_cache: dict[tuple[str, str], Any] = {}
     with contextlib.ExitStack() as stack:
         handle = None
         if out_path:
@@ -593,6 +713,18 @@ def collect_urls(
                 continue
             seen.add(url)
 
+            if robots_policy != "ignore" and _robots_blocks(
+                url,
+                robots_cache=robots_cache,
+                client=client,
+                fetcher=fetcher,
+                user_agent=user_agent,
+                robots_token=robots_token,
+            ):
+                result.robots_blocked.append(url)
+                if robots_policy == "respect":
+                    continue  # report_only still fetches it below
+
             host = (urlsplit(url).hostname or "").lower()
             # http.headers goes on every request; a credential is bound to one host.
             extra_headers = dict(extra_request_headers or {})
@@ -612,6 +744,20 @@ def collect_urls(
                 cache=cache,
                 wait=(lambda: sleeper(throttle.delay)) if throttle.delay else None,
             )
+            if resolve_redirect_destination and record.redirect_url:
+                _resolve_redirect_destination(
+                    record,
+                    client=client,
+                    fetcher=fetcher,
+                    throttle=throttle,
+                    extra_headers=extra_headers,
+                    user_agent=user_agent,
+                    max_response_bytes=max_response_bytes,
+                    retry_on_timeout=retry_on_timeout,
+                    parse_options=parse_options,
+                    cache=cache,
+                    sleeper=sleeper,
+                )
             result.pages.append(record)
             _write(handle, record)
 

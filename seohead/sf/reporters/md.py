@@ -134,6 +134,19 @@ def write_markdown(result: AuditResult, path: str) -> str:
             w(f"| `{sk['id']}` | {_esc(sk['reason'])} |")
         w("")
 
+    # A disabled check is an operator's own choice, not missing evidence, but
+    # it must still be visible here rather than passing as a clean result
+    # (issue #177).
+    disabled = run.get("checks_disabled", [])
+    if disabled:
+        w("## Appendix: disabled checks")
+        w("")
+        w("| Check |")
+        w("|---|")
+        for d in disabled:
+            w(f"| `{d['id']}` |")
+        w("")
+
     text = "\n".join(lines) + "\n"
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:

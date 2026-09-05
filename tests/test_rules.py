@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+import csv
+
+from seohead.sf.core.audit import run_audit
 from tests.conftest import checks_in, issues_of
+
+_BASE_COLS = ["Address", "Content Type", "Status Code", "Indexability", "Canonical Link Element 1"]
+_ONPAGE_COLS = [*_BASE_COLS, "Title 1", "Meta Description 1", "H1-1"]
+_URL = "https://example.com/ok"
+
+
+def _audit_with(tmp_path, headers, row):
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(headers)
+        writer.writerow(row)
+    return run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
 
 
 def test_broken_4xx(result):
@@ -81,3 +98,57 @@ def test_path_of_strips_query_and_fragment():
 
     assert _path_of("https://example.com/Path/Page?Q=UPPER#Frag") == "/Path/Page"
     assert _path_of("https://example.com/") == "/"
+
+
+# --------------------------------------------------------------------------
+# #205 — an absent Title/Meta Description/H1 column is a skip, not a defect.
+# --------------------------------------------------------------------------
+def test_absent_title_desc_h1_columns_skip_instead_of_reporting_every_page(tmp_path):
+    row = [_URL, "text/html", "200", "Indexable", _URL]
+    res = _audit_with(tmp_path, _BASE_COLS, row)
+    relevant = {"TITLE_MISSING", "DESC_MISSING", "H1_MISSING"}
+    fired = {i.check for i in res.issues if i.check in relevant}
+    skipped = {s.id for s in res.skipped if s.id in relevant}
+    assert fired == set(), "the export never carried these columns, so no page can be faulted"
+    assert skipped == relevant
+
+
+def test_present_but_blank_title_desc_h1_still_fire(tmp_path):
+    row = [_URL, "text/html", "200", "Indexable", _URL, "", "", ""]
+    res = _audit_with(tmp_path, _ONPAGE_COLS, row)
+    relevant = {"TITLE_MISSING", "DESC_MISSING", "H1_MISSING"}
+    fired = {i.check for i in res.issues if i.target_url == _URL and i.check in relevant}
+    skipped = {s.id for s in res.skipped if s.id in relevant}
+    assert fired == relevant, "the column exists and the cell is genuinely blank"
+    assert skipped == set()
+
+
+def test_h1_multiple_still_fires_when_h1_1_column_is_absent(tmp_path):
+    """H1_MULTIPLE reads H1-2, a different column, and must not be silenced by H1-1's absence."""
+    headers = [*_BASE_COLS, "H1-2"]
+    row = [_URL, "text/html", "200", "Indexable", _URL, "Second Heading"]
+    res = _audit_with(tmp_path, headers, row)
+    assert _URL in {i.target_url for i in issues_of(res, "H1_MULTIPLE")}
+    assert "H1_MISSING" in {s.id for s in res.skipped}
+
+
+# --------------------------------------------------------------------------
+# #207 — URL_UNDERSCORES must catch a percent-encoded underscore too.
+# --------------------------------------------------------------------------
+def test_url_underscores_catches_percent_encoded_underscore(tmp_path):
+    headers = _ONPAGE_COLS
+    literal = "https://example.com/product_category"
+    encoded = "https://example.com/product%5Fcategory"
+    hyphenated = "https://example.com/product-category"
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(headers)
+        for url in (literal, encoded, hyphenated):
+            writer.writerow(
+                [url, "text/html", "200", "Indexable", url, "x" * 30, "d" * 80, "Heading"]
+            )
+    res = run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
+    flagged = {i.target_url for i in issues_of(res, "URL_UNDERSCORES")}
+    assert flagged == {literal, encoded}

@@ -4,6 +4,23 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix four export-selection and run-validation defects that let an audit present a result it
+  could not support (#209, #210, #215, #216). `internal_all`'s matcher required only the
+  filename token `internal`, so a partial per-type Internal tab (e.g. `internal_html.csv`,
+  missing every non-HTML row) satisfied the required Internal:All master export with no
+  missing-master warning; the matcher now also requires `all`. `discover_exports` picked the
+  first candidate for a logical key in sorted filename order when two files matched it (e.g.
+  `internal_all.csv` and `internal-all.csv` both present with different rows), silently
+  discarding the other with nothing in run metadata to say a choice was made; it now raises,
+  naming every candidate. `run_sf` picked the newest timestamped subfolder under `--out`
+  regardless of when it was created, so a re-run that exited 0 without writing anything (a
+  startup failure Screaming Frog does not report as a nonzero exit) could return a prior
+  invocation's exports as if they were fresh; it now compares against a snapshot taken before
+  the process starts and fails loudly when nothing new appears. `build_command` added
+  `--auth-config` only when the given profile file already existed, silently starting an
+  unauthenticated crawl on a typo'd or deleted path — appropriate for the optional
+  `seospiderconfig` default, wrong for a profile the caller explicitly requested; a missing
+  explicit `sf_cli.auth_config` now raises before Screaming Frog starts.
 - Fix two content-extraction defects in `seohead/tools/parser.py` (#138, #140). `collapse_whitespace`
   decoded HTML entities a second time on top of the single decode BeautifulSoup's lxml parser
   already performs on every `tag.get_text()`/`tag.get(attr)` value it hands to that helper — a

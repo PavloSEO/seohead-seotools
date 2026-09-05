@@ -31,6 +31,7 @@ def test_every_setting_is_classified_as_results_affecting_or_not():
         "limits.max_response_bytes",
         "output.dir",
         "output.write_pages_jsonl",
+        "output.write_decisions_jsonl",
         "speed.max_delay_seconds",
         # Changes only how fast a crawl runs, never what it finds: the spider
         # sorts batched results back into queue order before anything is
