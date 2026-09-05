@@ -31,6 +31,8 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
+from bs4 import BeautifulSoup
+
 from seohead.recon.net import UA, http_client, normalize_url, validate_url
 from seohead.tools import dualcrawl
 
@@ -235,10 +237,11 @@ def _links(html: str, base_url: str) -> set[str]:
 
     # Host comes from the page URL; links resolve against the document base.
     host = urlparse(normalize_url(base_url)).hostname or ""
-    resolve_from = document_base_url(html, base_url)
+    soup = BeautifulSoup(html, features="lxml")
+    resolve_from = document_base_url(soup, base_url)
     out: set[str] = set()
-    for href in re.findall(r'<a\b[^>]*href=["\']([^"\']+)', html, re.IGNORECASE):
-        href = href.strip()
+    for tag in soup.find_all("a", href=True):
+        href = str(tag["href"]).strip()
         if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
             continue
         absolute = urljoin(resolve_from, href).split("#")[0]

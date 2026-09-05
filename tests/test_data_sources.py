@@ -508,7 +508,8 @@ def test_task_items_survives_none_at_every_nesting_level():
     assert task_items({}) == []
     assert task_items({"tasks": None}) == []
     assert task_items({"tasks": [{"result": None}]}) == []
-    assert task_items({"tasks": [{"result": [{"items": None}]}]}) == [{"items": None}]
+    assert task_items({"tasks": [{"result": [{"items": None}]}]}) == []
+    assert task_items({"tasks": [{"result": [{"items": []}]}]}) == []
     assert task_items({"tasks": [{"result": [{"items": [{"keyword": "alpha"}]}]}]}) == [
         {"keyword": "alpha"}
     ]

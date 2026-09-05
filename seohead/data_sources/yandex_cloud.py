@@ -105,7 +105,25 @@ class _Base:
                 with urllib.request.urlopen(  # nosec B310
                     request, timeout=45, context=self.context
                 ) as response:
-                    return response.status, json.loads(response.read().decode("utf-8"))
+                    try:
+                        parsed = json.loads(response.read().decode("utf-8"))
+                    except ValueError:
+                        if billed:
+                            spend.record(
+                                SOURCE,
+                                operation or url,
+                                cost=0,
+                                unit="requests",
+                                items=1,
+                                extra={
+                                    "response_received": True,
+                                    "attempt_failed": "malformed_response",
+                                    "charge_uncertain": True,
+                                    "status": response.status,
+                                },
+                            )
+                        raise
+                    return response.status, parsed
             except urllib.error.HTTPError as exc:
                 raw = exc.read().decode("utf-8", "replace")
                 if exc.code in (429, 500, 503):  # Quota or transient failure: back off and retry.

@@ -208,7 +208,12 @@ class RobotsCheckFound(_RobotsCheckFoundOptional):
     sitemaps: list[str]
 
 
-class RobotsCheckError(TypedDict):
+class _RobotsCheckErrorOptional(TypedDict, total=False):
+    # An HTTP response was received but its rules could not be read.
+    status_code: int
+
+
+class RobotsCheckError(_RobotsCheckErrorOptional):
     """`robots.check_robots` when fetching robots.txt itself failed."""
 
     ok: Literal[False]
