@@ -323,16 +323,55 @@ def check_canonical_directives(ctx: AuditContext) -> None:
 # 7.F — content: thin & near-duplicates (exact dupes handled in groups)
 # --------------------------------------------------------------------------
 def check_content(ctx: AuditContext) -> None:
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
     t = ctx.thresholds
+    # An absent frame inventory and a page that frames nothing both read as
+    # falsy off the record, and they are different facts. Only a native crawl
+    # produces these columns; a Screaming Frog export has no iframe data at all,
+    # and a silent CONTENT_IN_IFRAME there would let "nobody looked" render as
+    # "nothing framed" -- with a THIN_CONTENT finding standing beside it that
+    # nothing checked against the framing explanation (#360).
+    frames_known = ctx.internal_df is not None and (
+        find_column(ctx.internal_df, INTERNAL_FIELD_MAP["content_frames_same_origin"]) is not None
+    )
+    if not frames_known:
+        ctx.skip("CONTENT_IN_IFRAME", "no iframe inventory in this evidence")
     for page in ctx.indexable_html_pages():
         rec = _rec(page)
         wc = rec.get("word_count")
         if wc is not None and wc < t["thin_content_words"]:
-            ctx.add(
-                "THIN_CONTENT",
-                target_url=page.url,
-                details={"word_count": wc, "threshold": t["thin_content_words"]},
-            )
+            # A page can be below the threshold for two different reasons, and
+            # they need opposite advice. If its content area frames a document
+            # the site itself serves, the copy exists -- it is simply somewhere
+            # a search engine credits to the framed URL rather than this one.
+            # Reporting that page as thin names the wrong cause and asks the
+            # operator to write copy they have already written (#360). Only a
+            # same-origin frame counts: an embedded video or map is normal, and
+            # a check that fired on every YouTube embed would be ignored.
+            #
+            # Nothing special is needed for rendering.browser.flatten_iframes.
+            # It replaces the iframe element with the framed body before
+            # capture, so the evidence this reads has no frame left to count
+            # and a full word count besides -- neither finding fires.
+            framed = rec.get("content_frames_same_origin") if frames_known else None
+            if framed:
+                ctx.add(
+                    "CONTENT_IN_IFRAME",
+                    target_url=page.url,
+                    details={
+                        "word_count": wc,
+                        "threshold": t["thin_content_words"],
+                        "same_origin_frames_in_content_area": framed,
+                        "frames_in_content_area": rec.get("content_frames"),
+                    },
+                )
+            else:
+                ctx.add(
+                    "THIN_CONTENT",
+                    target_url=page.url,
+                    details={"word_count": wc, "threshold": t["thin_content_words"]},
+                )
         ratio = rec.get("text_ratio")
         if ratio is not None and ratio < t["low_text_ratio_pct"]:
             ctx.add(
