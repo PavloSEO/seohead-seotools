@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from html.parser import HTMLParser
 from typing import Any, cast
 from urllib.parse import urljoin, urlparse
 
@@ -570,50 +571,88 @@ def _head_not_first(html_tag: Any, head_count: int) -> bool:
 _ALLOWED_HEAD_TAGS = frozenset(
     {"title", "base", "link", "meta", "style", "script", "noscript", "template"}
 )
-_HEAD_OPEN_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
-_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
-_BODY_OPEN_RE = re.compile(r"<body\b", re.IGNORECASE)
-# GTM's <noscript><iframe ...></noscript> fallback is the common real case: with
-# scripting enabled (the only case that matters here — the parser is producing
-# what a search engine's crawler sees) a browser treats <noscript>'s content as
-# opaque text, not markup, so nothing inside it ever forces <head> to close.
-# Stripped before scanning so it isn't flagged as an invalid element.
-_NOSCRIPT_RE = re.compile(r"<noscript\b.*?</noscript\s*>", re.IGNORECASE | re.DOTALL)
-# An opening tag only: "<" immediately followed by a letter excludes both a
-# closing tag ("</title>") and a comment/doctype ("<!--", "<!DOCTYPE").
-_OPEN_TAG_NAME_RE = re.compile(r"<([a-zA-Z][a-zA-Z0-9:-]*)")
+
+
+class _HeadElementScanner(HTMLParser):
+    """Collects tokenizer-visible start tags written inside a document's <head>.
+
+    Built on the stdlib tokenizer instead of a raw opening-tag regex so that
+    text which merely *looks* like a tag never counts as one (issue #267):
+    ``script``/``style`` are CDATA content, ``title`` is RCDATA content (both
+    handled by :class:`HTMLParser` itself), ``noscript`` is opaque with
+    ``scripting=True`` — matching a browser with JS enabled, the only case
+    that matters for what a crawler sees — and comments and quoted attribute
+    values are simply outside the tokenizer's tag-name grammar. ``<template>``
+    content is a separate, inert document fragment per the HTML content
+    model, so tags found while inside one are counted only for nesting depth,
+    never as findings.
+
+    Scans only the first ``<head>...</head>`` (or up to the first literal
+    ``<body>``, matching how a browser also promotes an invalid head element
+    and everything after it into <body>) — later ``<head>`` tags, if any, are
+    ignored, matching the previous implementation's single-span behaviour.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True, scripting=True)
+        self.found: list[str] = []
+        self._seen: set[str] = set()
+        self._in_head = False
+        self._done = False
+        self._template_depth = 0
+
+    def _start(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._done:
+            return
+        if not self._in_head:
+            if tag == "head":
+                self._in_head = True
+            return
+        if self._template_depth == 0 and tag == "body":
+            self._in_head = False
+            self._done = True
+            return
+        if tag == "template":
+            self._template_depth += 1
+        if self._template_depth == 0 and tag not in _ALLOWED_HEAD_TAGS and tag not in self._seen:
+            self._seen.add(tag)
+            self.found.append(tag)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._start(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._start(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self._done or not self._in_head:
+            return
+        if tag == "template" and self._template_depth > 0:
+            self._template_depth -= 1
+        elif self._template_depth == 0 and tag == "head":
+            self._in_head = False
+            self._done = True
 
 
 def invalid_head_elements(html: str) -> list[str]:
     """Tag names written inside ``<head>...</head>`` that do not belong there.
 
-    Read from the source text, not the resolved tree: an invalid element is
-    exactly what makes the parser close <head> early, so by the time parsing
-    finishes recovering, the resolved <head> can no longer contain it (see the
-    block comment above). The literal span is the only place left to look.
+    Read with the stdlib tokenizer rather than the resolved tree: an invalid
+    element is exactly what makes the parser close <head> early, so by the
+    time parsing finishes recovering, the resolved <head> can no longer
+    contain it (see the block comment above). Malformed markup that trips up
+    the tokenizer degrades to whatever was found before the failure, rather
+    than raising, since this is a best-effort textual scan.
     """
-    open_match = _HEAD_OPEN_RE.search(html)
-    if not open_match:
-        return []
-    start = open_match.end()
-    close_match = _HEAD_CLOSE_RE.search(html, start)
-    body_match = _BODY_OPEN_RE.search(html, start)
-    if close_match and (body_match is None or close_match.start() < body_match.start()):
-        end = close_match.start()
-    elif body_match:
-        end = body_match.start()
-    else:
-        end = len(html)
-    span = _NOSCRIPT_RE.sub("", html[start:end])
-    found: list[str] = []
-    seen: set[str] = set()
-    for match in _OPEN_TAG_NAME_RE.finditer(span):
-        name = match.group(1).lower()
-        if name in _ALLOWED_HEAD_TAGS or name in seen:
-            continue
-        seen.add(name)
-        found.append(name)
-    return found
+    scanner = _HeadElementScanner()
+    try:
+        scanner.feed(html)
+        scanner.close()
+    except Exception:  # best-effort scan over untrusted markup
+        pass
+    return scanner.found
 
 
 def document_position(soup: BeautifulSoup, html: str) -> DocumentPosition:
