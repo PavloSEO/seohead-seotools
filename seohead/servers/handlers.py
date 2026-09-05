@@ -439,6 +439,11 @@ def crawl_site(
                 "probe_requests": escalation.probe_requests,
                 "render_requests": escalation.render_requests,
                 "render_budget_exhausted": escalation.render_budget_exhausted,
+                # Which escalated patterns the budget actually reached, and
+                # which it ran out on before finishing -- patterns_escalated
+                # alone cannot tell the two apart (#147).
+                "render_counts": escalation.render_counts,
+                "patterns_partially_rendered": escalation.patterns_partially_rendered,
             }
 
         # Re-evaluated after escalation so a run that actually renders its
