@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-59 callable tools · 138 checks · 29 workflow skills · 57 scenarios · 2 400+ offline tests · CLI · local MCP · Docker
+59 callable tools · 138 checks · 29 workflow skills · 56 scenarios · 2 400+ offline tests · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -94,7 +94,7 @@ journal; `spend-report` reads it back by source, operation and day.
 skip, a partial crawl withholds the conclusions that need completeness, and a check that suddenly
 describes most of a site is flagged for a human before the rest of the report is believed.
 
-**The chains are written down.** 57 scenarios in [docs/scenarios/](docs/scenarios/README.md) give
+**The chains are written down.** 56 scenarios in [docs/scenarios/](docs/scenarios/README.md) give
 the actual command sequences for real jobs — a migration audit, a duplicate-content pass, a
 robots-and-indexability review — with what each produces, what it costs, and what it cannot answer.
 An agent does not have to invent an order of operations.
@@ -397,7 +397,7 @@ it did not measure**. That is enforced mechanically, not by intention:
 | | |
 |---|---|
 | **2 400+ tests**, all offline | No test reaches the network. The suite runs in CI with no egress, so a green run means the logic is right, not that a site happened to answer |
-| **57 scenarios** in `docs/scenarios/` | Each is a real chain of commands ending in something a person can act on. Every command in them is executed against a fixture site on every CI run — a documented example that cannot work fails the build |
+| **56 scenarios** in `docs/scenarios/` | Each is a real chain of commands ending in something a person can act on. Every command in them is executed against a fixture site on every CI run — a documented example that cannot work fails the build |
 | **Skipped is not clean** | A check without evidence is reported as skipped *with its reason*. `checks_fired`, `checks_skipped`, `checks_disabled` and `checks_silent` are four separate, listed buckets, so "nothing was wrong here" and "nobody looked here" are different answers |
 | **Implausible findings are named** | Any check covering more than half the crawled pages is listed above the findings, because a check that describes most of a site is usually broken rather than right |
 | **Partial crawls withhold conclusions** | A finding that needs a complete link graph — "nothing links here" — is withheld and named, not footnoted, when the crawl did not finish |
