@@ -221,6 +221,21 @@ def _write_link(handle, edge: LinkEdge) -> None:
     handle.flush()
 
 
+def _write_decision(handle, entry: dict[str, Any]) -> None:
+    """Append one structured decision record (issue #134).
+
+    Redaction is reused from ``runlog`` rather than duplicated: a decision log
+    is the same kind of artifact — an append-only record of what a run did —
+    and must be held to the same "nothing secret in it" rule.
+    """
+    if handle is None:
+        return
+    from seohead import runlog
+
+    handle.write(json.dumps(runlog.safe_arguments(entry), ensure_ascii=False) + "\n")
+    handle.flush()
+
+
 def _read_links_jsonl(path: str) -> list[LinkEdge]:
     """Reconstruct the link graph recorded before a checkpoint.
 
@@ -411,6 +426,7 @@ def crawl_site(
     seed_urls: list[str] | None = None,
     out_path: str | None = None,
     links_path: str | None = None,
+    decisions_path: str | None = None,
     state_path: str | None = None,
     config_fingerprint: str = "",
     fetcher: Callable[[str], Any] | None = None,
@@ -454,6 +470,12 @@ def crawl_site(
     resume the same way ``out_path`` rebuilds ``result.pages`` — kept as a
     side file rather than folded into the checkpoint because the link graph is
     the largest thing a long crawl accumulates.
+    ``decisions_path``, when given, is a structured, per-URL decision log
+    (issue #134): one JSON line per exclusion, naming the URL and the rule
+    that rejected it, so a wrong decision is debuggable after the fact rather
+    than surviving only as a count in ``result.excluded``. Not resumed or
+    replayed on a resumed run — it is a diagnostic trace of one call, not
+    state the crawl depends on.
     ``seed_urls``, when given, are additional entry points added to the
     frontier at depth 0 alongside ``start_url`` — a sitemap-seeded crawl mode:
     every declared URL is fetched and its own links are followed, rather than
@@ -529,8 +551,24 @@ def crawl_site(
     query_budget: dict[str, set[str]] = {}
     crawl_started = clock()
 
-    def exclude(reason: str) -> None:
+    def exclude(reason: str, url: str | None = None) -> None:
         excluded[reason] = excluded.get(reason, 0) + 1
+        # ``url`` is omitted for a decision that rejects a whole page's worth of
+        # links at once (``depth_limit``) rather than one URL: attributing a
+        # batch decision to a single URL would be a fabricated record, and a
+        # wrong log line is worse than a gap named as one (see ``excluded``,
+        # which still counts it).
+        if url is not None and decisions_handle is not None:
+            _write_decision(
+                decisions_handle,
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "type": "exclude",
+                    "url": url,
+                    "reason": reason,
+                    "host": host,
+                },
+            )
 
     def extra_rejection(candidate: str) -> str:
         """Checks beyond scope: a URL too long, or a path's query budget spent."""
@@ -605,6 +643,14 @@ def crawl_site(
             mode = "a" if loaded_state else "w"
             links_handle = stack.enter_context(open(links_path, mode, encoding="utf-8"))
 
+        # Appended across a resume like links_handle above — a decision recorded
+        # before a checkpoint is still a decision this run made — but never read
+        # back: nothing here needs to reconstruct prior exclusions in memory.
+        decisions_handle = None
+        if decisions_path:
+            mode = "a" if loaded_state else "w"
+            decisions_handle = stack.enter_context(open(decisions_path, mode, encoding="utf-8"))
+
         if loaded_state:
             queue: deque[tuple[str, int]] = deque(loaded_state.queue)
             seen: set[str] = set(loaded_state.seen)
@@ -622,7 +668,7 @@ def crawl_site(
                 continue
             reason = rules.rejection(seed, host) or extra_rejection(seed)
             if reason:
-                exclude(reason)
+                exclude(reason, seed)
                 continue
             key = _canonical_key(seed)
             if key in seen:
@@ -657,7 +703,7 @@ def crawl_site(
             if robots and not is_allowed(robots, match_path(url), robots_token):
                 result.robots_blocked.append(url)
                 if enforce:
-                    exclude("blocked_by_robots")
+                    exclude("blocked_by_robots", url)
                     return True
             return False
 
@@ -671,7 +717,7 @@ def crawl_site(
                 target = record.redirect_url
                 reason = rules.rejection(target, host) or extra_rejection(target)
                 if reason:
-                    exclude("redirect_off_host" if reason == "outside_host" else reason)
+                    exclude("redirect_off_host" if reason == "outside_host" else reason, target)
                 else:
                     key = _canonical_key(target)
                     if key not in seen:
@@ -708,13 +754,13 @@ def crawl_site(
                     result.links.append(edge)
                     _write_link(links_handle, edge)
                 if not crawl_hyperlinks:
-                    exclude("hyperlink_discovery_off")
+                    exclude("hyperlink_discovery_off", href)
                     continue
                 if nofollow and not follow_nofollow:
-                    exclude("nofollow")
+                    exclude("nofollow", href)
                     continue
                 if reason:
-                    exclude(reason)
+                    exclude(reason, href)
                     continue
                 key = _canonical_key(href)
                 if key in seen:

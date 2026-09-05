@@ -142,12 +142,16 @@ complete one.
 | `summary.check_coverage` | how many checks *could* run |
 | `summary.health_score_basis` | whether the score compares to anything |
 
-Three words mean three different things and are constantly confused:
+Four words mean four different things and are constantly confused:
 
 - **fired** — the check ran and found something.
 - **skipped** — the check *could not run*, and the reason is named: a missing export column, a
   page property nobody recorded. This is not "zero issues".
-- **silent** — the check ran and found nothing. This is the good one.
+- **disabled** — the operator turned the check off in config (`checks.<ID>.enabled: false`).
+  Named separately from `skipped` so a deliberate switch is never read as missing evidence, and
+  named at all so it is never read as `silent`.
+- **silent** — the check *was invoked* and found nothing. This is the good one. `checks_silent_ids`
+  names the population; a check no code path ever calls is a defect, not a silent one.
 
 A health score computed from 16 of 121 checks is not a health score. The audit says so in
 `health_score_basis`, and where coverage is too low the score is withheld rather than averaged
