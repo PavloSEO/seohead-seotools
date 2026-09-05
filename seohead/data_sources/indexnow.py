@@ -1,0 +1,98 @@
+"""IndexNow: push changed URLs to Bing, Yandex, Naver, and Seznam in one call.
+
+**Google has not joined IndexNow as of 2026.** Any caller-facing text about this tool must say
+so — implying otherwise would be worse than not having the tool at all (issue #97). Natural
+pairing: after ``compare-crawls`` reports which URLs appeared or changed, submit exactly those.
+
+Free, no quota, no vendor lock-in. The protocol needs one self-generated key, not a
+provider-issued secret: host it as a plain-text file at ``https://<host>/<key>.txt`` so the
+receiving search engine can verify the submitter controls the site, then send that same key with
+every request. This is a credential-gated skeleton: submission is built and tested against a
+recorded response shape, but has never reached the live endpoint.
+"""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from typing import Any
+
+HOST = "https://api.indexnow.org/indexnow"
+TIMEOUT = 30
+MAX_URLS_PER_BATCH = 10_000
+# As of 2026; state this wherever the tool is described so a caller does not assume Google
+# crawl behavior changes because of a submission here.
+NOT_ADOPTED_BY = ("Google",)
+
+_STATUS_MESSAGES = {
+    400: "invalid request: check the URL list and host",
+    403: "key not valid: the key or its published key-location file could not be verified",
+    422: "one or more URLs do not belong to the submitted host or do not match the key",
+    429: "too many requests: IndexNow is rate limiting this key",
+}
+
+# payload -> (status code, response body text)
+Fetcher = Callable[[dict[str, Any]], tuple[int, str]]
+
+
+def _default_fetcher(payload: dict[str, Any]) -> tuple[int, str]:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        HOST, data=data, method="POST", headers={"Content-Type": "application/json; charset=utf-8"}
+    )
+    try:
+        # The request URL is the fixed HTTPS IndexNow endpoint; the key travels only in the
+        # POST body the protocol itself requires, never in the URL.
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # nosec B310
+            return response.status, response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
+def submit(
+    urls: list[str],
+    *,
+    host: str,
+    key: str | None = None,
+    key_location: str | None = None,
+    fetcher: Fetcher | None = None,
+) -> dict[str, Any]:
+    """Submit up to 10,000 changed URLs in one call; every URL must belong to ``host``."""
+    from seohead.data_sources.credentials import MissingCredential, indexnow_key
+
+    if not urls:
+        raise ValueError("urls required")
+    if not host:
+        raise ValueError("host required")
+    if len(urls) > MAX_URLS_PER_BATCH:
+        return {
+            "ok": False,
+            "error": f"IndexNow accepts at most {MAX_URLS_PER_BATCH} URLs per batch; got {len(urls)}",
+        }
+    try:
+        submission_key = key or indexnow_key()
+    except MissingCredential as exc:
+        return {"ok": False, "error": str(exc)}
+
+    payload: dict[str, Any] = {"host": host, "key": submission_key, "urlList": list(urls)}
+    if key_location:
+        payload["keyLocation"] = key_location
+
+    fetch = fetcher or _default_fetcher
+    try:
+        status, body = fetch(payload)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return {"ok": False, "error": f"IndexNow submission failed: {exc}"}
+
+    ok = status in (200, 202)
+    result: dict[str, Any] = {
+        "ok": ok,
+        "status": status,
+        "submitted": len(urls),
+        "not_adopted_by": list(NOT_ADOPTED_BY),
+    }
+    if not ok:
+        result["error"] = _STATUS_MESSAGES.get(status, body[:300] or f"HTTP {status}")
+    return result

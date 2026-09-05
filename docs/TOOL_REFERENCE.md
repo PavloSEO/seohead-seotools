@@ -6,7 +6,7 @@ Generated from the MCP tool definitions in `seohead/servers/mcp_server.py` and `
 python scripts/generate_tool_reference.py
 ```
 
-**49 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 54 in total.
+**54 live/recon/data-source tools** (`seohead <command>` / `seo_<command>` on the MCP server) plus **5 crawl-audit tools** (`sf_<command>`, driven by `seohead sf ...`) — 59 in total.
 
 Every tool shares one contract: JSON in, JSON out. A target that could not be reached comes back as `{"ok": false, "error": "..."}` instead of raising, so an unreachable site is data, not a crash.
 
@@ -709,6 +709,93 @@ Which external data sources are ready to use: whether each secret is present, wh
 Takes no arguments.
 
 **Cost** — network: no · writes files: no · idempotent: yes · spends money: no
+
+### `wayback-history`
+
+MCP name: `seo_wayback_history`
+
+Every recorded Wayback Machine snapshot of a URL, oldest first: timestamp, HTTP status, and MIME type at capture time. Free and keyless. Answers what a crawl cannot — *when* a page started returning its current status, and what preceded it. A URL the archive never captured is not an error; it comes back with an empty snapshot list.
+
+| Argument | Type | Default |
+|---|---|---|
+| `url` | `str` | `required` |
+| `limit` | `int | None` | `None` |
+| `from_date` | `str | None` | `None` |
+| `to_date` | `str | None` | `None` |
+
+**Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+### `crtsh-subdomains`
+
+MCP name: `seo_crtsh_subdomains`
+
+Subdomains discovered from public Certificate Transparency logs (crt.sh). Free and keyless. Every TLS certificate ever issued for a domain is public record, so this finds hosts no page links to — the gap seo_mirror_check and seo_regions_check both currently rely on being told about by hand. crt.sh is a free public service without an SLA; a slow or unavailable response is reported as a failure, never as "zero subdomains".
+
+| Argument | Type | Default |
+|---|---|---|
+| `domain` | `str` | `required` |
+
+**Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+### `gsc-query`
+
+MCP name: `seo_gsc_query`
+
+Google Search Console: search performance for a verified property (mode=search_analytics: clicks, impressions, position, CTR) or Google's own indexing verdict for one URL (mode=inspect_url).
+
+| Argument | Type | Default |
+|---|---|---|
+| `site_url` | `str` | `required` |
+| `mode` | `str` | `'search_analytics'` |
+| `start_date` | `str` | `'28daysAgo'` |
+| `end_date` | `str` | `'today'` |
+| `dimensions` | `list[str] | None` | `None` |
+| `row_limit` | `int` | `1000` |
+| `inspection_url` | `str | None` | `None` |
+
+**Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+**Behavior and failure modes**
+
+Requires an OAuth2 bearer token for an own, verified property — see seo_sources_doctor
+and docs/SETUP.md for how to obtain one. A missing token returns an explicit failure
+naming what to configure; it never fabricates a result.
+
+### `crux-report`
+
+MCP name: `seo_crux_report`
+
+Field Core Web Vitals (LCP, INP, CLS) as real Chrome users experienced them, at the 75th percentile — the honest counterpart to seo_render_check's synthesized-score-free design (issue #59). Pass exactly one of url/origin. Requires a Chrome UX Report API key. A target with too little real-user traffic is not an error; CrUX has nothing to report for it, which comes back here as an empty metrics object.
+
+| Argument | Type | Default |
+|---|---|---|
+| `url` | `str | None` | `None` |
+| `origin` | `str | None` | `None` |
+| `form_factor` | `str | None` | `None` |
+| `metrics` | `list[str] | None` | `None` |
+
+**Cost** — network: yes · writes files: no · idempotent: yes · spends money: no
+
+### `indexnow-submit`
+
+MCP name: `seo_indexnow_submit`
+
+Push up to 10,000 changed URLs to Bing, Yandex, Naver, and Seznam in one call.
+
+| Argument | Type | Default |
+|---|---|---|
+| `urls` | `list[str]` | `required` |
+| `host` | `str` | `required` |
+| `key_location` | `str | None` | `None` |
+
+**Cost** — network: yes · writes files: yes · idempotent: yes · spends money: no
+
+**Behavior and failure modes**
+
+IMPORTANT: Google has not joined IndexNow as of 2026 — this does not affect Google's
+crawl schedule. Requires a self-generated key published at https://<host>/<key>.txt
+before the first call; see docs/SETUP.md. Natural pairing: submit exactly the URLs
+seo_compare_crawls reports as new or changed.
 
 ---
 

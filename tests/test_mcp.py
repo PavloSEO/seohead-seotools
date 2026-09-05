@@ -28,7 +28,7 @@ def test_all_mcp_tools_have_structured_schemas_and_safety_annotations():
     """Keep MCP clients informed about output shape, side effects, and network use."""
     tools = {tool.name: tool for tool in build_server()._tool_manager.list_tools()}
 
-    assert len(tools) == 54
+    assert len(tools) == 59
     assert all(tool.fn_metadata.output_schema for tool in tools.values())
     assert all(tool.annotations is not None for tool in tools.values())
 
@@ -36,6 +36,17 @@ def test_all_mcp_tools_have_structured_schemas_and_safety_annotations():
     assert optimizer.destructiveHint is True
     assert optimizer.readOnlyHint is False
     assert optimizer.openWorldHint is False
+
+    # The only tool that writes to somebody else's service (#97). A caller decides
+    # whether to ask a person first from these hints, so "submits URLs to four search
+    # engines" must never read as a harmless read-only call. Idempotent because
+    # resubmitting a URL is defined by the protocol to be safe; not destructive
+    # because nothing is removed or overwritten.
+    submit = tools["seo_indexnow_submit"].annotations
+    assert submit.readOnlyHint is False
+    assert submit.openWorldHint is True
+    assert submit.idempotentHint is True
+    assert submit.destructiveHint is False
 
     live_fetch = tools["seo_parse"].annotations
     assert live_fetch.readOnlyHint is True

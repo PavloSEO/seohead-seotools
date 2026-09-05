@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-54 callable tools · 121 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
+59 callable tools · 121 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -61,7 +61,7 @@ No client data is included.
 |---|---|---|
 | Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 121-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 49 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| A tool-calling AI agent | `seohead mcp` | Exposes 54 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
 ## Why it is useful
 
@@ -99,7 +99,7 @@ against [docs/COVERAGE_SF_ISSUES.md](docs/COVERAGE_SF_ISSUES.md). Start there if
 evaluating what this repository is for; every command shown in those files is executed against
 a fixture site on every CI run.
 
-### 49 core CLI commands and MCP tools
+### 54 core CLI commands and MCP tools
 
 | Layer | Tools | What it covers |
 |---|---:|---|
@@ -107,7 +107,7 @@ a fixture site on every CI run.
 | Domain and infrastructure reconnaissance | 8 | domain/DNS/TLS, CDN cache behavior, technology detection, security headers, mirrors, regional structure, donor backlink verification, AI crawler access |
 | Structured data, content, rendering, and logs | 12 | Schema.org validation and graph generation, near-duplicates, llms.txt, citability, content-area Markdown extraction, boilerplate consistency, social previews, soft 404s, raw-vs-rendered DOM, access-log analysis, run-artifact contradiction scanning |
 | Audit orchestration and reporting | 3 | bounded sitemap-based site evidence, the crawler's own configuration surface, and XLSX/DOCX/CSV/Markdown/JSON output |
-| Demand, SERP, and traffic sources | 12 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics |
+| Demand, SERP, and traffic sources | 17 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics, Wayback snapshot history, certificate-log subdomains, Search Console, CrUX field vitals, IndexNow submission |
 
 Run `seohead --help` for the authoritative command list. Every core command goes through the
 same handler used by its `seo_*` MCP counterpart; a test gate fails if the interfaces drift.
@@ -223,7 +223,7 @@ Install the `mcp` extra, then register one stdio process in any compatible clien
 }
 ```
 
-The server exposes **49 `seo_*` tools plus five `sf_*` tools**. The 49 core tools share the tested
+The server exposes **54 `seo_*` tools plus five `sf_*` tools**. The 54 core tools share the tested
 handler layer used by the CLI; the five SF tools expose the crawl workflow separately. The process
 opens no port, hosts no dashboard, stores no account, and sends no telemetry. File-producing tools
 return paths instead of dumping large reports into an agent context.
