@@ -7,6 +7,7 @@ declared sitemaps, and can test whether specific paths are crawlable for a UA.
 from __future__ import annotations
 
 import contextlib
+import math
 import re
 from typing import Any, cast
 from urllib.parse import urlparse, urlsplit
@@ -52,8 +53,11 @@ def parse_robots(text: str) -> ParsedRobots:
             current["_has_rules"] = True
         elif field == "crawl-delay" and current is not None:
             # A malformed delay is no delay, not a crash.
+            current["_has_rules"] = True
             with contextlib.suppress(ValueError):
-                current["crawl_delay"] = float(value.replace(",", "."))
+                delay = float(value.replace(",", "."))
+                if math.isfinite(delay) and delay >= 0:
+                    current["crawl_delay"] = delay
         elif field == "sitemap":
             sitemaps.append(value)
     for g in groups:
@@ -167,6 +171,13 @@ def check_robots(
             resp = client.get(robots_url)
     except Exception as exc:
         return {"ok": False, "robots_url": robots_url, "error": str(exc)}
+    if resp.status_code == 429 or resp.status_code >= 500:
+        return {
+            "ok": False,
+            "robots_url": robots_url,
+            "status_code": resp.status_code,
+            "error": f"robots.txt returned {resp.status_code}; rules could not be read",
+        }
     if resp.status_code >= 400:
         return {
             "ok": True,
