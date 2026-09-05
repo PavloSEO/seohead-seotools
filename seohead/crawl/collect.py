@@ -95,14 +95,12 @@ class PageRecord:
     # only authoritative statement a site makes about which of its pages are the
     # same page in another language.
     #
-    # Measured, because after #356 this number is not free, and with the same
-    # instrument those figures use (tracemalloc over 8 000 records built from
-    # distinct strings): a page carrying twelve alternates costs 6 392 bytes
-    # against 2 456 with none, so 3 936 bytes for the declaration set. Across a
-    # 50 000-page twelve-language crawl that is 188 MiB -- real, and small beside
-    # the 1.19 GiB such a crawl already spends, because the link edges dominate
-    # and always will. The scope-narrowing advice above MAX_URLS_CEILING applies
-    # here too; this is not the field that decides the ceiling.
+    # Measured in a dedicated 8 000-record hreflang fixture: a page carrying
+    # twelve alternates costs 6 392 bytes against 2 456 with none, so 3 936
+    # bytes for the declaration set. Absolute totals vary with retained field
+    # lengths; across a 50 000-page twelve-language crawl that fixture adds
+    # 188 MiB. The scope-narrowing advice above MAX_URLS_CEILING applies here
+    # too; this is not the field that decides the ceiling.
     hreflang: list[dict[str, str]] = field(default_factory=list)
     head_count: int = 0
     body_count: int = 0
