@@ -55,6 +55,23 @@ def _rec(page: Page) -> dict[str, Any]:
     return page.metrics.get("_record", {})
 
 
+def _has_column(ctx: AuditContext, field: str) -> bool:
+    """Whether ``Internal:All`` carries the source column for ``field`` at all.
+
+    Same distinction as #205 (see check_titles): an absent column and a column
+    full of blanks both read back as ``None``/falsy per page, but they are
+    different facts — one means the run never measured this, the other that
+    every page genuinely fails. Only the column's presence, never a passing
+    value showing up somewhere in the corpus, may decide whether a check ran.
+    """
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
+    return (
+        ctx.internal_df is not None
+        and find_column(ctx.internal_df, INTERNAL_FIELD_MAP[field]) is not None
+    )
+
+
 def _path_of(url: str) -> str:
     # the path only — query/fragment must not leak into path-based checks
     return urllib.parse.urlsplit(url).path
@@ -286,22 +303,30 @@ def check_canonical_directives(ctx: AuditContext) -> None:
     for page in ctx.html_pages():
         rec = _rec(page)
         canonical = rec.get("canonical")
-        if page.is_indexable:
-            if require_canonical and not canonical:
-                ctx.add("CANONICAL_MISSING", target_url=page.url)
-            elif canonical and norm_url(canonical) != norm_url(page.url):
-                ctx.add("CANONICALISED", target_url=page.url, details={"canonical": canonical})
-                # Match the canonical target tolerant of trailing slash / case — and read
-                # every page under that key, since a site serving both slash forms has two
-                # (issue #95). "The canonical points at something non-indexable" is only true
-                # when no page under the key is indexable.
-                targets = ctx.pages_by_norm.get(norm_url(canonical)) or []
-                if targets and not any(t.is_indexable for t in targets):
-                    ctx.add(
-                        "CANONICAL_NON_INDEXABLE",
-                        target_url=page.url,
-                        details={"canonical": canonical},
-                    )
+        # CANONICAL_MISSING stays tied to source indexability: a non-indexable page (e.g.
+        # noindex'd, or itself already canonicalised elsewhere) is not expected to declare
+        # its own canonical.
+        if page.is_indexable and require_canonical and not canonical:
+            ctx.add("CANONICAL_MISSING", target_url=page.url)
+        # CANONICALISED / CANONICAL_NON_INDEXABLE evaluate independently of source
+        # indexability (#333). A fetched page's own Indexability/Indexability Status often
+        # already reads Non-Indexable/Canonicalised precisely *because* it carries this
+        # cross-URL canonical — gating on is_indexable made the check swallow the very
+        # relationship it exists to report, on both a native crawl's projection and an
+        # equivalently-shaped SF export.
+        if canonical and norm_url(canonical) != norm_url(page.url):
+            ctx.add("CANONICALISED", target_url=page.url, details={"canonical": canonical})
+            # Match the canonical target tolerant of trailing slash / case — and read
+            # every page under that key, since a site serving both slash forms has two
+            # (issue #95). "The canonical points at something non-indexable" is only true
+            # when no page under the key is indexable.
+            targets = ctx.pages_by_norm.get(norm_url(canonical)) or []
+            if targets and not any(t.is_indexable for t in targets):
+                ctx.add(
+                    "CANONICAL_NON_INDEXABLE",
+                    target_url=page.url,
+                    details={"canonical": canonical},
+                )
         robots = robots_directives(rec.get("meta_robots"), rec.get("x_robots"))
         if "noindex" in robots:
             ctx.add("NOINDEX", target_url=page.url, details={"meta_robots": rec.get("meta_robots")})
@@ -913,12 +938,13 @@ _CHARSET_IN_HEADER_RE = re.compile(r"charset\s*=", re.IGNORECASE)
 def check_charset(ctx: AuditContext) -> None:
     """Lighthouse `charset`: an encoding declared via Content-Type or an early <meta> tag."""
     pages = ctx.html_pages()
-    has_evidence = any(
-        (page.content_type and _CHARSET_IN_HEADER_RE.search(page.content_type))
-        or _rec(page).get("meta_charset")
-        for page in pages
-    )
-    if not has_evidence:
+    # Content-Type is a base column every crawl already carries and is read for its own
+    # sake below; Meta Charset is the one column gated here, present only via a native
+    # crawl or Custom Extraction in SF. Gating on its presence rather than on any page
+    # happening to carry a truthy value means an all-negative corpus (no header charset,
+    # no meta charset anywhere) is a real finding, not missing evidence (#268) — while an
+    # export that never carries the column at all still honestly skips.
+    if not _has_column(ctx, "meta_charset"):
         ctx.skip(
             "MISSING_CHARSET",
             "no charset visibility (Content-Type carries no charset and no Meta Charset "
@@ -940,8 +966,7 @@ _DOCTYPE_NAME_RE = re.compile(r"<!DOCTYPE\s+([a-zA-Z0-9]+)", re.IGNORECASE)
 def check_doctype(ctx: AuditContext) -> None:
     """Lighthouse `doctype`: exactly ``<!DOCTYPE html>``, no PUBLIC/SYSTEM identifier."""
     pages = ctx.html_pages()
-    has_evidence = any(_rec(p).get("doctype") for p in pages)
-    if not has_evidence:
+    if not _has_column(ctx, "doctype"):
         ctx.skip(
             "MISSING_DOCTYPE",
             "no Doctype column (needs a native seohead crawl or Custom Extraction in SF)",
@@ -966,8 +991,7 @@ _VIEWPORT_WIDTH_RE = re.compile(r"\bwidth\s*=", re.IGNORECASE)
 def check_viewport(ctx: AuditContext) -> None:
     """Lighthouse `viewport` (now `viewport-insight`): see lighthouse.LIGHTHOUSE_MAP."""
     pages = ctx.html_pages()
-    has_evidence = any(_rec(p).get("viewport") for p in pages)
-    if not has_evidence:
+    if not _has_column(ctx, "viewport"):
         ctx.skip(
             "VIEWPORT_MISSING",
             "no Viewport column (needs a native seohead crawl or Custom Extraction in SF)",
@@ -1004,8 +1028,7 @@ _COMPRESSED_ENCODINGS = frozenset({"gzip", "br", "deflate", "zstd"})
 def check_compression(ctx: AuditContext) -> None:
     """Lighthouse `uses-text-compression` (now `document-latency-insight`): see lighthouse.py."""
     pages = ctx.html_pages()
-    has_evidence = any(_rec(p).get("content_encoding") for p in pages)
-    if not has_evidence:
+    if not _has_column(ctx, "content_encoding"):
         ctx.skip(
             "NO_COMPRESSION",
             "no Content-Encoding column (needs a native seohead crawl or Custom Extraction in SF)",
@@ -1013,9 +1036,14 @@ def check_compression(ctx: AuditContext) -> None:
         return
     for page in pages:
         rec = _rec(page)
-        encoding = str(rec.get("content_encoding") or "").strip().lower()
+        # Content-Encoding is comma-separated when codings are stacked (e.g. "gzip, br"
+        # from a CDN re-compressing an already-gzipped origin response) — comparing the
+        # whole header string against a single-token set flagged every stacked value as
+        # uncompressed even though each listed token is a real compression coding (#269).
+        tokens = [t.strip().lower() for t in str(rec.get("content_encoding") or "").split(",")]
+        tokens = [t for t in tokens if t]
         size = rec.get("size_bytes") or 0
-        if encoding in _COMPRESSED_ENCODINGS or size < _COMPRESSION_IGNORE_BYTES:
+        if any(t in _COMPRESSED_ENCODINGS for t in tokens) or size < _COMPRESSION_IGNORE_BYTES:
             continue
         ctx.add(
             "NO_COMPRESSION",
