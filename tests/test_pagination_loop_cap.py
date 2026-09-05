@@ -94,3 +94,52 @@ def test_a_terminating_series_longer_than_the_old_cap_stays_silent(tmp_path):
         )
     res = _run(tmp_path, rows)
     assert _fired(res, "PAGINATION_LOOP") == {}
+
+
+def test_the_walk_visits_each_page_once_across_the_whole_pass():
+    """The bound on the walk is the graph's structure, not a hop cap -- and the
+    cost of getting that wrong is not a wrong answer but a quadratic one.
+
+    Bounding each walk by ``len(next_map)`` is correct and re-walks the tail from
+    every node: one terminating 16 000-page series took 8.29 s that way against
+    0.65 s here. A catalogue or news site with thousands of pages in one series
+    is the ordinary case, so this pins the property rather than the timing --
+    a timing assertion would be flaky and would not say what went wrong.
+    """
+    from seohead.sf.core.rules import pagination_loops
+
+    class CountingMap(dict):
+        lookups = 0
+
+        def get(self, key, default=None):
+            CountingMap.lookups += 1
+            return super().get(key, default)
+
+    n = 2_000
+    chain = CountingMap(
+        {f"https://example.com/p{i}": f"https://example.com/p{i + 1}" for i in range(n)}
+    )
+    loops, in_loop = pagination_loops(chain)
+
+    assert loops == [] and in_loop == set()
+    # One lookup per node to walk it, plus one that finds the end of the chain.
+    # Quadratic would be ~n**2/2 == two million.
+    assert CountingMap.lookups <= n + 1
+
+
+def test_a_cycle_is_still_found_when_a_long_tail_leads_into_it():
+    """Visiting each node once must not cost loop detection: a walk that enters a
+    cycle always revisits its own path, so the first walk through reports it."""
+    from seohead.sf.core.rules import pagination_loops
+
+    tail = {f"https://example.com/t{i}": f"https://example.com/t{i + 1}" for i in range(50)}
+    tail["https://example.com/t50"] = "https://example.com/c0"
+    cycle = {f"https://example.com/c{i}": f"https://example.com/c{(i + 1) % 30}" for i in range(30)}
+    loops, in_loop = pagination_loops({**tail, **cycle})
+
+    assert len(loops) == 1
+    start, path, loops_to = loops[0]
+    assert start == "https://example.com/t0"
+    assert loops_to == "https://example.com/c0"
+    assert len(path) == 81  # 51 tail pages plus the 30 in the cycle
+    assert "https://example.com/c0" in in_loop
