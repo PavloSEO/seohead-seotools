@@ -505,13 +505,14 @@ def build_server():  # -> FastMCP
     @mcp.tool(annotations=pure, structured_output=True)
     def seo_compare_crawls(before: Any, after: Any) -> dict[str, Any]:
         """Diff two audit documents (dict or path to their JSON) into four disjoint
-        sets per finding: entered (new problem on a page that existed before),
-        left (the page is still crawled and no longer matches — a real fix),
-        appeared (a genuinely new page with a finding), disappeared (the page is
-        not in this crawl at all, so a missing finding proves nothing). "left" and
-        "disappeared" look identical in a naive diff and mean opposite things.
-        Warns when the two runs used different results-affecting settings, since
-        part of the difference may be the configuration rather than the site."""
+        page findings: entered (new problem on a page that existed before), left
+        (the page is still crawled and no longer matches — a real fix), appeared
+        (a page absent from the baseline crawl with a finding), disappeared (the
+        page is not in the later crawl at all, so a missing finding proves
+        nothing). Audit-wide checks without a target URL use global.entered and
+        global.left. Warnings state when a partial baseline makes appeared
+        uncertain, a partial later crawl makes disappeared uncertain, or settings
+        differ."""
         return _checked(handlers.compare_crawls(before=before, after=after))
 
     # --- External data providers: demand, search results, traffic, and spend ---

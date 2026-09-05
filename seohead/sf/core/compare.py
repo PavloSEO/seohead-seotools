@@ -6,13 +6,16 @@ matching a finding because it was fixed, and a page that stopped matching
 because it was deleted from the crawl entirely, look identical if you only
 compare two sets of findings — and they mean opposite things.
 
-So every finding lands in exactly one of four disjoint sets, keyed by the
+Page findings land in exactly one of four disjoint sets, keyed by the
 finding's own fingerprint plus the URL it was found on:
 
     entered      the URL existed in both crawls; it did not match before, matches now
     left         the URL existed in both crawls; it matched before, does not match now
     appeared     the URL is new to this crawl, and matches now
     disappeared  the URL is gone from this crawl, and matched before
+
+Audit-wide findings with no target URL have no page-coverage claim, so they
+are kept separately under ``global.entered`` and ``global.left``.
 
 "left" is progress. "disappeared" is not progress — the URL that was broken is
 simply no longer part of what was measured, which is a different fact and must
@@ -42,7 +45,7 @@ def _crawled_urls(audit: dict[str, Any]) -> set[str]:
 
 
 def _by_key(audit: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    return {_key(issue): issue for issue in audit.get("issues", []) if issue.get("target_url")}
+    return {_key(issue): issue for issue in audit.get("issues", []) if issue.get("check")}
 
 
 def preflight(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
@@ -55,9 +58,10 @@ def preflight(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
         if audit.get("run", {}).get("crawl_valid") is False:
             warnings.append(f"{label} crawl is marked invalid — it measured nothing usable")
         if audit.get("run", {}).get("crawl_partial"):
+            unreliable = "appeared" if label == "before" else "disappeared"
             warnings.append(
-                f"{label} crawl is partial — a 'disappeared' finding on it may only mean "
-                "the crawl did not reach that URL, not that the URL is gone"
+                f"{label} crawl is partial — an '{unreliable}' finding may only mean "
+                "the crawl did not reach that URL, not that the page changed"
             )
     before_cfg = before.get("run", {}).get("crawl_config")
     after_cfg = after.get("run", {}).get("crawl_config")
@@ -93,12 +97,23 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     left: list[dict[str, Any]] = []
     appeared: list[dict[str, Any]] = []
     disappeared: list[dict[str, Any]] = []
+    global_entered: list[dict[str, Any]] = []
+    global_left: list[dict[str, Any]] = []
 
     all_keys = set(before_issues) | set(after_issues)
     for key in all_keys:
         url = key[1]
         in_before = key in before_issues
         in_after = key in after_issues
+        is_global = (in_before and before_issues[key].get("target_url") is None) or (
+            in_after and after_issues[key].get("target_url") is None
+        )
+        if is_global:
+            if in_after and not in_before:
+                global_entered.append(dict(after_issues[key]))
+            elif in_before and not in_after:
+                global_left.append(dict(before_issues[key]))
+            continue
         url_in_before_crawl = url in before_urls
         url_in_after_crawl = url in after_urls
 
@@ -155,4 +170,8 @@ def compare(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         "left": _sort(left),
         "appeared": _sort(appeared),
         "disappeared": _sort(disappeared),
+        "global": {
+            "entered": _sort(global_entered),
+            "left": _sort(global_left),
+        },
     }

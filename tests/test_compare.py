@@ -108,11 +108,28 @@ def test_output_is_deterministic_regardless_of_input_dict_order():
 # ── preflight warnings ────────────────────────────────────────────────────
 
 
-def test_a_partial_before_crawl_warns_about_disappeared_findings():
+def test_a_partial_before_crawl_warns_about_appeared_findings():
     before = _audit(["https://e.com/a"], [("X", "https://e.com/a")], crawl_partial=True)
     after = _audit([], [])
     warnings = preflight(before, after)
-    assert any("disappeared" in w and "before" in w for w in warnings)
+    assert any("appeared" in w and "before" in w for w in warnings)
+
+
+def test_a_partial_before_makes_appeared_unreliable_not_a_new_page_claim():
+    before = _audit(["https://e.com/a"], [], crawl_partial=True)
+    after = _audit(
+        ["https://e.com/a", "https://e.com/preexisting"], [("BROKEN", "https://e.com/preexisting")]
+    )
+    result = compare(before, after)
+    assert [issue["target_url"] for issue in result["appeared"]] == ["https://e.com/preexisting"]
+    assert any("appeared" in warning and "before" in warning for warning in result["warnings"])
+
+
+def test_a_partial_after_crawl_warns_about_disappeared_findings():
+    before = _audit(["https://e.com/a"], [("X", "https://e.com/a")])
+    after = _audit([], [], crawl_partial=True)
+    warnings = preflight(before, after)
+    assert any("disappeared" in w and "after" in w for w in warnings)
 
 
 def test_an_invalid_crawl_warns_plainly():
@@ -147,6 +164,29 @@ def test_warnings_are_included_in_the_compare_result():
     after = _audit(["https://e.com/a"], [])
     result = compare(before, after)
     assert result["warnings"]
+
+
+# ── global findings ----------------------------------------------------------
+
+
+def test_a_new_global_finding_is_reported_without_inventing_a_page_url():
+    before = _audit(["https://e.com/a"], [])
+    after = _audit(["https://e.com/a"], [])
+    after["issues"] = [{"check": "TITLE_TEMPLATED", "target_url": None}]
+    result = compare(before, after)
+    assert result["global"]["entered"] == [{"check": "TITLE_TEMPLATED", "target_url": None}]
+    assert result["entered"] == []
+    assert result["appeared"] == []
+
+
+def test_a_removed_global_finding_is_reported_without_page_coverage_claims():
+    before = _audit(["https://e.com/a"], [])
+    before["issues"] = [{"check": "TITLE_TEMPLATED", "target_url": None}]
+    after = _audit(["https://e.com/a"], [])
+    result = compare(before, after)
+    assert result["global"]["left"] == [{"check": "TITLE_TEMPLATED", "target_url": None}]
+    assert result["left"] == []
+    assert result["disappeared"] == []
 
 
 # ── refusal ─────────────────────────────────────────────────────────────

@@ -143,7 +143,7 @@ finding sets cannot answer it: a page that stopped matching because it was fixed
 stopped matching because it dropped out of the crawl look identical unless something also checks
 which pages were actually crawled each time.
 
-Every finding lands in exactly one of four sets:
+Every page-level finding lands in exactly one of four sets:
 
 - **entered** — a new problem on a page that was already being crawled;
 - **left** — the page is still crawled and no longer matches: a real fix;
@@ -151,12 +151,16 @@ Every finding lands in exactly one of four sets:
 - **disappeared** — the page is not in the later crawl at all, so a missing finding proves
   nothing about whether it was fixed.
 
+Audit-wide findings without a page URL, such as `TITLE_TEMPLATED`, are reported separately in
+`global.entered` and `global.left`; they cannot honestly be called appeared or disappeared.
+
 `left` and `disappeared` are the pair that matters. Confusing them is how "we fixed it" gets said
 about a page nobody re-checked.
 
-The result carries `warnings` when the comparison should be trusted less: either crawl marked
-invalid or partial, or the two runs using different results-affecting settings (`run.crawl_config`
-from #13) — in which case some of the difference may be the configuration, not the site.
+The result carries `warnings` when the comparison should be trusted less: a partial baseline makes
+`appeared` unable to prove that a page is new, a partial later crawl makes `disappeared` unable to
+prove that a page was removed, either crawl can be invalid, and the two runs may use different
+results-affecting settings (`run.crawl_config` from #13).
 
 ## Crawler configuration
 
