@@ -381,3 +381,46 @@ def test_legacy_lineage_and_unavailable_resume_cannot_disagree(artifact, mutatio
         con.execute(mutation)
     with pytest.raises(ScanError, match=r"lineage|resume unavailable"):
         open_scan(artifact)
+
+
+def test_report_cli_cannot_overwrite_its_source_via_an_alias(artifact, tmp_path):
+    from seohead.storage.__main__ import main
+
+    original = artifact.read_bytes()
+    alias = tmp_path / "output.md"
+    alias.symlink_to(artifact)
+    assert main(["report", str(artifact), "--out", str(alias)]) == 1
+    assert artifact.read_bytes() == original
+
+
+def test_report_cli_cannot_overwrite_source_audit(legacy_run):
+    from seohead.storage.__main__ import main
+
+    source = legacy_run / "audit.json"
+    original = source.read_bytes()
+    assert main(["report", str(legacy_run), "--out", str(source)]) == 1
+    assert source.read_bytes() == original
+
+
+def test_explicit_null_config_is_not_treated_as_an_omitted_option(legacy_run, tmp_path):
+    from seohead.storage.__main__ import main
+
+    config = tmp_path / "null.json"
+    config.write_text("null")
+    out = tmp_path / "out.sqlite"
+    assert (
+        main(
+            [
+                "import-run",
+                str(legacy_run),
+                "--out",
+                str(out),
+                "--producer-build",
+                BUILD,
+                "--config",
+                str(config),
+            ]
+        )
+        == 1
+    )
+    assert not out.exists()
