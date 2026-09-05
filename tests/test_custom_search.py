@@ -118,6 +118,19 @@ def test_xpath_scope_targets_a_named_node():
     assert result["matching_pages"] == ["https://example.com/a"]
 
 
+def test_xpath_scope_uses_the_full_string_value_of_matched_elements():
+    result = run_filter(
+        [_doc("https://example.com/a", html="<h1><strong>Special</strong> Title</h1>")],
+        {
+            "mode": "contains",
+            "scope": "xpath",
+            "selector": "//h1",
+            "query": "Special Title",
+        },
+    )
+    assert result["matching_pages"] == ["https://example.com/a"]
+
+
 def test_xpath_scope_without_a_selector_is_rejected():
     with pytest.raises(ValueError, match="selector"):
         run_filter(
@@ -156,6 +169,30 @@ def test_unknown_scope_is_rejected():
         run_filter(
             [_doc("https://example.com/a", html="x")],
             {"mode": "contains", "scope": "bogus", "query": "x"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("scope", "selector", "query", "error"),
+    [
+        ("element", "div[", "banner", "invalid CSS selector"),
+        ("xpath", "//*[", "banner", "invalid XPath expression"),
+        ("raw", "", "(", "invalid regular expression"),
+    ],
+)
+def test_malformed_filter_expressions_are_rejected_before_absence_is_reported(
+    scope, selector, query, error
+):
+    with pytest.raises(ValueError, match=error):
+        run_filter(
+            [_doc("https://example.com/a", html="<p>banner</p>")],
+            {
+                "mode": "not_contains",
+                "kind": "regex" if query == "(" else "text",
+                "scope": scope,
+                "selector": selector,
+                "query": query,
+            },
         )
 
 

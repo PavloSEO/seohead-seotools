@@ -84,7 +84,12 @@ def _xpath_text(html: str, expression: str) -> str:
         return result
     parts = []
     for node in result if isinstance(result, list) else [result]:
-        parts.append(node if isinstance(node, str) else str(getattr(node, "text", node) or ""))
+        if isinstance(node, str):
+            parts.append(node)
+        elif hasattr(node, "xpath"):
+            parts.append(str(node.xpath("string()")))
+        else:
+            parts.append(str(node))
     return " ".join(parts)
 
 
@@ -115,6 +120,30 @@ def _matches(target: str, kind: str, query: str, case_sensitive: bool) -> bool:
     return query in target
 
 
+def _validate_filter(
+    scope: str, selector: str, kind: str, query: str, case_sensitive: bool
+) -> None:
+    """Reject malformed user expressions before they become absence evidence."""
+    if scope == "element":
+        try:
+            BeautifulSoup("", features="lxml").select(selector)
+        except Exception as exc:
+            raise ValueError(f"invalid CSS selector {selector!r}: {exc}") from exc
+    elif scope == "xpath":
+        from lxml import etree
+
+        try:
+            etree.XPath(selector)
+        except etree.XPathSyntaxError as exc:
+            raise ValueError(f"invalid XPath expression {selector!r}: {exc}") from exc
+    if kind == "regex":
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            re.compile(query, flags)
+        except re.error as exc:
+            raise ValueError(f"invalid regular expression {query!r}: {exc}") from exc
+
+
 def _representation(documents: list[dict[str, Any]]) -> Any:
     stamps = sorted({"rendered_dom" if d.get("rendered") else "static_markup" for d in documents})
     return stamps[0] if len(stamps) == 1 else stamps
@@ -138,6 +167,7 @@ def run_filter(documents: list[dict[str, Any]], spec: dict[str, Any]) -> dict[st
         raise ValueError(f"unknown scope {scope!r}; expected one of {SCOPES}")
     if scope in ("element", "xpath") and not selector:
         raise ValueError(f"scope {scope!r} requires a selector")
+    _validate_filter(scope, selector, kind, query, case_sensitive)
 
     fetched = [d for d in documents if d.get("ok", True)]
     hits: list[str] = []

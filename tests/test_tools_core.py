@@ -172,3 +172,14 @@ def test_clusterer_groups_keywords():
     )
     assert res["count"] == 2
     assert sum(len(c["keywords"]) for c in res["clusters"]) == 4
+
+
+def test_clusterer_honors_two_requested_clusters_for_two_keywords():
+    keywords = ["red widgets", "blue databases"]
+    for algorithm in ("kmeans", "agglomerative"):
+        res = clusterer.run_clusterer(
+            {"keywords": keywords, "algorithm": algorithm, "n_clusters": 2, "stem": False}
+        )
+        assert res["ok"] is True
+        assert res["count"] == 2
+        assert sorted(len(cluster["keywords"]) for cluster in res["clusters"]) == [1, 1]

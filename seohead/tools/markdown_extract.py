@@ -28,6 +28,7 @@ from seohead.tools.content_area import resolve_content_area
 
 _BLOCK_TAGS = {"p", "div", "section", "article", "li", "blockquote"}
 _HEADING_LEVELS = {f"h{i}": i for i in range(1, 7)}
+_STRUCTURAL_TAGS = _BLOCK_TAGS | set(_HEADING_LEVELS) | {"ul", "ol"}
 
 
 def _inline(node: Tag | NavigableString) -> str:
@@ -82,6 +83,12 @@ def to_markdown(root: Tag) -> str:
                         lines.append(f"{marker} {text}")
                 continue
             if child.name in _BLOCK_TAGS:
+                # A semantic wrapper such as ``article`` commonly contains the
+                # headings and lists that this renderer promises to preserve.
+                # Rendering it inline would flatten those descendants together.
+                if child.find(list(_STRUCTURAL_TAGS)):
+                    walk(child)
+                    continue
                 text = _inline(child).strip()
                 if text:
                     lines.append(text)

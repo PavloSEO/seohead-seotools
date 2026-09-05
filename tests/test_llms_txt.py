@@ -48,6 +48,13 @@ def test_brand_mention_check():
     assert brand_check["passed"] is True
 
 
+def test_h1_check_is_labeled_without_an_unverified_brand_claim():
+    check = llms_txt.score_llms_txt(
+        "# Unrelated heading\n\nAcme is mentioned below.", brand="Acme"
+    )["checks"][0]
+    assert check == {"name": "Non-empty H1 heading", "passed": True}
+
+
 def test_oversized_content_fails_size_check():
     big = "# T\n\n" + ("x" * (61 * 1024))
     r = llms_txt.score_llms_txt(big)
@@ -113,3 +120,31 @@ def test_network_failure_still_reports_not_measured(monkeypatch):
     r = llms_txt.check_llms_txt("https://example.com/")
     assert r["ok"] is False and "error" in r
     assert "exists" not in r
+
+
+def test_http_error_is_not_reported_as_a_missing_file(monkeypatch):
+    """A received 5xx response does not establish that the manifest is absent."""
+    import seohead.recon.net as net
+
+    class _Resp:
+        status_code = 500
+        text = "upstream failure"
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url):
+            return _Resp()
+
+    monkeypatch.setattr(net, "http_client", lambda timeout, **kw: (_Client(), False))
+    r = llms_txt.check_llms_txt("https://example.com/")
+    assert r == {
+        "ok": False,
+        "url": "https://example.com/llms.txt",
+        "status_code": 500,
+        "error": "Could not measure llms.txt: HTTP 500",
+    }

@@ -40,3 +40,17 @@ def test_default_content_area_used_when_no_config_given():
     assert out["content_area_strategy"] == "auto_main"
     assert "Home About Contact" not in out["content_markdown"]
     assert "Copyright" not in out["content_markdown"]
+
+
+def test_nested_semantic_wrapper_keeps_markdown_structure():
+    html = """<main><article>
+    <h1>Widget guide</h1><p>Intro text.</p>
+    <ul><li>First step</li><li>Second step</li></ul>
+    </article></main>"""
+
+    markdown = M.extract_markdown(html)["content_markdown"]
+
+    assert "# Widget guide" in markdown
+    assert "Intro text." in markdown
+    assert "- First step" in markdown
+    assert "- Second step" in markdown

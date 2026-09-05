@@ -64,10 +64,10 @@ they are allowed by default unless a general ``Disallow`` rule applies.
 ```bash
 seohead llms-txt-check --url https://example.com --brand "SiteName"
 ```
-There are 9 checkpoints: an H1, ≥3 sections, ≥3 links, a brand/category mention,
+There are 9 checkpoints: a non-empty H1, ≥3 sections, ≥3 links, a brand/category mention,
 product/proof/docs pages, and a size of ≤60 KB. The result is a 0–10 score plus a letter
-grade. A missing file produces ``ok: False`` and the finding “the website does not provide
-AI with ready-to-use context.” ``--brand`` checks whether the brand name is mentioned.
+grade. A missing file produces ``ok: True, exists: False`` and the finding “the website does
+not provide AI with ready-to-use context.” ``--brand`` checks whether the brand name is mentioned.
 
 **Step 3. Content citability.** The formal scorer uses 4 dimensions worth 25 points each:
 ```bash
@@ -93,14 +93,15 @@ a letter grade.
   things (a manifest for models vs the actual page prose) — do not let a good llms.txt score mask
   pages that are not self-contained/citable, and do not let poor citability imply llms.txt is
   useless.
-- **Missing llms.txt.** This is a finding (`ok: False`), not a hard failure — weigh whether it is
+- **Missing llms.txt.** This is a measured finding (`ok: True, exists: False`), not a hard failure — weigh whether it is
   worth recommending given the site's actual GEO ambitions (a small local-business site may not
   need one) rather than treating it as universally mandatory.
 
 ## Definition of done
 - [ ] `ai-bots-check` results are broken out `by_type` (training/retrieval/user), not reported as
   one flat allow/block list.
-- [ ] `llms-txt-check` results name each of the 9 checkpoints that failed, plus the score/grade.
+- [ ] `llms-txt-check` results state `exists`, score and grade; an existing manifest also names
+  each failed checkpoint.
 - [ ] `citability-check` was run on 2–3 representative templates, each with its own score and
   per-dimension breakdown.
 - [ ] Every recommendation states which of the three levers (crawler access / llms.txt /
@@ -126,7 +127,8 @@ few seconds each, no paid API involved.
 
 ## Graceful Degradation
 If robots.txt cannot be retrieved, ``ai-bots-check`` returns an error; do not crash. A
-missing llms.txt is a finding (``ok: False``), not a failure. ``robots_text`` can be
+missing llms.txt is a measured finding (``ok: True, exists: False``), not a failure.
+An HTTP error means it was not measured. ``robots_text`` can be
 provided offline through ``--input``.
 
 ## Integrations
