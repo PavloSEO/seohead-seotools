@@ -159,24 +159,41 @@ class MetrikaClient:
         rows: list = []
         cursor = offset
         pages = 0
-        while True:
-            page = self._request(self._url(API_REPORTS, dict(base, limit=page_size, offset=cursor)))
-            pages += 1
-            if first is None:
-                first = page
-            chunk = page.get("data") or []
-            rows.extend(chunk)
-            collected = offset + len(rows)
-            # A response without ``data`` has nothing else to aggregate; stop cleanly.
-            if len(chunk) < page_size:
-                break
-            if collected >= ROW_CAP:
-                break
-            total = (first or {}).get("total_rows")
-            if total and collected >= total:
-                break
-            cursor += page_size
-            time.sleep(PAGE_PAUSE)
+        try:
+            while True:
+                page = self._request(
+                    self._url(API_REPORTS, dict(base, limit=page_size, offset=cursor))
+                )
+                pages += 1
+                if first is None:
+                    first = page
+                chunk = page.get("data") or []
+                rows.extend(chunk)
+                collected = offset + len(rows)
+                # A response without ``data`` has nothing else to aggregate; stop cleanly.
+                if len(chunk) < page_size:
+                    break
+                if collected >= ROW_CAP:
+                    break
+                total = (first or {}).get("total_rows")
+                if total and collected >= total:
+                    break
+                cursor += page_size
+                time.sleep(PAGE_PAUSE)
+        except MetrikaError:
+            # The page that raised still consumed a request against quota, even though it
+            # never returned rows, so it counts alongside the pages that already succeeded.
+            # Losing this entry would make an interrupted collection look like it never
+            # touched the API at all, hiding exactly the usage a diagnosis needs.
+            spend.record(
+                SOURCE,
+                "report.paginated",
+                cost=pages + 1,
+                unit="requests",
+                items=len(rows),
+                extra={"metrics": params.get("metrics"), "pages": pages, "outcome": "failed"},
+            )
+            raise
 
         spend.record(
             SOURCE,

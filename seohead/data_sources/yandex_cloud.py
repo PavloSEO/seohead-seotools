@@ -291,15 +291,19 @@ class WebSearch(_Base):
     ) -> dict[str, dict]:
         """Run several queries as one concurrently processed batch.
 
-        All operations are submitted first and then polled together. The service processes async
-        operations concurrently, so N queries take approximately one batch duration instead of
-        the sum of individual durations. Operations unfinished at ``timeout`` are omitted from
-        the returned mapping, but they have already been charged and their ``operation_id``
-        remains available in the spend ledger.
+        Results are keyed by query text, so an exact duplicate in ``queries`` is submitted once:
+        billing the same text twice would only ever charge for a second operation whose result a
+        text-keyed mapping cannot expose. Every remaining unique query gets one of these outcomes,
+        never silence: ``operation_id`` and docs on success, an ``error`` for a rejected
+        submission, a lost response, or an operation that itself reported an error. Only an
+        operation still unfinished at ``timeout`` is left out of the returned mapping — it has
+        already been charged and its ``operation_id`` is in the spend ledger for later recovery.
         """
+        unique_queries = list(dict.fromkeys(queries))
         pending: dict[str, str] = {}
+        submitted: dict[str, str] = {}
         results: dict[str, dict] = {}
-        for query in queries:
+        for query in unique_queries:
             try:
                 status, operation = self._request(
                     f"{HOST}/v2/web/searchAsync",
@@ -312,17 +316,29 @@ class WebSearch(_Base):
             except NetworkAmbiguousError as exc:
                 # One query's lost response must not abort the rest of the batch, mirroring the
                 # per-task isolation that Arsenkin's BatchRunner already applies.
-                results[query] = {"error": str(exc), "docs": []}
+                results[query] = {"error": str(exc), "status": "network_ambiguous", "docs": []}
                 continue
             if status == 200 and isinstance(operation, dict) and operation.get("id"):
-                pending[operation["id"]] = query
+                operation_id = operation["id"]
+                pending[operation_id] = query
+                submitted[query] = operation_id
+            else:
+                # A rejection never created a billable operation. It must be surfaced as its own
+                # error here, not left to vanish into "not returned" — the caller's only other
+                # signal is a query missing from this mapping, which it would otherwise read as
+                # a billed operation that merely timed out.
+                results[query] = {
+                    "error": f"searchAsync rejected: {status}: {operation}",
+                    "status": "rejected",
+                    "docs": [],
+                }
         spend.record(
             SOURCE,
             "web.searchAsync",
             cost=len(pending),
             unit="requests",
-            items=len(queries),
-            extra={"region": region, "batch": True},
+            items=len(unique_queries),
+            extra={"region": region, "batch": True, "operation_ids": dict(submitted)},
         )
 
         deadline = time.monotonic() + timeout
@@ -334,11 +350,21 @@ class WebSearch(_Base):
                     continue  # Still running, or a transient polling failure.
                 del pending[operation_id]
                 if done.get("error"):
-                    results[query] = {"error": done["error"], "docs": []}
+                    results[query] = {
+                        "error": done["error"],
+                        "status": "operation_error",
+                        "operation_id": operation_id,
+                        "docs": [],
+                    }
                     continue
                 raw = (done.get("response") or {}).get("rawData")
                 xml = base64.b64decode(raw).decode("utf-8", "replace") if raw else ""
-                results[query] = {"operation_id": operation_id, "xml": xml, "docs": parse_serp(xml)}
+                results[query] = {
+                    "operation_id": operation_id,
+                    "status": "ok",
+                    "xml": xml,
+                    "docs": parse_serp(xml),
+                }
         return results
 
 
