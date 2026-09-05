@@ -242,7 +242,13 @@ def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
     * 2xx — a 404 or a redirect is not a page a sitemap should declare;
     * HTML by its own Content-Type — not an image, a PDF or a feed;
     * on the start URL's host — a sitemap may not declare someone else's domain;
-    * indexable — a noindex page (meta robots or X-Robots-Tag) is deliberately excluded.
+    * indexable — a noindex page (meta robots or X-Robots-Tag) is deliberately excluded,
+      and so is one this same crawl's own evidence marks ``robots_blocked`` (#316):
+      ``build_evidence()``'s ``_indexability()`` already projects a robots-blocked URL as
+      non-indexable, and a report-only robots policy still fetches and links the page, so
+      leaving it comparable here let one page be simultaneously non-indexable (BLOCKED_BY_ROBOTS)
+      and reported as an indexable page the sitemap forgot (URL_NOT_IN_SITEMAP) -- two
+      first-class projections of the same crawl contradicting each other.
 
     The 2xx+HTML re-check below looks like the gap ``AuditContext.html_pages`` had before
     issue #133 (it isn't calling that method), but ``result.pages`` here are
@@ -262,6 +268,8 @@ def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
     except Exception:
         host = ""
 
+    robots_blocked = set(getattr(result, "robots_blocked", None) or [])
+
     comparable: list[str] = []
     for page in getattr(result, "pages", []) or []:
         status = getattr(page, "status_code", None)
@@ -272,6 +280,8 @@ def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
         if host and urlsplit(page.url).netloc.lower() != host:
             continue
         if "noindex" in robots_directives(page.meta_robots, page.x_robots):
+            continue
+        if page.url in robots_blocked:
             continue
         comparable.append(page.url)
     return comparable
@@ -620,7 +630,9 @@ def crawl_site(
     measured = run_sitemap(
         ctx,
         sitemap_url=sitemap_seed["sitemap_url"],
+        sitemap_urls=sitemap_seed["sitemap_urls"],
         compare_with_crawl=not sitemap_seed["declared"],
+        crawl_partial=bool(getattr(result, "partial", False)),
     )
     # Only surfaced when something was actually measured. run_sitemap always
     # returns its keys, and a run with no sitemap at all would otherwise report
@@ -663,7 +675,19 @@ def crawl_site(
             1,
         )
         threshold = ctx.thresholds["sitemap_desync_pct_warn"]
-        if crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
+        if getattr(result, "partial", False):
+            # A URL-limited or otherwise incomplete native crawl can still count sitemap
+            # URLs it never reached as "unlinked" -- but the unfetched frontier may hold
+            # exactly the link that would prove them linked, so a thresholded site-wide
+            # verdict from this graph is unsound (#362). The per-URL findings above
+            # (SITEMAP_ORPHAN, URL_NOT_IN_SITEMAP) still fire on what was actually
+            # observed; only the whole-graph percentage verdict is withheld.
+            ctx.skip(
+                "SITEMAP_DESYNC",
+                "crawl is partial: a sitemap-versus-link-graph verdict cannot be proven "
+                "when the crawl did not reach every URL",
+            )
+        elif crawl_only_pct >= threshold or sitemap_only_pct >= threshold:
             ctx.add(
                 "SITEMAP_DESYNC",
                 target_url=url,
