@@ -101,6 +101,28 @@ def test_an_expired_entry_with_a_validator_revalidates_not_a_fresh_fetch(tmp_pat
     assert refreshed.entry.body == "<html>old</html>"
 
 
+def test_a_304_that_changes_vary_drops_the_old_variant(tmp_path):
+    cache = ResponseCache(tmp_path)
+    cache.store(
+        "https://example.com/",
+        {"User-Agent": "seohead"},
+        200,
+        {"cache-control": "max-age=0", "etag": '"abc123"', "vary": "User-Agent"},
+        "old body",
+    )
+    outcome = cache.decide("https://example.com/", {"User-Agent": "seohead"})
+    assert outcome.status == "revalidate"
+
+    cache.refresh(
+        outcome.entry,
+        {"cache-control": "max-age=3600", "vary": "Accept-Language", "etag": '"new"'},
+    )
+
+    assert cache.decide("https://example.com/", {"User-Agent": "seohead"}).status == "miss"
+    assert outcome.entry.body == "old body"
+    assert outcome.entry.etag == '"new"'
+
+
 def test_an_expired_entry_with_no_validator_is_a_plain_miss(tmp_path):
     cache = ResponseCache(tmp_path)
     cache.store(
