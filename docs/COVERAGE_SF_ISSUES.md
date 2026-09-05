@@ -15,29 +15,17 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-<<<<<<< HEAD
-| check | 93 | a registry check finds it |
+| check | 111 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
 | partial | 20 | we find part of it; the missing part is stated |
-| gap | 38 | we should find it and do not |
-=======
-| check | 114 | a registry check finds it |
-| tool | 33 | a command outside the crawl registry finds it |
-| partial | 17 | we find part of it; the missing part is stated |
 | gap | 20 | we should find it and do not |
->>>>>>> origin/main
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-<<<<<<< HEAD
-remaining 212 issues, **126 are found today**, 20 are
-found in part, 38 are gaps worth closing, and
-=======
-remaining 212 issues, **147 are found today**, 17 are
+remaining 212 issues, **144 are found today**, 20 are
 found in part, 20 are gaps worth closing, and
->>>>>>> origin/main
 28 need something we have decided not to build.
 
 A gap is not a defect. It is a named, deliberate absence — which is the only kind worth
