@@ -979,6 +979,65 @@ def test_hreflang_broken_target_fires_and_skips(tmp_path):
     assert "HREFLANG_BROKEN_TARGET" not in {i.check for i in res2.issues}
 
 
+def test_hreflang_broken_target_not_masked_by_a_case_only_variant(tmp_path):
+    """#202: a live /en must not hide a 404 /EN — norm_url must not fold path case."""
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(_HREFLANG_INTERNAL_COLS)
+        w.writerow(
+            [
+                "https://example.test/",
+                "text/html",
+                "200",
+                "OK",
+                "Indexable",
+                TITLE,
+                DESC,
+                "H",
+                "https://example.test/",
+                "index,follow",
+            ]
+        )
+        w.writerow(
+            [
+                "https://example.test/en",
+                "text/html",
+                "200",
+                "OK",
+                "Indexable",
+                TITLE,
+                DESC,
+                "H",
+                "https://example.test/en",
+                "index,follow",
+            ]
+        )
+        w.writerow(
+            [
+                "https://example.test/EN",
+                "text/html",
+                "404",
+                "Not Found",
+                "Non-Indexable",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+    with open(d / "all_hreflang.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["Source", "Destination", "Hreflang"])
+        w.writerow(["https://example.test/", "https://example.test/EN", "en"])
+
+    res = run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
+    fired = {i.check: i.target_url for i in res.issues if i.check == "HREFLANG_BROKEN_TARGET"}
+    assert fired.get("HREFLANG_BROKEN_TARGET") == "https://example.test/"
+
+
 # --- Issue #30: hreflang code/self-reference/x-default/duplicate/canonical quality ---
 _HREFLANG_QUALITY_CHECKS = (
     "HREFLANG_INVALID_CODE",
