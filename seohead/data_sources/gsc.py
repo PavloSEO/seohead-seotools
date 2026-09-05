@@ -57,6 +57,14 @@ def _api_error(exc: urllib.error.HTTPError) -> str:
         return str(exc.reason)
 
 
+def _response_object(raw: str) -> dict[str, Any] | None:
+    try:
+        body = json.loads(raw) if raw.strip() else {}
+    except (AttributeError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
 def search_analytics(
     site_url: str,
     *,
@@ -92,8 +100,15 @@ def search_analytics(
     except (urllib.error.URLError, TimeoutError) as exc:
         return {"ok": False, "error": f"Search Console request failed: {exc}"}
 
-    body = json.loads(raw) if raw.strip() else {}
-    rows = body.get("rows") or []
+    body = _response_object(raw)
+    if body is None:
+        return {"ok": False, "error": "Search Console malformed response"}
+    if "rows" not in body:
+        rows = []
+    else:
+        rows = body["rows"]
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            return {"ok": False, "error": "Search Console malformed response"}
     return {
         "ok": True,
         "site_url": site_url,
@@ -139,8 +154,17 @@ def inspect_url(
     except (urllib.error.URLError, TimeoutError) as exc:
         return {"ok": False, "error": f"Search Console request failed: {exc}"}
 
-    body = json.loads(raw) if raw.strip() else {}
-    index_status = (body.get("inspectionResult") or {}).get("indexStatusResult") or {}
+    body = _response_object(raw)
+    if body is None:
+        return {"ok": False, "error": "Search Console malformed response"}
+    inspection = body.get("inspectionResult")
+    if not isinstance(inspection, dict):
+        return {"ok": False, "error": "Search Console malformed response"}
+    index_status = inspection.get("indexStatusResult")
+    if index_status is None:
+        index_status = {}
+    if not isinstance(index_status, dict):
+        return {"ok": False, "error": "Search Console malformed response"}
     return {
         "ok": True,
         "site_url": site_url,
