@@ -70,11 +70,12 @@ Returned fields:
 
 | Field | Meaning |
 |---|---|
-| `raw` / `rendered` | identically calculated snapshots of both documents: words, internal links, title, h1, canonical, JSON-LD types, and size |
+| `raw` / `rendered` | identically calculated snapshots of both documents: `words`, `links` (internal link count), `title`, `h1`, `canonical`, `jsonld_types`, and `html_bytes` |
 | `empty_shell` | ID of an empty single-page application container, if present |
 | `js_dependent` | whether the page depends on scripts in any way |
 | `metrics_lab` | TTFB, FCP, **LCP**, **CLS**, load, and weight—**lab data**, not field data |
 | `findings` | ready-to-use written conclusions |
+| `dual_crawl` | schema `dualcrawl.v1` — per-URL image/link evidence found by only the raw pass or only the rendered pass, so "this page changed" (the fields above) stays distinct from "raw and rendered disagree about what this page contains" |
 
 ## How to Interpret Findings
 
