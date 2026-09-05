@@ -1,17 +1,18 @@
 ---
 name: control
 description: >-
-  The controller for the whole seotools system: decide what to run on a site
-  nobody has looked at yet, in what order, and how to read what comes back.
-  Routes to the specialised method skills rather than restating them, and
-  carries its own sub-skills for scoping, reading an audit honestly, verifying
-  a finding live, producing a deliverable, and choosing a crawl rate. Use this
-  before any other skill in this repository when the ask is "audit this site",
-  "what is wrong with this site", "run everything on this site", "stress-test
-  the toolkit on a real site", or when you would otherwise write a one-off
-  script to check pages. Triggers: audit site, full analysis, crawl and report,
-  stress test the toolkit, what should I run. Localized Russian trigger
-  examples: audit this site, full audit, run everything, stress test.
+  The single entry point for an unscoped audit of a site nobody has looked at yet: decide
+  what to run, in what order, and how to read what comes back. Routes to the specialised
+  method skills rather than restating them, and carries its own sub-skills for scoping,
+  reading an audit honestly, verifying a finding live, producing a deliverable, and
+  choosing a crawl rate. Use this before any other skill in this repository when the ask
+  is "audit this site", "what is wrong with this site", "run everything on this site",
+  "stress-test the toolkit on a real site", or when you would otherwise write a one-off
+  script to check pages — `seo-deep-audit` is not an alternative entry point for this same
+  request; it is the SF-based collector this skill delegates to when that is specifically
+  what is wanted. Triggers: audit site, full analysis, crawl and report, stress test the
+  toolkit, what should I run. Localized Russian trigger examples: audit this site, full
+  audit, run everything, stress test.
 ---
 
 # control — what to run, and how to read what comes back
@@ -70,6 +71,11 @@ into the run manifest. → [rate-and-load](subskills/rate-and-load.md)
 seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./run
 ```
 
+A licensed Screaming Frog CLI or supplied SF exports are not a precondition for this step —
+native `crawl-site` needs neither. Delegate this step to `seo-deep-audit`'s pipeline instead
+only when SF (CLI or exports) is already available *and* full-registry depth is specifically
+wanted; both collectors feed the same `audit.json` shape, so nothing downstream changes.
+
 **3. Scan the run before reading it.**
 
 ```bash
@@ -91,7 +97,7 @@ template first; do not pay for the whole site to learn what one page would have 
 **6. Verify every serious finding live.** → [verifying](subskills/verifying.md)
 
 **7. Produce the thing that was actually asked for.**
-→ [deliverables](subskills/deliverables.md), and `docs/scenarios/` for ten chains end to end.
+→ [deliverables](subskills/deliverables.md), and `docs/scenarios/` for 56 chains end to end.
 
 ## Decision points
 
@@ -103,6 +109,10 @@ template first; do not pay for the whole site to learn what one page would have 
   when no single check dominates them.
 - **Stop and file.** If one check is above ~50% of all findings, stop trusting it for this
   report, verify five of its hits, and file the bug. → [reference/defects](reference/defects.md)
+- **Native crawl vs. `seo-deep-audit`.** Default to step 2's native `crawl-site`. Delegate to
+  `seo-deep-audit`'s SF-based pipeline instead only when a licensed SF CLI or exports are
+  already available and full-registry depth is worth the extra setup — not because a scope is
+  unstated; an unstated scope alone always means "run this loop," never "switch collectors."
 
 ## Definition of done
 

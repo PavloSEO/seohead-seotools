@@ -95,6 +95,39 @@ def test_every_skill_has_a_description():
     assert not bad, f"skills without a discoverable description: {bad}"
 
 
+def test_skills_do_not_require_gnu_only_grep():
+    """The toolkit targets macOS and Linux both; a skill's shell snippet must not require
+    GNU grep's `-P` (Perl regex), which macOS's stock BSD grep rejects with exit 2 (#256)."""
+    bad = []
+    for path in [*TECHNICAL_SKILLS, *PACKAGED_SKILLS]:
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"grep\s+(?:-\w*\s+)*-\w*P\w*", text):
+            bad.append(f"{path.relative_to(ROOT)}: {match.group(0)!r}")
+    assert not bad, f"GNU-only `grep -P` in a public skill: {bad}"
+
+
+def test_only_control_claims_the_unscoped_audit_entry_point():
+    """`control` and `seo-deep-audit` used to both claim ownership of a bare, unscoped
+    "audit this site" request (#258). Only one router may claim that job; the other must
+    defer to it by name rather than presenting a second competing entry point."""
+    control_text = (ROOT / ".claude" / "skills" / "control" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    deep_audit_text = (ROOT / ".claude" / "skills" / "seo-deep-audit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "entry point" in control_text.lower()
+    # The old frontmatter opened with "SINGLE ENTRY POINT and orchestrator ... for a complete
+    # domain SEO audit", claiming the same unscoped request `control` claims above. It may say
+    # that of `control` (a deferral), just never claim it of itself.
+    assert not re.search(r"seo-deep-audit.{0,80}single entry point", deep_audit_text, re.I | re.S)
+    assert not re.search(r"single entry point.{0,80}orchestrator", deep_audit_text, re.I | re.S)
+    assert re.search(r"`control`.{0,200}(entry point|delegat)", deep_audit_text, re.I | re.S), (
+        "seo-deep-audit must defer to control by name instead of claiming the unscoped "
+        "audit request for itself"
+    )
+
+
 def test_skills_and_docs_reference_only_existing_commands():
     known = set(COMMANDS) | EXTRA_COMMANDS
     bad: list[str] = []
@@ -268,3 +301,91 @@ def test_private_research_journal_is_not_part_of_the_snapshot():
     combined = "\n".join(path.read_text(encoding="utf-8") for path in PUBLIC_MARKDOWN)
     assert "review of 85" not in combined.lower()
     assert "private development repository is stronger" not in combined.lower()
+
+
+def test_hyphenated_check_count_claims_match_the_registry():
+    """tests/test_doc_counts.py's live scanner requires whitespace between a number and
+    "checks", so a hyphenated adjective ("104-check registry", "132-check analyzer") drifted
+    silently past it in README.md, AGENTS.md and several skills (#259) while the number-space
+    form elsewhere in the same files was kept current. Skills are covered here too, since
+    test_doc_counts.py's own file list stops at the top level and docs/."""
+    bad = []
+    pattern = re.compile(r"(\d+)-check\s+(?:registry|analyz|import)")
+    for path in PUBLIC_MARKDOWN:
+        if path.name == "CHANGELOG.md":
+            continue  # a changelog records what was true at the time, like test_doc_counts.py
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            if int(match.group(1)) != len(CHECKS):
+                bad.append(f"{path.relative_to(ROOT)}: {match.group(0)!r}")
+    assert not bad, f"stale hyphenated check-count claims (live count is {len(CHECKS)}): {bad}"
+
+
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "twenty": 20,
+    "fifty-six": 56,
+    "fifty six": 56,
+}
+
+
+def test_scenario_chain_count_claims_match_the_catalogue():
+    """`control`'s own subskills said "ten chains" long after the scenario catalogue grew to
+    56 (#259) — a claim that lives in `.claude/skills/control/subskills/`, outside every file
+    test_doc_counts.py's live scanner walks, so nothing caught it drifting. Spelled-out numbers
+    ("ten") are checked here too, since that is exactly the form the stale claim used."""
+    scenario_count = len(
+        [p for p in (ROOT / "docs" / "scenarios").glob("*.md") if p.name != "README.md"]
+    )
+    number = r"\d+|" + "|".join(sorted(_NUMBER_WORDS, key=len, reverse=True))
+    pattern = re.compile(rf"\b({number})\s+(?:chains|scenarios)\b", re.I)
+    bad = []
+    for path in PUBLIC_MARKDOWN:
+        if path.name == "CHANGELOG.md":
+            continue
+        for match in pattern.finditer(path.read_text(encoding="utf-8")):
+            raw = match.group(1).lower()
+            value = int(raw) if raw.isdigit() else _NUMBER_WORDS[raw]
+            if value != scenario_count:
+                bad.append(f"{path.relative_to(ROOT)}: {match.group(0)!r}")
+    assert not bad, f"stale scenario-count claims (live count is {scenario_count}): {bad}"
+
+
+def test_canonical_basics_scenario_cross_references_do_not_embed_a_stale_number():
+    """canonical-basics.md linked to rendering.md and canonical-conflicts.md as "scenario 4"
+    and "scenario 12" — numbers that were true before the catalogue was renumbered/expanded;
+    rendering.md's own heading is "Scenario 35" (#259). Descriptive link text sidesteps this
+    whole class of drift, so the fix removes the embedded numeral rather than re-syncing it."""
+    text = (ROOT / "docs" / "scenarios" / "canonical-basics.md").read_text(encoding="utf-8")
+    assert "](rendering.md)" in text
+    assert "](canonical-conflicts.md)" in text
+    assert not re.search(r"scenario \d+\]\((rendering|canonical-conflicts)\.md\)", text, re.I)
+
+
+def test_documented_clone_directory_matches_a_default_clone():
+    """A default `git clone <url>` creates a directory named after the URL's basename, not
+    whatever the repository used to be called. README.md and docs/SETUP.md must `cd` into
+    that real name, or a fresh install fails on the very first command (#259)."""
+    for path in (ROOT / "README.md", ROOT / "docs" / "SETUP.md"):
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"git clone (\S+?)(?:\.git)?\s*\n\s*cd (\S+)", text)
+        assert match, f"{path.relative_to(ROOT)}: no git-clone-then-cd sequence found to check"
+        url, cd_target = match.groups()
+        expected_dir = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        assert cd_target == expected_dir, (
+            f"{path.relative_to(ROOT)}: `git clone {url}` makes `{expected_dir}/`, "
+            f"but the next line does `cd {cd_target}`"
+        )

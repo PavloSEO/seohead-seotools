@@ -47,11 +47,16 @@ seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./r
 ```json
 {
   "js_dependent": true,
-  "raw": {"internal_links": 0, "words": 12},
-  "rendered": {"internal_links": 34, "words": 812},
+  "raw": {"links": 0, "words": 12},
+  "rendered": {"links": 34, "words": 812},
   "empty_shell": true
 }
 ```
+
+`dual_crawl` (schema `dualcrawl.v1`) rides alongside this in the same response: it diffs the raw
+and rendered evidence per URL (images, links) instead of one page's before/after, so a report can
+tell "this page changed" (the block above) apart from "these two collection methods disagree
+about what this page contains" (`dual_crawl`) — see `js-render-check`.
 
 Zero links raw and 34 rendered is the whole finding: every crawler that does not execute
 JavaScript sees a dead end.

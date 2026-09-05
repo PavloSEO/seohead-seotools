@@ -24,10 +24,15 @@
 
 </div>
 
-**SEOHEAD is not a crawler replacement.** Screaming Frog produces the CSV/XLSX exports consumed
-by SEOHEAD's 132-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
-unavailable measurements visible, and gives a specialist or tool-calling agent one tested CLI/MCP
-surface for assembling an audit, prioritized backlog, and reports.
+**SEOHEAD is not a Screaming Frog replacement.** Screaming Frog produces the CSV/XLSX exports
+consumed by SEOHEAD's 138-check analyzer, and remains the stronger choice for web-scale crawls.
+SEOHEAD also ships its own bounded native crawler (`crawl-site`) for when no SF licence is
+installed: it fetches a site directly and feeds the same 138-check registry, but it is not
+SF-scale or SF-parity — checks whose evidence only Screaming Frog's own crawl produces (near-
+duplicates, readability, pixel widths, link score) come back honestly `skipped`, not clean.
+SEOHEAD then runs complementary bounded checks, keeps failed and unavailable measurements
+visible, and gives a specialist or tool-calling agent one tested CLI/MCP surface for assembling
+an audit, prioritized backlog, and reports.
 
 The package brings live URL checks, infrastructure reconnaissance, structured-data work, log and
 content analysis, optional keyword/SERP/traffic sources, report generation, and agent playbooks
@@ -43,8 +48,8 @@ commercial-proposal draft while a specialist keeps control of interpretation.
 
 | Stage | Primary owner | Role |
 |---|---|---|
-| Crawl collection | Screaming Frog | Discover site-scale URLs and produce compatible CSV/XLSX exports |
-| Evidence processing | SEOHEAD Tools | Analyze those exports against a 132-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
+| Crawl collection | Screaming Frog, or SEOHEAD's own bounded `crawl-site` when no SF licence is installed | Discover site URLs and produce evidence for the 138-check registry — SF for web-scale crawls, `crawl-site` for a licence-free bounded pass |
+| Evidence processing | SEOHEAD Tools | Analyze that evidence against a 138-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
 | Interpretation and approval | SEO specialist, optionally supported by an AI agent | Connect findings to business context, implementation risk, and final priorities |
 
 See [how SEOHEAD fits with crawlers and data providers](docs/COMPARISON.md) for the exact scope
@@ -63,7 +68,7 @@ No client data is included.
 
 | Starting point | Start with | What it does |
 |---|---|---|
-| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 132-check registry and builds an audit plus backlog |
+| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 138-check registry and builds an audit plus backlog |
 | A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
 | A tool-calling AI agent | `seohead mcp` | Exposes 54 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
 
@@ -149,7 +154,7 @@ Clone the repository and let one install command resolve the Python dependencies
 
 ```bash
 git clone https://github.com/PavloSEO/seotools.git
-cd seohead-seotools
+cd seotools
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip

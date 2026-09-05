@@ -15,16 +15,16 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| check | 111 | a registry check finds it |
+| check | 110 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
-| partial | 20 | we find part of it; the missing part is stated |
+| partial | 21 | we find part of it; the missing part is stated |
 | gap | 20 | we should find it and do not |
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-remaining 212 issues, **144 are found today**, 20 are
+remaining 212 issues, **143 are found today**, 21 are
 found in part, 20 are gaps worth closing, and
 28 need something we have decided not to build.
 
@@ -293,7 +293,7 @@ having, because the alternative is an absence nobody has noticed.
 | Forced Reflow | out of scope | — | needs main-thread instrumentation |
 | Legacy JavaScript | tool | `asset-weight-check` |  |
 | Duplicated JavaScript | tool | `asset-weight-check` | by content hash across the page |
-| Avoid Enormous Network Payloads | check | `LARGE_HTML` `HTML_BLOAT` |  |
+| Avoid Enormous Network Payloads | partial | `LARGE_HTML` `HTML_BLOAT` | LARGE_HTML/HTML_BLOAT measure only each HTML document's own size (bytes) and word count; nothing sums images, fonts, third-party tags or later requests into a total page payload (docs/COVERAGE_GAPS.md 1.7 tracks the gap) |
 | Minify CSS | tool | `asset-weight-check` |  |
 | Minify JavaScript | tool | `asset-weight-check` |  |
 | Reduce Unused CSS | out of scope | — | needs coverage instrumentation from a real render |

@@ -469,9 +469,11 @@ def build_server():  # -> FastMCP
         internal links that appear only after JS, a title/canonical rewritten by script,
         and Schema.org markup injected client-side. Also returns lab timings (TTFB, FCP,
         LCP, CLS, load) measured in one Chromium run — these are lab numbers, not field
-        Core Web Vitals from CrUX, and are labelled metrics_lab for that reason. Requires
-        Playwright; if it is missing the tool says so and gives the install command instead
-        of failing."""
+        Core Web Vitals from CrUX, and are labelled metrics_lab for that reason. Also
+        returns dual_crawl (schema dualcrawl.v1): per-URL image/link evidence seen by only
+        the raw pass or only the rendered pass, a separate question from the raw/rendered
+        diff above. Requires Playwright; if it is missing the tool says so and gives the
+        install command instead of failing."""
         return _checked(handlers.render_check(url=url, viewport=viewport, wait=wait))
 
     @mcp.tool(annotations=fetch, structured_output=True)

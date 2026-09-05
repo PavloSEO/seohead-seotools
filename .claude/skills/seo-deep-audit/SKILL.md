@@ -1,23 +1,25 @@
 ---
 name: seo-deep-audit
 description: >-
-  SINGLE ENTRY POINT and orchestrator for a complete domain SEO audit. Triggers when a site/domain
-  is provided with a request to inspect/analyze/check it — WITHOUT a specified scope. By default,
-  it runs the MAXIMUM: reconnaissance (domain/hosting/CMS), crawl evidence from a separately
-  installed licensed Screaming Frog CLI or supplied exports analyzed against the 104-check
-  registry, agent-level analysis (robots, JS rendering, silo structure, H1–H6), and a consolidated
-  report + task backlog. Use a narrow analysis only when the scope is stated explicitly ("only
-  robots," "quick/lite," "no rendering"). Use for: "analyze the site," "perform an SEO audit of
-  the domain," "inspect the entire site," "what is wrong with the site," "audit this domain,"
-  "full SEO audit," or when the user simply provides a URL/domain for analysis. Triggers: analyze
-  site, perform audit, full SEO audit, inspect domain, check site, what is wrong with the site,
-  audit site, analyze domain, deep SEO audit, full audit, site audit.
+  The SF-registry deep-audit pipeline: reconnaissance (domain/hosting/CMS), crawl evidence from
+  a separately installed licensed Screaming Frog CLI or supplied exports analyzed against the
+  full check registry, agent-level analysis (robots, JS rendering, silo structure, H1–H6), and a
+  consolidated report + task backlog. `control` is the single entry point for an unscoped "audit
+  this site" request and delegates its crawl step here once it has decided that SF (a licensed
+  CLI or supplied exports) is available and that full-registry depth is worth the setup; go
+  straight here only when that decision is already made — SF/exports are in hand, or the user
+  named "Screaming Frog," "exports," or "deep audit" explicitly. Use a narrow analysis only when
+  the scope is stated explicitly ("only robots," "quick/lite," "no rendering"). Triggers: SF deep
+  audit, Screaming Frog audit, exports audit, full SEO audit with SF, deep SEO audit.
 ---
 
-# SEO Deep Audit — orchestrator: provide a domain -> get everything
+# SEO Deep Audit — the SF-registry pipeline `control` delegates to
 
-One entry point for a complete audit. When given a domain **without a specified scope, work at
-maximum depth**: run the entire chain of skills and tools yourself, collect everything, and
+`control` is the controller: given a bare "audit this site" with no scope, start there — it
+scopes the site, then decides whether native `crawl-site` or this skill's SF-based pipeline
+collects the crawl evidence. This skill is that second option: when a licensed Screaming Frog
+CLI or supplied SF exports are available and full-registry depth is wanted, work at **maximum
+depth**: run the entire chain of skills and tools yourself, collect everything, and
 consolidate it into one report + task plan. Narrow the work only when EXPLICITLY instructed
 ("only robots," "quick," "lite," "no rendering," "check only headings"). The map of "which tool
 retrieves what" is in the `sf-boundaries` skill.
@@ -27,18 +29,24 @@ retrieves what" is in the `sf-boundaries` skill.
 > this skill executes the roadmap.
 
 ## Trigger
-- A domain/site is provided with a request to inspect/analyze/check it and **no
-  scope is specified**: "analyze the site," "perform an SEO audit of the
-  domain," "inspect the entire site," "what is wrong with the site," "audit
-  this domain," "full SEO audit," or simply a bare URL/domain handed over for
-  analysis.
-- The user wants everything in one pass: reconnaissance + crawl evidence +
-  agent-level checks + a consolidated report and task backlog.
+- `control` has scoped an unscoped "audit this site" request and decided the
+  SF-based pipeline is the right collector — a licensed SF CLI or exports are
+  available and full-registry depth is worth the setup.
+- The user names Screaming Frog, SF exports, or "deep audit" explicitly, or
+  already has a licensed SF CLI/exports in hand and wants the full pipeline
+  run over them directly, without going through `control` first.
 - A request that started narrow has grown into "also check X, and Y, and Z"
-  to the point where running the whole pipeline is cheaper than hand-assembling
-  the parts one skill at a time.
+  to the point where running the whole SF-based pipeline is cheaper than
+  hand-assembling the parts one skill at a time.
 
 ## Anti-trigger
+- A bare unscoped audit request with no SF license and no exports mentioned
+  yet ("audit this site," "what's wrong with it") — start with `control`
+  instead. It scopes the site and begins with the native `crawl-site`
+  collector, which needs neither a licensed SF CLI nor supplied exports;
+  it delegates here only once it decides full SF-registry depth is worth
+  the extra setup. Routing a bare request straight here makes "no SF/exports
+  available" a false blocker for what `control` would have run natively.
 - The user names one narrow check explicitly ("only robots.txt," "just check
   schema," "quick tech-detect") — go straight to that skill (`robots-audit`,
   `schema-graph`, `seo-recon`, …) instead of running every phase here.
@@ -65,8 +73,10 @@ retrieves what" is in the `sf-boundaries` skill.
 - **No scope clarification -> MAX.** Run every phase below.
 - **Explicitly narrowed scope -> only that scope.** "only sitemap" -> only the sitemap portion;
   "quick/lite" -> `--profile lite` + skip expensive agent-level phases.
-- Never ask "should I do a full audit?" — a full audit is the default. Clarify only what makes
-  progress impossible (no domain; SF is not installed and no exports are available).
+- Never ask "should I do a full audit?" — a full audit is the default. Clarify only when there
+  is truly nothing to act on (no domain). **Neither SF being installed nor exports being
+  available is a blocker for auditing the site** — it only means this specific pipeline cannot
+  run; hand off to `control`'s native `crawl-site` collection instead of stopping to ask.
 
 ## Pipeline (all phases by default)
 **Phase 0 — Reconnaissance (what kind of site is this?).** The `seo-recon` skill — three toolkit
@@ -80,14 +90,14 @@ Remember the stack: if `tech-detect` found an SPA/Next.js/Nuxt, mark JS renderin
 (Phase 2). Some findings from `domain-profile.flags` and `cdn-check.findings` go directly into
 the report.
 
-**Phase 1 — Crawl evidence (104-check registry).** SEOHEAD is the analyzer and adapter here, not
+**Phase 1 — Crawl evidence (138-check registry).** SEOHEAD is the analyzer and adapter here, not
 the crawler. Check the environment first with `seohead sf doctor`; live mode requires a separately
 installed, actively licensed Screaming Frog CLI.
 ```bash
 seohead sf run --crawl https://<domain> --out report --tasks
 ```
 The **full** profile is the default (maximum available coverage), and the sitemap is automatically
-obtained from robots. The registry contains 104 checks, but only checks supported by the available
+obtained from robots. The registry contains 138 checks, but only checks supported by the available
 exports and enabled SF modules can run. If the output contains many `skipped` results
 (MIXED_CONTENT/STRUCTURED_DATA/SPELLING/DOM_*), enable them once through the `sf-config` skill
 (create `audit.seospiderconfig`); the tool will pick it up automatically. If SF/a license is not
@@ -186,10 +196,11 @@ cost is Mode A's crawl duration when a live SF crawl is requested.
 8. **Prioritized task plan** (`tasks.md`) + downloadable `audit.json`/`audit.md` files.
 
 ## Graceful degradation (without errors)
-If SF is unavailable, use mode B or report that `--crawl` requires SF
-(`sf-config`/`sf-analyzer`). If the network is unavailable for reconnaissance/rendering, skip
-those phases and mark them "not checked" in the report; do not crash. A `skipped` check is honest
-(no data/module), not zero.
+If SF is unavailable, use mode B (`--exports-dir`) if exports exist; if neither a licensed CLI
+nor exports exist, that is not a reason to block the audit — hand off to `control`'s native
+`crawl-site` pipeline instead of asking the user to install SF. If the network is unavailable
+for reconnaissance/rendering, skip those phases and mark them "not checked" in the report; do
+not crash. A `skipped` check is honest (no data/module), not zero.
 
 ## Integrations
 Core: `sf-analyzer` · `sf-report` · `sf-tasks` · `sf-config`. Agent-level: `seo-recon` ·
