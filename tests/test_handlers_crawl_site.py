@@ -691,3 +691,41 @@ def test_same_origin_blank_link_is_absent_from_unsafe_cross_origin_summary(monke
     audit = handlers.crawl_site(url="https://example.test/", config=str(config))
 
     assert audit["summary"]["by_check"].get("UNSAFE_CROSS_ORIGIN_LINK", 0) == 0
+
+
+def test_normal_spider_discovery_names_the_directive_policy(monkeypatch):
+    """Issue #332: the reference (docs/TOOL_REFERENCE.md) promises
+    ``discovery.directive_policy`` for crawl-site's own result, not only for list mode
+    -- a robots-blocked count with no stated policy is not self-explanatory."""
+
+    def fake(*args, **kwargs):
+        result = SpiderResult()
+        result.robots_blocked = ["https://example.com/private/"]
+        return result
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake)
+
+    out = handlers.crawl_site(url="https://example.com/", robots="report_only")
+
+    assert out["discovery"]["mode"] == "spider"
+    assert out["discovery"]["directive_policy"] == "report_only"
+    assert out["discovery"]["robots_blocked"] == 1
+
+
+def test_list_mode_directive_policy_still_matches_spider_mode(monkeypatch):
+    """Negative control: list mode already reported this field (the bug was the spider
+    branch omitting it) -- it must keep reporting the same value, unchanged."""
+    import seohead.crawl.collect as collect_mod
+
+    def fake_collect_urls(*args, **kwargs):
+        result = SpiderResult()
+        result.robots_blocked = ["https://example.com/private/"]
+        return result
+
+    monkeypatch.setattr(collect_mod, "collect_urls", fake_collect_urls)
+
+    out = handlers.crawl_site(urls=["https://example.com/"], robots="report_only")
+
+    assert out["discovery"]["mode"] == "list"
+    assert out["discovery"]["directive_policy"] == "report_only"
+    assert out["discovery"]["robots_blocked"] == 1

@@ -741,6 +741,10 @@ def crawl_site(
             # gate an empty start page (issue #188).
             result.forms.extend(FormEdge(**entry) for entry in loaded_state.forms)
             result.start_page_evidence = dict(loaded_state.start_page_evidence)
+            # Crawl-wide evidence, not per-invocation data (issue #349): a
+            # completed report-only audit needs every blocked URL ever seen,
+            # not only ones fetched after this checkpoint.
+            result.robots_blocked.extend(loaded_state.robots_blocked)
         else:
             queue = deque([(start, 0)])
             seen = {_canonical_key(start)}
@@ -749,14 +753,19 @@ def crawl_site(
             seed = (seed or "").strip()
             if not seed:
                 continue
-            reason = rules.rejection(seed, host) or extra_rejection(seed)
-            if reason:
-                exclude(reason, seed)
-                continue
+            # Checked against ``seen`` before the rejection rules run, and
+            # added to ``seen`` either way (issue #348): a rejected seed is a
+            # decision this run made about that URL, exactly like an accepted
+            # one, so a resumed retry that re-supplies the same declaration
+            # must not re-evaluate and re-count it.
             key = _canonical_key(seed)
             if key in seen:
                 continue
             seen.add(key)
+            reason = rules.rejection(seed, host) or extra_rejection(seed)
+            if reason:
+                exclude(reason, seed)
+                continue
             queue.append((seed, 0))
             result.seed_urls.append(seed)
 
@@ -1099,6 +1108,7 @@ def crawl_site(
                         },
                         forms=[dataclasses.asdict(form) for form in result.forms],
                         start_page_evidence=dict(result.start_page_evidence),
+                        robots_blocked=list(result.robots_blocked),
                     ),
                 )
 
