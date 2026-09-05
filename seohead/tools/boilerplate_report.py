@@ -27,6 +27,8 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from seohead.tools.parser import is_inert_template_content
+
 # What counts as "boilerplate" for this report — broader than content_area's
 # default exclusions (nav, footer) because the issue this answers is
 # specifically about header/nav/footer consistency, not word count.
@@ -41,7 +43,9 @@ def boilerplate_hash(html: str) -> str:
     hash even when the remaining text reads the same.
     """
     soup = BeautifulSoup(html, features="lxml")
-    pieces = [str(el) for el in soup.find_all(BOILERPLATE_TAGS)]
+    pieces = [
+        str(el) for el in soup.find_all(BOILERPLATE_TAGS) if not is_inert_template_content(el)
+    ]
     basis = "".join(" ".join(piece.split()) for piece in pieces)
     return hashlib.sha1(basis.encode("utf-8"), usedforsecurity=False).hexdigest()
 

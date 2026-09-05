@@ -25,6 +25,13 @@ def test_document_order_changes_the_boilerplate_hash():
     assert B.boilerplate_hash(ordered) != B.boilerplate_hash(reordered)
 
 
+def test_template_only_boilerplate_does_not_change_the_hash():
+    inert_footer = "<template><footer>Unreleased contact block</footer></template>"
+    assert B.boilerplate_hash(_GOOD_PAGE) == B.boilerplate_hash(
+        _GOOD_PAGE.replace("</body>", inert_footer + "</body>")
+    )
+
+
 def test_report_flags_exactly_the_page_with_the_truncated_footer():
     pages = [{"url": f"https://site.tld/p{i}", "html": _GOOD_PAGE} for i in range(1, 5)] + [
         {"url": "https://site.tld/old-legacy-page", "html": _BAD_PAGE}
