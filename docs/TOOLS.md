@@ -1,6 +1,6 @@
 # Tool reference
 
-48 tools, reachable identically from the CLI and from MCP. One
+54 + 5 tools, reachable identically from the CLI and from MCP. One
 implementation, two faces: `seohead <command>` in the terminal and
 `seo_<command>` on the MCP server (`seohead mcp`). Five more `sf_*` tools cover
 the Screaming Frog crawl audit workflow specifically — see that section below
@@ -151,6 +151,11 @@ and spend-journal rules.
 | `metrika-report` | What visitors actually did: any metrics and dimensions, auto-pagination | free |
 | `google-keywords` | Google: search volume for a keyword list, semantic expansion from a seed phrase, keyword difficulty | DataForSEO price list; RUB 0 in the sandbox |
 | `google-serp` | Google organic results for a query | same |
+| `wayback-history` | Every Internet Archive snapshot of a URL: when it changed, what status it returned, what MIME type it was | free, no key |
+| `crtsh-subdomains` | Hosts named in public TLS certificates for a domain — subdomains nothing links to | free, no key |
+| `gsc-query` | Search Console: clicks, impressions, position and CTR per query or page, plus Google's own indexing verdict for one URL | free; needs OAuth against a property you own |
+| `crux-report` | Core Web Vitals as real Chrome users measured them, at origin or URL level | free; needs a Google Cloud API key |
+| `indexnow-submit` | Push changed URLs to Bing, Yandex, Naver and Seznam. **Google has not joined IndexNow** | free; needs a self-generated key hosted on the site |
 
 ```bash
 seohead sources-doctor                                     # what is ready to run
@@ -159,6 +164,13 @@ seohead keywords-exact --keywords "underfloor heating,floor screed" --region 225
 seohead serp-fetch --queries "underfloor heating,floor screed" --region 213 --top 10
 seohead spend-report --since 2026-08-01
 ```
+
+The last five answer the question a crawl cannot: what actually happens in search. Two of
+them need nothing at all — `wayback-history` and `crtsh-subdomains` read public archives and
+public certificate logs. The other three need a credential this repository cannot obtain for
+you, and say so rather than guessing: with no key configured they return
+`{"ok": false, "error": "..."}` naming what is missing, which since #155 is a non-zero exit.
+That is the command working, not failing.
 
 **Layer rules.** Wordstat frequency is **base**, not exact: the API has no
 `!`/`+`/`[]` operators and the base runs roughly 9x higher than exact. A

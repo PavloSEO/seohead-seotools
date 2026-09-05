@@ -93,3 +93,40 @@ def dataforseo_login() -> str:
 
 def dataforseo_password() -> str:
     return read("dataforseo/password", "DATAFORSEO_PASSWORD")
+
+
+def gsc_access_token() -> str:
+    """Search Console has no long-lived API key; this reads a short-lived OAuth2 bearer token.
+
+    Generate one at https://developers.google.com/oauthplayground (authorize the
+    ``webmasters.readonly`` scope) or with ``gcloud auth application-default print-access-token``
+    after ``gcloud auth application-default login --scopes=...webmasters.readonly``. A token
+    expires roughly hourly; this client does not refresh one, so callers re-supply it per session.
+    """
+    return read(
+        "gsc/access_token",
+        "GSC_ACCESS_TOKEN",
+        hint="See docs/SETUP.md for how to obtain a Search Console OAuth token.",
+    )
+
+
+def crux_api_key() -> str:
+    return read(
+        "crux/api_key",
+        "CRUX_API_KEY",
+        hint="Create an API key in Google Cloud Console and enable the Chrome UX Report API.",
+    )
+
+
+def indexnow_key() -> str:
+    """IndexNow needs a self-generated key, not a provider-issued secret.
+
+    Any random string works (for example ``openssl rand -hex 16``); publish it unmodified at
+    ``https://<your-domain>/<key>.txt`` before submitting, so a receiving search engine can
+    verify the submitter controls the host.
+    """
+    return read(
+        "indexnow/key",
+        "INDEXNOW_KEY",
+        hint="Generate one yourself and publish it at https://<host>/<key>.txt first.",
+    )

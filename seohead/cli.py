@@ -71,6 +71,11 @@ COMMANDS = (
     "metrika-report",
     "google-keywords",
     "google-serp",
+    "wayback-history",
+    "crtsh-subdomains",
+    "gsc-query",
+    "crux-report",
+    "indexnow-submit",
 )
 
 # Tools whose complete direct CLI input can be supplied by one --url flag.
@@ -363,6 +368,42 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
             kw["location_code"] = args.location_code
         if getattr(args, "depth", None) is not None:
             kw["depth"] = args.depth
+    if cmd == "wayback-history":
+        if args.url:
+            kw["url"] = args.url
+        for name in ("limit", "from_date", "to_date"):
+            value = getattr(args, name, None)
+            if value:
+                kw[name] = value
+    if cmd == "crtsh-subdomains" and args.domain:
+        kw["domain"] = args.domain
+    if cmd == "gsc-query":
+        if args.site_url:
+            kw["site_url"] = args.site_url
+        for name in ("mode", "start_date", "end_date", "inspection_url"):
+            value = getattr(args, name, None)
+            if value:
+                kw[name] = value
+        if getattr(args, "dimensions", None):
+            kw["dimensions"] = _split_list(args.dimensions)
+        if getattr(args, "row_limit", None):
+            kw["row_limit"] = args.row_limit
+    if cmd == "crux-report":
+        if getattr(args, "url", None):
+            kw["url"] = args.url
+        if getattr(args, "origin", None):
+            kw["origin"] = args.origin
+        if getattr(args, "form_factor", None):
+            kw["form_factor"] = args.form_factor
+        if getattr(args, "metrics", None):
+            kw["metrics"] = _split_list(args.metrics)
+    if cmd == "indexnow-submit":
+        if getattr(args, "urls", None):
+            kw["urls"] = _split_list(args.urls)
+        if getattr(args, "host", None):
+            kw["host"] = args.host
+        if getattr(args, "key_location", None):
+            kw["key_location"] = args.key_location
     if cmd == "metrika-setup" and getattr(args, "counter", None):
         kw["counter_id"] = args.counter
     if cmd == "metrika-report":
@@ -580,6 +621,36 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
         sub.add_argument("--language", help="language code (default en)")
         sub.add_argument("--depth", type=int, help="number of result positions (default 10)")
         sub.add_argument("--country", help="country used by the provider coverage guard")
+    if cmd == "wayback-history":
+        _source_flag(sub, "--url", help="URL to look up in the Wayback Machine")
+        sub.add_argument("--limit", type=int, help="maximum snapshots to return")
+        sub.add_argument("--from-date", dest="from_date", help="earliest timestamp, e.g. 2024")
+        sub.add_argument("--to-date", dest="to_date", help="latest timestamp, e.g. 20260101")
+    if cmd == "crtsh-subdomains":
+        _source_flag(sub, "--domain", help="domain to search Certificate Transparency logs for")
+    if cmd == "gsc-query":
+        _source_flag(sub, "--site-url", dest="site_url", help="verified Search Console property")
+        sub.add_argument(
+            "--mode",
+            choices=("search_analytics", "inspect_url"),
+            help="search_analytics (default) or inspect_url",
+        )
+        sub.add_argument("--start-date", dest="start_date", help="period start (default 28daysAgo)")
+        sub.add_argument("--end-date", dest="end_date", help="period end (default today)")
+        sub.add_argument("--dimensions", help="comma-separated dimensions, e.g. query,page")
+        sub.add_argument("--row-limit", dest="row_limit", type=int, help="rows to return")
+        sub.add_argument("--inspection-url", dest="inspection_url", help="URL for mode=inspect_url")
+    if cmd == "crux-report":
+        _source_flag(sub, "--url", help="page URL to report on")
+        _source_flag(sub, "--origin", help="origin to report on, instead of a single URL")
+        sub.add_argument(
+            "--form-factor", dest="form_factor", choices=("PHONE", "DESKTOP", "TABLET")
+        )
+        sub.add_argument("--metrics", help="comma-separated CrUX metric names")
+    if cmd == "indexnow-submit":
+        _source_flag(sub, "--urls", help="comma-separated URLs to submit")
+        sub.add_argument("--host", help="host the submitted URLs and key belong to")
+        sub.add_argument("--key-location", dest="key_location", help="key file URL, if non-default")
     if cmd == "metrika-setup":
         _source_flag(sub, "--counter", help="Yandex Metrika counter ID")
     if cmd == "metrika-report":

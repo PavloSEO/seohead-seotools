@@ -1438,6 +1438,109 @@ def metrika_report(
     }
 
 
+def wayback_history(
+    url: str | None = None,
+    limit: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict[str, Any]:
+    """Every recorded Wayback Machine snapshot of a URL: when it changed, and what it looked like.
+
+    Free and keyless. Answers what a crawl cannot: *when* a page started returning its current
+    status, and what content preceded it — the difference between a bug report and a restoration
+    plan. A URL the archive never captured is not an error; it returns an empty list.
+    """
+    if not url:
+        raise ValueError("url required")
+    from seohead.data_sources import wayback as core
+
+    return core.history(url, limit=limit, from_date=from_date, to_date=to_date)
+
+
+def crtsh_subdomains(domain: str | None = None) -> dict[str, Any]:
+    """Subdomains discovered from public Certificate Transparency logs (crt.sh).
+
+    Free and keyless. Every TLS certificate ever issued for a domain is public record, so this
+    finds hosts that no page ever links to — the gap `mirror-check` and `regions-check` both
+    currently rely on being told about by hand.
+    """
+    if not domain:
+        raise ValueError("domain required")
+    from seohead.data_sources import crtsh as core
+
+    return core.subdomains(domain)
+
+
+def gsc_query(
+    site_url: str | None = None,
+    mode: str = "search_analytics",
+    start_date: str = "28daysAgo",
+    end_date: str = "today",
+    dimensions: list[str] | None = None,
+    row_limit: int = 1000,
+    inspection_url: str | None = None,
+) -> dict[str, Any]:
+    """Google Search Console: search performance (``mode=search_analytics``) or Google's own
+    indexing verdict for one URL (``mode=inspect_url``).
+
+    Requires an own, verified property and an OAuth2 bearer token — see
+    ``seohead sources-doctor`` and docs/SETUP.md. A missing token returns an explicit failure
+    naming what to configure; it never fabricates a result.
+    """
+    if not site_url:
+        raise ValueError("site_url required")
+    from seohead.data_sources import gsc as core
+
+    if mode == "inspect_url":
+        if not inspection_url:
+            raise ValueError("inspection_url required for mode=inspect_url")
+        return core.inspect_url(site_url, inspection_url)
+    if mode != "search_analytics":
+        raise ValueError("mode must be search_analytics or inspect_url")
+    return core.search_analytics(
+        site_url,
+        start_date=start_date,
+        end_date=end_date,
+        dimensions=dimensions,
+        row_limit=row_limit,
+    )
+
+
+def crux_report(
+    url: str | None = None,
+    origin: str | None = None,
+    form_factor: str | None = None,
+    metrics: list[str] | None = None,
+) -> dict[str, Any]:
+    """Field Core Web Vitals (LCP, INP, CLS) as real Chrome users experienced them, at the 75th
+    percentile — the honest counterpart to a synthesized lab score (see `render-check` and
+    issue #59). Pass exactly one of ``url``/``origin``. Requires a Chrome UX Report API key.
+    """
+    from seohead.data_sources import crux as core
+
+    return core.query(url=url, origin=origin, form_factor=form_factor, metrics=metrics)
+
+
+def indexnow_submit(
+    urls: list[str] | None = None,
+    host: str | None = None,
+    key_location: str | None = None,
+) -> dict[str, Any]:
+    """Push changed URLs to Bing, Yandex, Naver, and Seznam in one call.
+
+    Google has not joined IndexNow as of 2026 — a submission here does not affect Google's crawl
+    schedule. Requires a self-generated key, published at ``https://<host>/<key>.txt`` before the
+    first call; see docs/SETUP.md.
+    """
+    if not urls:
+        raise ValueError("urls required")
+    if not host:
+        raise ValueError("host required")
+    from seohead.data_sources import indexnow as core
+
+    return core.submit(urls, host=host, key_location=key_location)
+
+
 def regions_tree(save_to: str | None = None) -> dict[str, Any]:
     """Fetch the authoritative Yandex region tree used by the ``regions[]`` parameter.
 
@@ -1467,6 +1570,9 @@ def sources_doctor() -> dict[str, Any]:
         "yandex_cloud_folder": ("yandex-wordstat/folder_id", "YANDEX_CLOUD_FOLDER_ID"),
         "yandex_metrika": ("yandex-metrika/token", "YANDEX_METRIKA_TOKEN"),
         "dataforseo": ("dataforseo/login", "DATAFORSEO_LOGIN"),
+        "gsc": ("gsc/access_token", "GSC_ACCESS_TOKEN"),
+        "crux": ("crux/api_key", "CRUX_API_KEY"),
+        "indexnow": ("indexnow/key", "INDEXNOW_KEY"),
     }
     sources = {
         name: {
@@ -1531,6 +1637,11 @@ _RAW_HANDLERS = {
     "metrika_report": metrika_report,
     "google_keywords": google_keywords,
     "google_serp": google_serp,
+    "wayback_history": wayback_history,
+    "crtsh_subdomains": crtsh_subdomains,
+    "gsc_query": gsc_query,
+    "crux_report": crux_report,
+    "indexnow_submit": indexnow_submit,
 }
 
 # Journaling sits here rather than in each interface: the CLI and the MCP server

@@ -94,7 +94,7 @@ Then by the layer of the task.
 
 ## Tools without a skill of their own
 
-20 of the 49 commands are not named in any skill's own body (a mention inside
+25 of the 54 commands are not named in any skill's own body (a mention inside
 another tool's Markdown table above does not count) — used inline as plumbing
 inside a workflow's write-up, or not yet needed by one at all — and have no
 skill of their own, deliberately: a skill per single command is noise.
@@ -106,9 +106,11 @@ Page-level utilities: `asset-weight-check` · `boilerplate-report` ·
 `images-optimize` · `keywords-cluster` · `log-analyze` · `mirror-check` ·
 `redirects-check` · `redirects-generate` · `soft404-check`
 
-External data sources (`data_sources/` layer): `google-keywords` ·
-`google-serp` · `keywords-exact` · `keywords-expand` · `keywords-seasonality` ·
-`regions-tree` · `serp-fetch` · `spend-report`
+External data sources (`data_sources/` layer): `crtsh-subdomains` ·
+`crux-report` · `google-keywords` · `google-serp` · `gsc-query` ·
+`indexnow-submit` · `keywords-exact` · `keywords-expand` ·
+`keywords-seasonality` · `regions-tree` · `serp-fetch` · `spend-report` ·
+`wayback-history`
 
 Two of them are candidates for a skill if the work becomes regular:
 `log-analyze` (log parsing is its own genre with its own method) and
