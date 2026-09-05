@@ -6,7 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-54 callable tools · 132 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
+54 callable tools · 138 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -117,7 +117,7 @@ same handler used by its `seo_*` MCP counterpart; a test gate fails if the inter
 Five additional `sf_*` MCP tools turn a Screaming Frog crawl into machine-readable evidence,
 compact summaries, filtered findings, an export inventory, and a prioritized task backlog.
 
-The analyzer has a registry of **132 checks** across metadata, indexability, canonicals, redirects,
+The analyzer has a registry of **138 checks** across metadata, indexability, canonicals, redirects,
 internal links, sitemaps, hreflang, structured data, page depth, HTML weight, performance signals,
 and other crawl-derived evidence. It applies the checks supported by the available exports;
 missing input is reported as skipped with a reason, never silently converted into “zero issues.”

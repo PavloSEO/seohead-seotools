@@ -852,6 +852,53 @@ CHECKS: dict[str, dict[str, Any]] = {
         "fix": "Add a contextual link to the page from relevant body copy; a page reachable "
         "only through boilerplate is not linked the way a page in the content graph is.",
     },
+    # 9.B — link security & forms (issue #125). Same construction as INLINK_BOILERPLATE_ONLY
+    # just above: computed directly from a native crawl's own LinkEdge/FormEdge evidence
+    # (seohead.crawl.link_findings), added by the handler layer rather than through a
+    # registered export requirement, because an SF export carries neither a form inventory
+    # nor a link's rel/target/raw-href.
+    "UNSAFE_CROSS_ORIGIN_LINK": {
+        "severity": "warning",
+        "source": "crawl:link_findings",
+        "message": 'A target="_blank" link declares neither rel="noopener" nor rel="noreferrer"',
+        "fix": 'Add rel="noopener" (or "noreferrer") so the opened page cannot reach back '
+        "into this one through window.opener.",
+    },
+    "PROTOCOL_RELATIVE_LINK": {
+        "severity": "notice",
+        "source": "crawl:link_findings",
+        "message": 'Link href is written in the protocol-relative "//host/path" form',
+        "fix": "Write an explicit https:// href; a protocol-relative one silently follows "
+        "whatever scheme served the current page, including a plain-HTTP embed.",
+    },
+    "OUTLINK_TO_LOCALHOST": {
+        "severity": "warning",
+        "source": "crawl:link_findings",
+        "message": "A link points at a loopback address (localhost, 127.0.0.1, ::1, ...)",
+        "fix": "Replace the development/staging reference with the production URL.",
+    },
+    "FOLLOW_AND_NOFOLLOW_INLINKS": {
+        "severity": "notice",
+        "source": "crawl:link_findings",
+        "message": "The page receives both a followed and a nofollow internal link",
+        "fix": "Decide deliberately whether the page should be crawl-priority or not, and "
+        "make every internal link to it agree.",
+    },
+    "FORM_URL_INSECURE": {
+        "severity": "critical",
+        "source": "crawl:link_findings",
+        "message": "A form submits to an http:// action, so its data leaves the browser "
+        "unencrypted regardless of the page's own scheme",
+        "fix": "Point the form's action at an https:// URL.",
+    },
+    "FORM_ON_HTTP_URL": {
+        "severity": "critical",
+        "source": "crawl:link_findings",
+        "message": "A form with a password field is served from a plain-HTTP page, so the "
+        "credentials themselves travel unencrypted before the action URL is even reached",
+        "fix": "Serve the page itself over HTTPS; an HTTPS form action does not protect "
+        "input typed on an HTTP page.",
+    },
 }
 
 

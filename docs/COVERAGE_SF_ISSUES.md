@@ -15,17 +15,17 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| check | 108 | a registry check finds it |
+| check | 114 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
 | partial | 17 | we find part of it; the missing part is stated |
-| gap | 26 | we should find it and do not |
+| gap | 20 | we should find it and do not |
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
-remaining 212 issues, **141 are found today**, 17 are
-found in part, 26 are gaps worth closing, and
+remaining 212 issues, **147 are found today**, 17 are
+found in part, 20 are gaps worth closing, and
 28 need something we have decided not to build.
 
 A gap is not a defect. It is a named, deliberate absence — which is the only kind worth
@@ -57,11 +57,11 @@ having, because the alternative is an absence nobody has noticed.
 |---|---|---|---|
 | HTTP URLs | check | `HTTP_URL` |  |
 | Mixed Content | check | `MIXED_CONTENT` `INSECURE_SUBRESOURCE` |  |
-| Form URL Insecure | gap | — | form action attributes are not extracted during the crawl |
-| Form On HTTP URL | gap | — | same: forms are not part of the parsed record |
+| Form URL Insecure | check | `FORM_URL_INSECURE` |  |
+| Form On HTTP URL | check | `FORM_ON_HTTP_URL` |  |
 | Missing HSTS Header | check | `MISSING_HSTS` |  |
-| Unsafe Cross Origin Links | gap | — | target=_blank without rel=noopener is not checked; the link record has no rel beyond nofollow |
-| Protocol-Relative Resource Links | gap | — | // resource URLs are resolved before recording |
+| Unsafe Cross Origin Links | check | `UNSAFE_CROSS_ORIGIN_LINK` |  |
+| Protocol-Relative Resource Links | check | `PROTOCOL_RELATIVE_LINK` |  |
 | Missing Content-Security-Policy Header | tool | `security-check` |  |
 | Missing X-Content-Type-Options Header | tool | `security-check` |  |
 | Missing X-Frames-Options Header | tool | `security-check` |  |
@@ -244,14 +244,14 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Outlinks To Localhost | gap | — | a localhost destination is treated as any other off-host URL |
+| Outlinks To Localhost | check | `OUTLINK_TO_LOCALHOST` |  |
 | Pages With Uncrawlable Internal Outlinks | partial | — | excluded destinations are counted by reason in the run's excluded map, but not attributed back to the pages that linked them |
 | Pages Without Internal Outlinks | check | `NO_INTERNAL_OUTLINKS` |  |
 | Non-Indexable Page Inlinks Only | check | `ONLY_NONINDEXABLE_SOURCE_INLINKS` |  |
 | Internal Nofollow Outlinks | partial | — | nofollow is recorded per edge and gates crawling; there is no page-level finding for having them |
 | Pages With High External Outlinks | check | `HIGH_EXTERNAL_OUTLINKS` |  |
 | Pages With High Internal Outlinks | check | `HIGH_OUTLINKS` |  |
-| Follow & Nofollow Internal Inlinks To Page | gap | — | a page linked both ways from different sources is not called out |
+| Follow & Nofollow Internal Inlinks To Page | check | `FOLLOW_AND_NOFOLLOW_INLINKS` |  |
 | Internal Nofollow Inlinks Only | check | `ONLY_NOFOLLOW_INLINKS` |  |
 | Pages With High Crawl Depth | check | `DEEP_CRAWL_DEPTH` `DEEP_DISCOVERY_PATH` |  |
 | Internal Outlinks With No Anchor Text | partial | `GENERIC_ANCHOR_TEXT` | empty anchors are recorded; the generic-anchor check covers the wording, not the absence |

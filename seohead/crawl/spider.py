@@ -101,6 +101,9 @@ class LinkEdge:
     source: str
     destination: str
     anchor: str
+    # Derived from rel at parse time ("nofollow" in its tokens) and kept as its own field —
+    # the convenience every existing caller already reads — regardless of whether the fuller
+    # rel/target/raw_href below were captured for this edge.
     nofollow: bool
     # Where the link sits in the DOM (nav/header/sidebar/footer/content/other;
     # see tools/link_position.py). Empty when the crawl did not classify links
@@ -108,11 +111,44 @@ class LinkEdge:
     # cost, so it is switchable, and leaving it off means the position of every
     # edge is simply unmeasured rather than a false "content" or "".
     position: str = ""
+    # The full rel token set, the target attribute, and the href exactly as written before
+    # resolution -- gated by link_attributes.capture (default off), the same
+    # shape as position above. Measured on a synthetic 3387-page/150-link-per-page crawl
+    # (~508k edges, tests/chains/chain_site.py's own fixture is far smaller): with realistic
+    # attribute rates (~10-12% of links carry a target or rel, raw_href present on nearly all
+    # of them) these three fields add roughly 95 bytes/edge -- about +53% over the ~179
+    # bytes/edge this dataclass already costs -- ~46 MiB total for that crawl. That is
+    # `raw_href` doing almost all of the damage (a second URL-shaped string per edge); `rel`
+    # and `target` alone cost only a few bytes/edge each. Kept as one flag rather than three
+    # because a caller wanting cross-origin/protocol-relative detection needs all three
+    # together, and splitting them would not change which ones are actually expensive to have
+    # both on.
+    rel: tuple[str, ...] = ()
+    target: str = ""
+    raw_href: str = ""
+
+
+@dataclass
+class FormEdge:
+    """One ``<form>`` recorded during a crawl (issue #125).
+
+    Unlike ``LinkEdge``'s optional attributes above, this carries no memory-cost caveat:
+    forms are rare compared to links -- a handful per page at most -- so there is no
+    per-crawl total worth trading off, and it is always recorded.
+    """
+
+    page: str
+    method: str
+    action: str
+    has_password: bool
 
 
 @dataclass
 class SpiderResult(CrawlResult):
     links: list[LinkEdge] = field(default_factory=list)
+    # Every form found while parsing, regardless of settings -- see FormEdge's own docstring
+    # on why this one is unconditional where LinkEdge's rel/target/raw_href are not.
+    forms: list[FormEdge] = field(default_factory=list)
     excluded: dict[str, int] = field(default_factory=dict)
     max_depth_reached: int = 0
     robots_note: str = ""
@@ -245,7 +281,14 @@ def _read_links_jsonl(path: str) -> list[LinkEdge]:
         except ValueError:
             continue  # a truncated final line must not discard the rest
         if isinstance(raw, dict):
-            edges.append(LinkEdge(**{k: v for k, v in raw.items() if k in _LINK_EDGE_FIELDS}))
+            fields = {k: v for k, v in raw.items() if k in _LINK_EDGE_FIELDS}
+            # rel is a tuple in memory but a list once it has been through JSON. Without
+            # this, a resumed crawl would hand callers a different type for the same field
+            # than an uninterrupted one -- and comparisons against ("nofollow",) would
+            # quietly stop matching.
+            if "rel" in fields:
+                fields["rel"] = tuple(fields["rel"] or ())
+            edges.append(LinkEdge(**fields))
     return edges
 
 
@@ -438,6 +481,7 @@ def crawl_site(
     crawl_hyperlinks: bool = True,
     store_external_links: bool = True,
     crawl_redirects: bool = True,
+    capture_link_attributes: bool = False,
 ) -> SpiderResult:
     """Crawl one host breadth-first from ``start_url``, within ``scope``.
 
@@ -493,6 +537,15 @@ def crawl_site(
     common); ``content_area_config`` is the same config
     ``content_area.resolve_content_area`` takes, reused here so "content"
     means the same thing it means for word counts.
+    ``capture_link_attributes`` copies each recorded ``LinkEdge``'s full rel token set,
+    target attribute and raw (pre-resolution) href onto the edge — off by default for the
+    same reason ``classify_links`` is: measured on a synthetic multi-thousand-page crawl,
+    the three together add roughly 50% to per-edge memory (see ``LinkEdge``'s own
+    docstring for the number). With it off, every edge's ``rel``/``target``/``raw_href``
+    are simply unmeasured (``()``/``""``/``""``), and unsafe-cross-origin-link and
+    protocol-relative-link detection — the two findings that need them — report nothing
+    rather than a false clean result. ``nofollow`` is unaffected either way: it is derived
+    from rel at parse time regardless of this setting.
     """
     start = normalize_url(start_url)
     host = (urlsplit(start).hostname or "").lower() if start else ""
@@ -705,6 +758,10 @@ def crawl_site(
                         nofollow=nofollow,
                         position=link.get("position") or "",
                     )
+                    if capture_link_attributes:
+                        edge.rel = tuple((link.get("rel") or "").split())
+                        edge.target = link.get("target") or ""
+                        edge.raw_href = link.get("raw_href") or ""
                     result.links.append(edge)
                     _write_link(links_handle, edge)
                 if not crawl_hyperlinks:
@@ -722,6 +779,17 @@ def crawl_site(
                 seen.add(key)
                 queue.append((href, depth + 1))
 
+        def handle_forms(parsed: dict[str, Any] | None, url: str) -> None:
+            for form in (parsed or {}).get("forms") or []:
+                result.forms.append(
+                    FormEdge(
+                        page=url,
+                        method=form.get("method") or "get",
+                        action=form.get("action") or "",
+                        has_password=bool(form.get("has_password")),
+                    )
+                )
+
         def after_fetch(
             url: str, depth: int, record: PageRecord, parsed: dict[str, Any] | None
         ) -> bool:
@@ -730,6 +798,7 @@ def crawl_site(
             record.crawl_depth = depth
             result.pages.append(record)
             _write(handle, record)
+            handle_forms(parsed, url)
 
             if (
                 depth == 0

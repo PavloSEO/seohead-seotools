@@ -1,7 +1,7 @@
 # Audit coverage — the gap map
 
 **Purpose.** The list of SEO checks our SF audit
-(`seohead/sf/core/registry.py`, 132 checks) still **lacks**. For every gap:
+(`seohead/sf/core/registry.py`, 138 checks) still **lacks**. For every gap:
 value, implementation mode, likely home in the code. This is a filling plan,
 not a bug report. Items implemented since this map was written are marked
 **DONE**.
@@ -58,7 +58,7 @@ from different starting lists; read both before filing a new gap.
 
 **Context.** `SLOW_RESPONSE` already catches a slow server, but it is no
 substitute for real CWV — Google ranks by LCP/INP/CLS. This is the largest
-qualitative gap: none of the 132 checks measures them directly. (Lab LCP/CLS
+qualitative gap: none of the 138 checks measures them directly. (Lab LCP/CLS
 from one Chromium run exist in the live `render-check` as `metrics_lab` —
 labelled lab, not field.)
 
@@ -183,11 +183,11 @@ open.
 
 | # | Name | Checks | Value | Mode | Home |
 |---|---|---|---|---|---|
-| 8.1 | follow/nofollow conflict per target | One URL receives both follow and nofollow links from different pages | medium | B (graph over `*:Inlinks`, `follow` field) | extend `inlinks.py`, id `FOLLOW_NOFOLLOW_CONFLICT` |
+| 8.1 | follow/nofollow conflict per target | One URL receives both follow and nofollow links from different pages | medium | **DONE** — `FOLLOW_AND_NOFOLLOW_INLINKS` | `crawl/link_findings.py` (native crawl, not the `*:Inlinks` export) |
 | 8.2 | Nofollow onto an indexable page | An indexable page is linked to only via nofollow — equity lost | medium | B | id `NOFOLLOW_TO_INDEXABLE` |
 | 8.3 | External without nofollow | The page leaks equity without `rel=nofollow/sponsored/ugc` | low | B (Inlinks: external + rel) | id `EXTERNAL_DOFOLLOW` |
 | 8.4 | HTTP links on an HTTPS page | `http://` anchors inside an https page (≠ mixed content, which is about resources) | low | B (Inlinks: scheme) | id `HTTP_LINK_ON_HTTPS` |
-| 8.5 | Localhost/127.0.0.1 in links | A forgotten dev artefact | medium | B (Inlinks: host) | id `LOCALHOST_LINK` |
+| 8.5 | Localhost/127.0.0.1 in links | A forgotten dev artefact | medium | **DONE** — `OUTLINK_TO_LOCALHOST` | `crawl/link_findings.py` |
 | 8.6 | Generic anchor text | "click here"/"learn more" and localized equivalents | medium | **DONE** — `GENERIC_ANCHOR_TEXT` | `inlinks.py` |
 | 8.7 | Anchor without title (duplicating) | A link without `title=""` with an implicit anchor | low | B+ | id `ANCHOR_NO_TITLE` |
 
@@ -273,7 +273,7 @@ graphs; wiring its findings into the audit document is the missing half.
 | 14.4 | No Permissions-Policy | Missing permissions-policy | low | **DONE** in `security-check` | id `MISSING_PERMISSIONS_POLICY` |
 | 14.5 | SSL certificate lifetime | Expiring/expired (<30 days) | **high** | **DONE** in the live `domain-profile` (TLS section) | id `SSL_EXPIRING` |
 | 14.6 | Secrets leaked in HTML | API keys/tokens/AKIA patterns in source | **high** | A (HTML + regex) | id `LEAKED_SECRETS` |
-| 14.7 | Forms on HTTP | `<form>` on an http page or `action="http://…"` | medium | A (HTML) | id `INSECURE_FORM` |
+| 14.7 | Forms on HTTP | `<form>` on an http page or `action="http://…"` | medium | **DONE** — `FORM_URL_INSECURE` (insecure action) / `FORM_ON_HTTP_URL` (password field on an http page) | `crawl/link_findings.py` |
 
 **Context.** SF does not export security headers in bulk — a separate HTTP
 probe is needed (cheap, but a live network call). The live `security-check`
@@ -351,15 +351,16 @@ mode B without network ranks higher.
 7. **Secrets leaked in HTML** (§14.6) — **high**, **A/live**, cheap
    (regex). Not SEO, but a typical audit finding that raises the report's
    value.
-8. **follow/nofollow conflict + nofollow onto an indexable page**
-   (§8.1, 8.2) — medium, **mode B**, graph over `*:Inlinks`. Almost no new
-   logic in `inlinks.py`.
+8. **Nofollow onto an indexable page** (§8.2) — medium, **mode B**, graph
+   over `*:Inlinks`. §8.1 (the follow/nofollow conflict half of this item)
+   shipped as `FOLLOW_AND_NOFOLLOW_INLINKS`, from the native crawl rather
+   than this export (issue #125).
 9. **Session IDs and trailing-slash desync** (§10.2, 10.4) — medium,
    **mode B**, pure URL parsing.
 10. **Pagination canonical chain and loop** (§12.2–12.3) — medium,
     **mode B**, graph over rel_next x canonical.
 
-Cheap wins still open in mode B (one rule per check): `LOCALHOST_LINK`,
-`HTTP_LINK_ON_HTTPS`, `CANONICAL_TO_ERROR`, `CANONICAL_TO_HOMEPAGE`,
-`HREFLANG_NO_RETURN`, `HREFLANG_MULTI_LANG`, `URL_SESSION_ID` — all on
-data the loader already reads.
+Cheap wins still open in mode B (one rule per check): `HTTP_LINK_ON_HTTPS`,
+`CANONICAL_TO_ERROR`, `CANONICAL_TO_HOMEPAGE`, `HREFLANG_NO_RETURN`,
+`HREFLANG_MULTI_LANG`, `URL_SESSION_ID` — all on data the loader already
+reads. `LOCALHOST_LINK` shipped as `OUTLINK_TO_LOCALHOST` (issue #125).

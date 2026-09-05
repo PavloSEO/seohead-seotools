@@ -561,6 +561,35 @@ def test_both_hyperlink_defaults_store_and_follow():
     assert [edge.destination for edge in result.links] == ["https://example.com/a"]
 
 
+# ── link_attributes.capture ──────────────────────────────────────────────────
+
+_SITE_WITH_A_RICH_LINK = {
+    "https://example.com/": FakeResponse(
+        "<html><head><title>t</title></head><body>"
+        '<a href="//cdn.example/x" target="_blank" rel="noopener">cdn</a>'
+        "</body></html>"
+    ),
+    "https://example.com/robots.txt": ROBOTS_OK,
+}
+
+
+def test_capture_attributes_configured_records_rel_target_and_raw_href():
+    result = _crawl(_SITE_WITH_A_RICH_LINK, capture_link_attributes=True)
+    [edge] = result.links
+    assert edge.rel == ("noopener",)
+    assert edge.target == "_blank"
+    assert edge.raw_href == "//cdn.example/x"
+
+
+def test_default_capture_attributes_leaves_rel_target_and_raw_href_unmeasured():
+    result = _crawl(_SITE_WITH_A_RICH_LINK)
+    [edge] = result.links
+    assert edge.rel == ()
+    assert edge.target == ""
+    assert edge.raw_href == ""
+    assert edge.nofollow is False  # derived independently of capture_attributes
+
+
 # ── discovery.external.store ─────────────────────────────────────────────────
 
 
@@ -613,7 +642,8 @@ def test_redirects_crawl_default_follows_the_target():
 
 def test_handler_threads_the_remaining_settings_into_the_spider(monkeypatch, tmp_path):
     """discovery.hyperlinks.store, discovery.hyperlinks.crawl, discovery.external.store,
-    discovery.redirects.crawl, http.headers and speed.adaptive (#91)."""
+    discovery.redirects.crawl, link_attributes.capture, http.headers and speed.adaptive
+    (#91, #125)."""
     import seohead.crawl.spider as spider_mod
     from seohead.servers import handlers
 
@@ -635,6 +665,7 @@ def test_handler_threads_the_remaining_settings_into_the_spider(monkeypatch, tmp
                     "external": {"store": False},
                     "redirects": {"crawl": False},
                 },
+                "link_attributes": {"capture": True},
             }
         )
     )
@@ -647,6 +678,7 @@ def test_handler_threads_the_remaining_settings_into_the_spider(monkeypatch, tmp
     assert captured["crawl_hyperlinks"] is False
     assert captured["store_external_links"] is False
     assert captured["crawl_redirects"] is False
+    assert captured["capture_link_attributes"] is True
 
 
 def test_handler_threads_headers_and_adaptive_into_collect_urls(monkeypatch, tmp_path):
