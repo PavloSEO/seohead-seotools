@@ -2,9 +2,10 @@
 name: silo-audit
 description: >-
   Determines whether a website has a silo architecture (topical clusters, hubs, URL
-  depth, internal linking, and semantic coverage) or is a flat brochure site. Uses an
-  sf-analyzer crawl (audit.json: crawl_depth, inlinks, is_in_sitemap,
-  summary.sitemap) and the reference/silo-architecture.md guide. Produces a verdict of
+  depth, internal linking, and semantic coverage) or is a flat brochure site. Uses a crawl's
+  audit.json (crawl_depth, inlinks, is_in_sitemap, summary.sitemap) from either native
+  crawl-site or sf-analyzer — both producers share the same schema — and the
+  reference/silo-architecture.md guide. Produces a verdict of
   chaos / basic silo / extended silo plus a list of gaps. Triggers on: silo or not silo,
   silo architecture, website structure, topical clusters, semantic coverage, flat
   structure, website architecture, topical authority, site structure audit, silo
@@ -33,9 +34,9 @@ silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–3
 - The question is about individual crawl issues (broken links, duplicates, thin
   content) rather than structure — that is `sf-report`/`sf-tasks` reading the same
   `audit.json`, not this skill.
-- No `audit.json` from `sf-analyzer` exists and there is also no sitemap to fall
-  back on — there is no URL tree to build. Run `sf-analyzer` first, or obtain a
-  sitemap URL from the user.
+- No `audit.json` exists yet from either producer and there is also no sitemap to fall
+  back on — there is no URL tree to build. Run a crawl first (native `crawl-site` or
+  `sf-analyzer`), or obtain a sitemap URL from the user.
 - The ask is "check robots.txt / crawlability," not "is the structure a silo" —
   crawl blocking and URL architecture are different axes; use `robots-audit`.
   A page can be perfectly crawlable and still be architecturally flat.
@@ -44,9 +45,12 @@ silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–3
   full report rather than presenting this skill's output as the whole deliverable.
 
 ## Preconditions
-- [ ] `audit.json` from `sf-analyzer` is available (preferred — gives
-  `crawl_depth`, `inlinks`, `is_in_sitemap`, `summary.sitemap`), **or** a fetchable
-  `sitemap.xml` exists to build the path tree from as a fallback.
+- [ ] An `audit.json` is available (preferred — gives `crawl_depth`, `inlinks`,
+  `is_in_sitemap`, `summary.sitemap`) from **either** producer: native
+  `crawl-site` (see `control`) or `sf-analyzer` — both share the same
+  aggregator and carry the same fields, so an existing native run already
+  satisfies this precondition without restarting collection through SF. A
+  fetchable `sitemap.xml` is the fallback when neither exists yet.
 - [ ] `reference/silo-architecture.md` has been loaded before scoring, since the
   chaos/basic/extended thresholds and hub/cluster definitions live there, not in
   this file.
@@ -55,9 +59,13 @@ silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–3
   the coverage percentage in step 3 has no denominator to compare against.
 
 ## Workflow
-1. **Obtain crawl data.** You need `audit.json` from **sf-analyzer**; see
-   `../sf-analyzer/SKILL.md`. If it is unavailable, run a crawl first. Otherwise, work
-   from the sitemap: `curl -s https://example.com/sitemap.xml | grep -oP '(?<=<loc>)[^<]+'`.
+1. **Obtain crawl data.** Reuse an existing `audit.json` if one already exists — from native
+   `crawl-site` (`../control/SKILL.md`) or from `sf-analyzer` (`../sf-analyzer/SKILL.md`); both
+   producers share the aggregator, so declare specifically which of `crawl_depth`/`inlinks`/
+   `is_in_sitemap`/`summary.sitemap` are actually missing before running a new crawl through
+   either one. Only run a fresh crawl if none exists. Otherwise, work from the sitemap:
+   `curl -s https://example.com/sitemap.xml | grep -oE '<loc>[^<]*</loc>' | sed -E 's#</?loc>##g'`
+   (POSIX `-E`/`sed`, not GNU-only `-P`, so it also runs on macOS's stock BSD grep).
    Build the path tree from indexable HTML in `pages[]`; exclude `_next/`, `.js`, and
    images.
 2. **Structural metrics** calculated in Python from `pages[].metrics`:
@@ -130,11 +138,11 @@ silos, the filter matrix, cross-links, E-E-A-T, and coverage of 5–15% / 20–3
   just the current-state metrics.
 
 ## Cost
-No new `seohead <command>` calls of its own beyond what `sf-analyzer` already ran
-to produce `audit.json` — this skill only reads that file (or, in fallback mode,
-makes one `curl` request to `sitemap.xml`). All structural-metric computation is
-local Python over `pages[]`/`issues[]`; no paid API involved. Cost scales with
-`sf-analyzer`'s crawl, not with anything this skill does independently.
+No new `seohead <command>` calls of its own beyond what already produced `audit.json` —
+native `crawl-site` or `sf-analyzer` — this skill only reads that file (or, in fallback
+mode, makes one `curl` request to `sitemap.xml`). All structural-metric computation is
+local Python over `pages[]`/`issues[]`; no paid API involved. Cost scales with the
+producing crawl, not with anything this skill does independently.
 
 ## What to Deliver to the User
 - The architecture class (chaos / basic / extended) plus an evidence-based semantic
@@ -144,6 +152,7 @@ local Python over `pages[]`/`issues[]`; no paid API involved. Cost scales with
   cross-cluster links, and sitemap coverage.
 - A prioritized list of gaps and what to add to raise the silo level.
 
-Related skills: **sf-analyzer** provides `audit.json` and crawl data; **sf-report**
-provides a human-readable analysis; **sf-tasks** turns silo gaps into a backlog.
+Related skills: **control** (native `crawl-site`) and **sf-analyzer** each provide
+`audit.json` and crawl data; **sf-report** provides a human-readable analysis; **sf-tasks**
+turns silo gaps into a backlog.
 Load the theory from `reference/silo-architecture.md` through progressive disclosure.

@@ -31,11 +31,14 @@ is what lets the next run catch one in minutes instead of an afternoon.
 
 ```
 given a domain, what to do?
-   └─ control ────────── run the system: scope, crawl, scan, read the audit
-        │                 honestly, verify live, produce the deliverable
-        └─ seo-deep-audit ─ the analysis entry point, orchestrates the rest
-             └─ audit-roadmap ─ when the domain is new: scout the minimum
-                                first and decide what to collect
+   └─ control ────────── the entry point for any unscoped audit request: scope,
+        │                 crawl, scan, read the audit honestly, verify live,
+        │                 produce the deliverable
+        ├─ seo-deep-audit ─ delegate here for the crawl step instead of native
+        │                    crawl-site only when SF (licensed CLI or exports)
+        │                    is available and full-registry depth is wanted
+        └─ audit-roadmap ─ when the domain is new: scout the minimum
+                            first and decide what to collect
 ```
 
 Then by the layer of the task.
@@ -44,8 +47,8 @@ Then by the layer of the task.
 
 | Skill | When |
 |---|---|
-| **control** | Given a site and asked to audit it, or you are about to write a one-off script to check pages. The whole loop: scope, crawl, `log-scan` the run, read `audit.json`'s honesty fields before its findings, verify criticals live, build the deliverable. Routes to the method skills below rather than restating them; carries its own sub-skills and reference archive. Written against a 4 260-URL run over three live sites |
-| **seo-deep-audit** | Given a site and asked "look what's there". Single entry, distributes the work |
+| **control** | The single entry point for an unscoped "audit this site" request, or when you are about to write a one-off script to check pages. The whole loop: scope, crawl, `log-scan` the run, read `audit.json`'s honesty fields before its findings, verify criticals live, build the deliverable. Routes to the method skills below rather than restating them; carries its own sub-skills and reference archive. Written against a 4 260-URL run over three live sites |
+| **seo-deep-audit** | Not a second unscoped-audit entry point — `control` delegates its crawl step here when a licensed SF CLI or supplied exports are available and full-registry depth is wanted, and it is also fine to call directly once that decision is already made (SF/exports named or already in hand) |
 | **audit-roadmap** | Unfamiliar domain: 5 minutes of recon to decide what to collect next |
 | **sf-boundaries** | The fork "does Screaming Frog cover this, or does it need an agent?" — a router |
 
@@ -54,7 +57,7 @@ Then by the layer of the task.
 | Skill | When | Tool |
 |---|---|---|
 | **sf-analyzer** | There is a crawl or exports — produce a machine-readable audit | `sf run` |
-| **sf-config** | Configure SF once to maximize applicable coverage from the 104-check registry | — |
+| **sf-config** | Configure SF once to maximize applicable coverage from the 138-check registry | — |
 | **sf-report** | Turn the export into a human-readable report | `sf run --out` |
 | **sf-tasks** | Build a prioritized backlog from `audit.json` | `sf tasks` |
 

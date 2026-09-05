@@ -59,7 +59,8 @@ HOW to rewrite it. This skill fills that gap.
    not globally; `*` is the fallback. An empty `Disallow:` means "allow everything."
 3. **Collect reference data.** Take the list of live 200-status pages from the `sf-analyzer`
    audit (`audit.json`, the internal/200 field) and URLs from the sitemap:
-   `curl -sL https://SITE/sitemap.xml | grep -oP '(?<=<loc>)[^<]+'`. This represents
+   `curl -sL https://SITE/sitemap.xml | grep -oE '<loc>[^<]*</loc>' | sed -E 's#</?loc>##g'`
+   (POSIX `-E`/`sed`, not GNU-only `-P`, so it also runs on macOS's stock BSD grep). This represents
    "what should be indexed."
 4. **Checks (heuristics):**
    - **Blocks live, important URLs.** For each `Disallow`, check whether it matches 200-status

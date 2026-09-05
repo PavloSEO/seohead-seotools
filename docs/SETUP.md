@@ -19,7 +19,7 @@ supported by `config.json` search paths.
 
 ```bash
 git clone https://github.com/PavloSEO/seotools.git
-cd seohead-seotools
+cd seotools
 
 python3 -m venv .venv
 source .venv/bin/activate

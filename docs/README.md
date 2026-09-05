@@ -14,7 +14,7 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
 | Wondering what this can do end to end | [scenarios/](scenarios/README.md) — 56 chains, each with its commands, its output, its cost and its limits |
 | Looking for a tool | [TOOLS.md](TOOLS.md) — reference for all 54 |
 | Looking for a tool's exact arguments, types, defaults, or cost | [TOOL_REFERENCE.md](TOOL_REFERENCE.md) — generated from the MCP tool definitions |
-| Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 132, generated from the registry |
+| Looking for a check the SF audit runs | [CHECKS.md](CHECKS.md) — all 138, generated from the registry |
 | Wondering how this compares to a licensed crawler | [COVERAGE_SF_ISSUES.md](COVERAGE_SF_ISSUES.md) — all 320 published issues, each with a status |
 | Looking for a method, not a command | [SKILLS.md](SKILLS.md) — map of the 22 skills |
 | Looking for a no-key workflow | [RECIPES.md](RECIPES.md) — exports, traffic decline, bounded live audit |
@@ -62,7 +62,8 @@ core through two interfaces — CLI and local MCP. It is not a general-purpose c
   why the technology fingerprint database is not shipped.
 - **[COMPARISON.md](COMPARISON.md)** — where the set is stronger than the
   market and where it loses, to whom. Wins and holes are both named; the main
-  hole is that there is no crawler of our own.
+  hole is that the bundled `crawl-site` is bounded, not a general-purpose
+  web-scale crawler like Screaming Frog.
 - **[COVERAGE_GAPS.md](COVERAGE_GAPS.md)** — the map of what the audit still
   lacks, with implemented items marked as done.
 - **[CHECKLIST_AUDIT.md](CHECKLIST_AUDIT.md)** — the audit registry checked
