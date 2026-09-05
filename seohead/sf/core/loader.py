@@ -18,8 +18,11 @@ import pandas as pd
 #   "none": no token may appear (used to keep tab exports from matching their
 #           bulk ``*_inlinks`` cousins)
 EXPORT_MATCHERS: dict[str, dict[str, list[str]]] = {
-    # Master table — required.
-    "internal_all": {"all": ["internal"], "none": ["inlinks", "outlinks"]},
+    # Master table — required. Both tokens matter: "internal" alone also
+    # matches the partial per-type tabs (Internal:HTML, Internal:Images, ...),
+    # which are missing every non-matching-type row and would falsely satisfy
+    # the audit's one required source (#209).
+    "internal_all": {"all": ["internal", "all"], "none": ["inlinks", "outlinks"]},
     # Response-code tabs (NOT the inlinks bulk exports).
     "resp_4xx": {"all": ["4xx"], "none": ["inlinks"]},
     "resp_5xx": {"all": ["5xx"], "none": ["inlinks"]},
@@ -163,7 +166,13 @@ def _matches(filename: str, matcher: dict[str, list[str]]) -> bool:
 
 
 def discover_exports(exports_dir: str) -> dict[str, str]:
-    """Map each logical export key to the best matching file path in a dir."""
+    """Map each logical export key to its matching file path in a dir.
+
+    Raises when two files satisfy the same key: silently keeping whichever
+    sorts first would let a stale export replace the evidence the caller
+    asked for with nothing in the run metadata to say a choice was even made
+    (#210). The caller decides which file to keep by removing the other.
+    """
     if not os.path.isdir(exports_dir):
         raise NotADirectoryError(f"Exports directory not found: {exports_dir}")
     candidates = [
@@ -173,10 +182,14 @@ def discover_exports(exports_dir: str) -> dict[str, str]:
     ]
     found: dict[str, str] = {}
     for key, matcher in EXPORT_MATCHERS.items():
-        for name in candidates:
-            if _matches(name, matcher):
-                found[key] = os.path.join(exports_dir, name)
-                break
+        matches = [name for name in candidates if _matches(name, matcher)]
+        if len(matches) > 1:
+            raise ValueError(
+                f"Ambiguous export for {key!r}: {len(matches)} files match it in "
+                f"{exports_dir!r}: {', '.join(matches)}. Keep only one."
+            )
+        if matches:
+            found[key] = os.path.join(exports_dir, matches[0])
     return found
 
 
