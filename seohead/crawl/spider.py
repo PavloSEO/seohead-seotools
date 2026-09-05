@@ -1045,15 +1045,21 @@ def crawl_site(
                     if not to_fetch:
                         continue
 
-                    # ``pool.map`` yields results in the order of ``to_fetch``
-                    # regardless of which request actually finished first, so
-                    # every downstream step — recording, the circuit breaker,
-                    # link and redirect enqueueing — sees the same order the
-                    # sequential crawler would have used.
+                    # Futures are submitted up front and then consumed in the
+                    # order of ``to_fetch`` regardless of which request
+                    # actually finished first, so every downstream step —
+                    # recording, the circuit breaker, link and redirect
+                    # enqueueing — sees the same order the sequential crawler
+                    # would have used. Keeping the futures themselves (rather
+                    # than ``pool.map``'s generator) lets a breaker firing
+                    # partway through the batch still recover whichever later
+                    # requests already finished, instead of discarding them.
+                    futures = [pool.submit(dispatch, item) for item in to_fetch]
                     processed = 0
                     interrupted = False
                     try:
-                        for url, depth, record, parsed in pool.map(dispatch, to_fetch):
+                        for future in futures:
+                            url, depth, record, parsed = future.result()
                             processed += 1
                             if after_fetch(url, depth, record, parsed):
                                 stopped = True
@@ -1063,10 +1069,33 @@ def crawl_site(
                         # ones whose result was never consumed here are not
                         # known to be processed, so they (and anything not yet
                         # dispatched) go back to the front of the queue rather
-                        # than being dropped from the frontier.
+                        # than being dropped from the frontier. A future's
+                        # completion is not established here, so it is always
+                        # requeued rather than risked on a `.done()` check
+                        # that could race the interrupt itself.
                         interrupted = True
 
-                    if interrupted or stopped:
+                    if stopped and not interrupted:
+                        # The breaker fired on an earlier, ordered result, but
+                        # later requests in this same batch ran concurrently
+                        # and may have already completed. Merge each one that
+                        # has — its PageRecord and sidecar write, its forms,
+                        # its discovered links — before requeueing anything,
+                        # so the checkpoint holds only work that never
+                        # resolved rather than repeating requests that already
+                        # reached the origin.
+                        requeue: list[tuple[str, int]] = []
+                        for item, future in zip(
+                            to_fetch[processed:], futures[processed:], strict=True
+                        ):
+                            if future.done():
+                                url, depth, record, parsed = future.result()
+                                after_fetch(url, depth, record, parsed)
+                            else:
+                                requeue.append(item)
+                        for item in reversed(requeue):
+                            queue.appendleft(item)
+                    elif interrupted:
                         for item in reversed(to_fetch[processed:]):
                             queue.appendleft(item)
                     if interrupted:
