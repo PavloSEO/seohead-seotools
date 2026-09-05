@@ -223,9 +223,13 @@ def _parse_delta_seconds(value: str) -> float | None:
     never let it shrink a corrected initial age below what ``Date`` alone would give.
     """
     value = value.strip()
-    if not value or not value.isdigit():
+    if not value or not value.isascii() or not value.isdigit():
         return None
-    return float(min(int(value), _MAX_DELTA_SECONDS))
+    digits = value.lstrip("0") or "0"
+    maximum = str(_MAX_DELTA_SECONDS)
+    if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
+        return float(_MAX_DELTA_SECONDS)
+    return float(int(digits))
 
 
 def corrected_initial_age(headers: dict[str, str], receipt_time: float) -> float:

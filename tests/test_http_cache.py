@@ -157,7 +157,7 @@ def test_invalid_age_values_are_ignored_and_never_lengthen_freshness(tmp_path):
     that shrinks the corrected initial age below what ``Date`` would otherwise say — and a
     negative value must never be treated as "younger than fresh"."""
     receipt_time = 1_000_000.0
-    for bad in ("-5", "not-a-number", "", "5.5", "  ", "+5"):
+    for bad in ("-5", "not-a-number", "", "5.5", "  ", "+5", "²", "٩"):
         assert corrected_initial_age({"age": bad}, receipt_time) == 0.0, bad
 
     # And end to end: a bogus Age on an otherwise-fresh response must not make it look older
@@ -173,6 +173,27 @@ def test_invalid_age_values_are_ignored_and_never_lengthen_freshness(tmp_path):
     )
     outcome = cache.decide("https://example.test/", {"User-Agent": "seohead"})
     assert outcome.status == "hit"
+
+
+def test_oversized_and_zero_padded_age_values_are_bounded_without_overflow():
+    """A large valid header must cap before ``int`` sees it, while leading
+    zeros still describe the same delta-seconds value."""
+    receipt_time = 1_000_000.0
+    assert corrected_initial_age({"age": "0" * 5_000 + "59"}, receipt_time) == 59.0
+    assert corrected_initial_age({"age": "9" * 5_000}, receipt_time) == float(2**31 - 1)
+
+
+def test_non_ascii_age_does_not_crash_cache_store(tmp_path):
+    """Malformed Latin-1 response bytes must be ignored at the public store boundary."""
+    cache = ResponseCache(tmp_path, mode="live")
+    cache.store(
+        "https://example.test/",
+        {"User-Agent": "seohead"},
+        200,
+        {"cache-control": "max-age=60", "age": "²"},
+        "body",
+    )
+    assert cache.decide("https://example.test/", {"User-Agent": "seohead"}).status == "hit"
 
 
 def test_a_legacy_v2_disk_entry_is_never_read_as_fresh(tmp_path):
