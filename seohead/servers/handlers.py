@@ -480,6 +480,9 @@ def crawl_site(
                 os.remove(pages_resume_path)
         discovery = {
             "mode": "spider",
+            # #332: named here too, matching list mode -- a robots-blocked count
+            # without the policy that produced it is not self-explanatory.
+            "directive_policy": settings["robots"]["policy"],
             "max_depth_reached": result.max_depth_reached,
             "links_seen": len(result.links),
             "excluded": result.excluded,
