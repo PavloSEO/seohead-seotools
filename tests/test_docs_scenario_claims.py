@@ -71,6 +71,7 @@ def test_robots_blocked_names_the_user_agent_token_setting():
     chain = doc.split("## The chain", 1)[1].split("## What comes out", 1)[0]
     assert "robots.user_agent_token" in chain
     assert "Googlebot" in chain
+    assert "Save the following JSON as `./config.json`" in chain
 
 
 def test_robots_blocked_respecting_and_report_only_share_one_config():

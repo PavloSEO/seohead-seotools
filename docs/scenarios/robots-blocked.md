@@ -31,7 +31,7 @@ Groups come back per user-agent with their `allow`, `disallow` and `crawl_delay`
 sitemap the file declares. Reading `robots.txt` by eye is how a rule that applies only to one
 agent gets mistaken for a site-wide block, and the other way round.
 
-**2. Save the same token as `./config.json`, and crawl respecting it — the honest baseline.**
+**2. Save the following JSON as `./config.json`, and crawl respecting it — the honest baseline.**
 
 ```json
 {"robots": {"user_agent_token": "Googlebot"}}

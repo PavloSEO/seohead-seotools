@@ -109,9 +109,7 @@ def _seed_workdir(tmp_path: Path, base_url: str) -> None:
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "audit.json")
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "old-audit.json")
     shutil.copy(ROOT / "examples" / "audit.json", tmp_path / "new-audit.json")
-    (tmp_path / "config.json").write_text(
-        json.dumps({"robots": {"user_agent_token": "Googlebot"}}), encoding="utf-8"
-    )
+    shutil.copy(ROOT / "config.example.json", tmp_path / "config.json")
     # A finished, internally consistent crawl output, so a documented `log-scan --run ./run`
     # actually scans something instead of reporting that the directory is empty.
     shutil.copytree(ROOT / "tests" / "doc_fixtures" / "run", tmp_path / "run")
@@ -167,6 +165,10 @@ def test_documented_command_executes_or_at_least_still_parses(
     from seohead.cli import main as cli_main
 
     _seed_workdir(tmp_path, fixture_site)
+    if command.source.name == "robots-blocked.md":
+        (tmp_path / "config.json").write_text(
+            json.dumps({"robots": {"user_agent_token": "Googlebot"}}), encoding="utf-8"
+        )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SEOHEAD_ALLOW_PRIVATE_NETWORKS", "1")
     # A command with no explicit `echo ... |` payload still probes stdin for JSON
