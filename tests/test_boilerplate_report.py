@@ -42,9 +42,9 @@ def test_nested_template_content_does_not_create_a_minority_group():
 
     report = B.boilerplate_consistency_report(
         [
-            {"url": "https://site.tld/a", "html": page("draft-a")},
-            {"url": "https://site.tld/b", "html": page("draft-a")},
-            {"url": "https://site.tld/c", "html": page("draft-b")},
+            {"url": "https://example.test/a", "html": page("draft-a")},
+            {"url": "https://example.test/b", "html": page("draft-a")},
+            {"url": "https://example.test/c", "html": page("draft-b")},
         ]
     )
 
