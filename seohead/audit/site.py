@@ -15,7 +15,7 @@ checks is more dangerous than one that states exactly which evidence is missing.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -208,6 +208,7 @@ def audit_site(
     concurrency: int = 5,
     render: bool = False,
     skip: list[str] | None = None,
+    tools: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a complete site audit into one contract-stable document.
 
@@ -219,8 +220,6 @@ def audit_site(
     deliberately conservative: an SEO audit must not resemble a load test to the
     target site.
     """
-    from seohead.servers import handlers
-
     if not url or not str(url).strip():
         return {"ok": False, "error": "URL is required"}
     start = normalize_url(str(url).strip())
@@ -236,6 +235,15 @@ def audit_site(
     except (TypeError, ValueError):
         return {"ok": False, "error": "limit and concurrency must be numeric"}
 
+    if tools is None:
+        # The analyzer is handed the tools it composes rather than importing the
+        # interface layer to fetch them (#221): seohead/audit reaching into
+        # seohead.servers inverted the dependency every other package follows,
+        # and the deferred import that made the resulting cycle survive import
+        # time is what kept it invisible. Failing by name here beats a
+        # TypeError several frames deeper.
+        return {"ok": False, "url": url, "error": "audit_site requires a tool registry"}
+
     skipped = set(skip or [])
     site_tools = [t for t in SITE_TOOLS if t not in skipped]
     page_tools = [t for t in PAGE_TOOLS if t not in skipped]
@@ -247,7 +255,7 @@ def audit_site(
     # format", and the audit silently falls back to a single page.
     sitemap_url = ""
     if "robots_check" in site_tools:
-        site["robots_check"] = _run(handlers.robots_check, url=start)
+        site["robots_check"] = _run(tools["robots_check"], url=start)
         declared = site["robots_check"].get("sitemaps") or []
         sitemap_url = declared[0] if declared else ""
         site_tools = [t for t in site_tools if t != "robots_check"]
@@ -258,11 +266,11 @@ def audit_site(
         futures = {
             tool: pool.submit(
                 _run,
-                handlers.HANDLERS[tool],
+                tools[tool],
                 **_site_kwargs(tool, start, domain, render, sitemap_url),
             )
             for tool in site_tools
-            if tool in handlers.HANDLERS
+            if tool in tools
         }
         for tool, future in futures.items():
             site[tool] = future.result()
@@ -275,11 +283,7 @@ def audit_site(
     page_urls = page_urls[:limit]
 
     def _one_page(page_url: str) -> dict[str, Any]:
-        results = {
-            tool: _run(handlers.HANDLERS[tool], url=page_url)
-            for tool in page_tools
-            if tool in handlers.HANDLERS
-        }
+        results = {tool: _run(tools[tool], url=page_url) for tool in page_tools if tool in tools}
         return _page_row(page_url, results)
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
