@@ -1774,6 +1774,9 @@ def sources_doctor() -> dict[str, Any]:
         }
         for name, (path, env) in checks.items()
     }
+    dataforseo_ready, dataforseo_components = creds.dataforseo_ready()
+    sources["dataforseo"]["ready"] = dataforseo_ready
+    sources["dataforseo"]["components"] = dataforseo_components
     from seohead.data_sources import spend as spend_core
 
     return {"ok": True, "sources": sources, "spend_log": str(spend_core.log_path())}
