@@ -28,6 +28,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+# The one definition of "most of the site", shared with the aggregator that
+# writes summary.implausible_checks -- two thresholds would eventually differ
+# and the scanner would contradict the report it reads.
+from seohead.sf.core.aggregate import IMPLAUSIBLE_SHARE
+
 __all__ = ["RULES", "Anomaly", "RunArtifacts", "load_run", "scan"]
 
 
@@ -379,12 +384,50 @@ def rule_representation_is_recorded(run: RunArtifacts) -> list[Anomaly]:
     ]
 
 
+def rule_a_check_does_not_describe_most_of_the_site(run: RunArtifacts) -> list[Anomaly]:
+    """A check covering more than half the crawl, named for a reviewer (#98).
+
+    Sibling of ``rule_a_check_cannot_exceed_its_population`` above, and the weaker
+    of the two on purpose: firing more often than there are pages is arithmetically
+    impossible and always a defect, while covering most of the pages is merely
+    suspicious. Three defects found on live sites (#94, #95, #96) all looked like
+    this and all passed their own unit tests, so the report itself has to say it.
+
+    Read from the audit rather than recomputed: ``summary.implausible_checks`` is
+    the same measure the report prints, and a scanner that computed its own would
+    eventually disagree with the document it is scanning.
+    """
+    if not run.audit:
+        return []
+    flagged = (run.audit.get("summary") or {}).get("implausible_checks") or []
+    out = []
+    for row in flagged:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            Anomaly(
+                rule="check_describes_most_of_the_site",
+                message=(
+                    f"{row.get('check')} describes "
+                    f"{float(row.get('share') or 0):.0%} of the crawled pages -- true of some "
+                    "sites, and what a broken check looks like on the rest"
+                ),
+                observed=row.get("pages"),
+                expected=f"under {IMPLAUSIBLE_SHARE:.0%} of pages, for a check about the unusual",
+                target=str(row.get("check")),
+                sources={"observed": "audit.json:summary.implausible_checks"},
+            )
+        )
+    return out
+
+
 RULES = (
     rule_recorded_size_matches_the_file,
     rule_text_ratio_is_a_percentage,
     rule_a_200_has_bytes,
     rule_findings_are_about_crawled_urls,
     rule_a_check_cannot_exceed_its_population,
+    rule_a_check_does_not_describe_most_of_the_site,
     rule_summary_matches_the_issue_rows,
     rule_canonical_to_redirect_has_no_answering_twin,
     rule_representation_is_recorded,

@@ -163,13 +163,19 @@ A check that fired on more than half the pages is almost always wrong — the to
 the *unusual*. On one live 124-page site, one check produced 392 of 529 findings: 74% of the
 report, and every one false. That was visible in one line, before reading a single URL.
 
+The report now says it for you. Any check covering more than half the crawled pages is listed
+under **"Look at these before trusting the rest"**, above the findings rather than in an
+appendix, and the same list is in `audit.json` as `summary.implausible_checks`. It is not a
+failure: a site really may have no meta description anywhere. It is the one minute of checking
+that would have caught all three of the defects live crawls found (#94, #95, #96).
+
 **And scan the run:**
 
 ```bash
 seohead log-scan --run ./run
 ```
 
-Eight rules, each written from a defect that shipped past the whole test suite. Exit 2 means
+Nine rules, each written from a defect that shipped past the whole test suite. Exit 2 means
 two numbers in the same run disagree with each other. Twenty seconds here is cheaper than a
 client asking why a 739 KB file is listed as 1.27 MB.
 

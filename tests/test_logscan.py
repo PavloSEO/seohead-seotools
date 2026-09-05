@@ -237,3 +237,43 @@ def test_the_cli_exits_zero_on_a_clean_run(tmp_path):
     from seohead.cli import main
 
     assert main(["log-scan", "--run", _clean_run(tmp_path)]) == 0
+
+
+def test_scan_names_a_check_that_describes_most_of_the_site(tmp_path):
+    """Issue #98: the report's own implausibility list must reach log-scan, so a run
+    whose findings are dominated by one check is caught without a person reading it."""
+    from seohead.tools.logscan import RunArtifacts, scan
+
+    run = RunArtifacts(
+        audit={
+            "summary": {
+                "by_check": {"URL_NOT_IN_SITEMAP": 392},
+                "implausible_checks": [
+                    {"check": "URL_NOT_IN_SITEMAP", "pages": 124, "share": 0.743}
+                ],
+            },
+            "issues": [],
+            "run": {},
+        }
+    )
+
+    result = scan(run)
+
+    named = [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]
+    assert len(named) == 1
+    assert named[0]["target"] == "URL_NOT_IN_SITEMAP"
+    assert "74%" in named[0]["message"]
+
+
+def test_scan_stays_quiet_when_no_check_dominates(tmp_path):
+    """An empty implausibility list is the ordinary case and must produce no anomaly —
+    a scanner that cried on every run would be ignored on the run that mattered."""
+    from seohead.tools.logscan import RunArtifacts, scan
+
+    run = RunArtifacts(
+        audit={"summary": {"by_check": {}, "implausible_checks": []}, "issues": [], "run": {}}
+    )
+
+    result = scan(run)
+
+    assert not [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]
