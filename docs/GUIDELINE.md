@@ -175,8 +175,10 @@ that would have caught all three of the defects live crawls found (#94, #95, #96
 seohead log-scan --run ./run
 ```
 
-Nine rules, each written from a defect that shipped past the whole test suite. Exit 2 means
-two numbers in the same run disagree with each other. Twenty seconds here is cheaper than a
+Eight rules, each written from a defect that shipped past the whole test suite. Exit 2 means
+two numbers in the same run disagree with each other. Beside them, under `review`, sit the
+checks that describe most of the site: not a contradiction, since a uniform site makes them
+true, so they never change the exit code -- only ask for a minute of your attention. Twenty seconds here is cheaper than a
 client asking why a 739 KB file is listed as 1.27 MB.
 
 ---

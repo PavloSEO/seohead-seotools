@@ -259,10 +259,13 @@ def test_scan_names_a_check_that_describes_most_of_the_site(tmp_path):
 
     result = scan(run)
 
-    named = [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]
+    named = [a for a in result["review"] if a["rule"] == "check_describes_most_of_the_site"]
     assert len(named) == 1
     assert named[0]["target"] == "URL_NOT_IN_SITEMAP"
     assert "74%" in named[0]["message"]
+    # It is a prompt to look, not a contradiction: it must not reach the bucket
+    # that makes log-scan exit non-zero.
+    assert not [a for a in result["anomalies"] if a["rule"] == "check_describes_most_of_the_site"]
 
 
 def test_scan_stays_quiet_when_no_check_dominates(tmp_path):

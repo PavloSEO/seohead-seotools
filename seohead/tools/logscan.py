@@ -421,13 +421,20 @@ def rule_a_check_does_not_describe_most_of_the_site(run: RunArtifacts) -> list[A
     return out
 
 
+# Separate from RULES on purpose. An Anomaly is a pair of facts that cannot both
+# be true, and log-scan exits 2 for one. A check describing most of the site is
+# not that: on a site with no meta descriptions anywhere it is simply correct, so
+# treating it as a contradiction would fail every run on a uniform site and the
+# exit code would stop meaning anything. These are reported beside the anomalies,
+# under their own key, and never change the exit code (issue #98).
+REVIEW_RULES = (rule_a_check_does_not_describe_most_of_the_site,)
+
 RULES = (
     rule_recorded_size_matches_the_file,
     rule_text_ratio_is_a_percentage,
     rule_a_200_has_bytes,
     rule_findings_are_about_crawled_urls,
     rule_a_check_cannot_exceed_its_population,
-    rule_a_check_does_not_describe_most_of_the_site,
     rule_summary_matches_the_issue_rows,
     rule_canonical_to_redirect_has_no_answering_twin,
     rule_representation_is_recorded,
@@ -448,10 +455,17 @@ def scan(run: RunArtifacts, max_per_rule: int = 20) -> dict[str, Any]:
         name = found[0].rule if found else rule.__name__.removeprefix("rule_")
         per_rule[name] = per_rule.get(name, 0) + len(found)
         anomalies.extend(a.as_dict() for a in found[:max_per_rule])
+    review: list[dict[str, Any]] = []
+    for rule in REVIEW_RULES:
+        review.extend(item.as_dict() for item in rule(run)[:max_per_rule])
     return {
         "ok": True,
         "anomalies": anomalies,
         "anomaly_count": sum(per_rule.values()),
+        # Not anomalies and deliberately not counted as such: things a person
+        # should confirm before trusting the report, which do not make the run
+        # self-contradictory and do not affect the exit code.
+        "review": review,
         "by_rule": {k: v for k, v in per_rule.items() if v},
         "read": {
             "audit": bool(run.audit),
