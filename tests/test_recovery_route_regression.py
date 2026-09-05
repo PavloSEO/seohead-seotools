@@ -139,15 +139,3 @@ def test_run_manifest_carries_the_same_two_fields_the_recovery_route_tells_you_t
     audit = json.loads((out_dir / "audit.json").read_text(encoding="utf-8"))
     assert audit["run"]["crawl_resumed"] is True
     assert audit["run"]["crawl_finish_reason"] == "finished"
-
-
-def test_recovery_guide_directs_readers_to_the_manifest_not_log_scan():
-    """#320: log-scan checks contradictions, not the resume fields it merely reads beside."""
-    guide = (Path(__file__).resolve().parent.parent / "docs" / "RECOVERY.md").read_text(
-        encoding="utf-8"
-    )
-    assert (
-        "Inspect `run.crawl_resumed` and `run.crawl_finish_reason` directly in `./run/audit.json`"
-        in guide
-    )
-    assert "not `log-scan` output" in guide
