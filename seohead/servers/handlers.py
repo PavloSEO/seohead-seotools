@@ -1199,28 +1199,38 @@ def serp_fetch(
 
     The synchronous endpoint is deliberately excluded because it costs roughly sixteen times more.
     Batch operations are launched together and polled as a group, so N queries take approximately
-    one batch duration rather than N sequential request durations. Submitted operations are billed
-    even if polling times out; their operation records remain in the local spend journal.
+    one batch duration rather than N sequential request durations. An exact duplicate query is
+    billed once, since a second submission of identical text could never surface a second result.
+    Submitted operations are billed even if polling times out; their operation records remain in
+    the local spend journal. A submission the provider rejected outright is never billed and
+    reaches the caller as an explicit error, distinct from a billed operation that timed out.
     """
     targets = [q for q in ([query] if query else []) + list(queries or []) if q]
     if not targets:
         raise ValueError("query or queries required")
+    unique_targets = list(dict.fromkeys(targets))
     from seohead.data_sources.credentials import MissingCredential
     from seohead.data_sources.yandex_cloud import WebSearch
 
     try:
         client = WebSearch()
-        raw = client.search_batch(targets, region=region, groups=top)
+        raw = client.search_batch(unique_targets, region=region, groups=top)
     except MissingCredential as exc:
         return {"ok": False, "error": str(exc)}
     except RuntimeError as exc:
         return {"ok": False, "error": str(exc)}
-    results = {q: {"docs": v.get("docs", []), "error": v.get("error")} for q, v in raw.items()}
-    missing = [q for q in targets if q not in results]
+    results = {
+        q: {"docs": v.get("docs", []), "error": v.get("error"), "status": v.get("status")}
+        for q, v in raw.items()
+    }
+    # A query is only ever absent here because its operation was billed and never finished
+    # before the timeout: search_batch already gives every rejected or lost submission an
+    # explicit entry above, so this is never a stand-in for "the provider said no".
+    missing = [q for q in unique_targets if q not in results]
     return {
         "ok": True,
         "region": region,
-        "requested": len(targets),
+        "requested": len(unique_targets),
         "returned": len(results),
         "results": results,
         "not_returned": missing,
