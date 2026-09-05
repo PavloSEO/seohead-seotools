@@ -65,6 +65,31 @@ def test_all_mcp_tools_have_structured_schemas_and_safety_annotations():
     assert crawl.destructiveHint is False
     assert crawl.openWorldHint is True
 
+    tasks = tools["sf_audit_tasks"].annotations
+    assert tasks.readOnlyHint is False
+    assert tasks.destructiveHint is False
+    assert tasks.openWorldHint is False
+
+
+def test_report_build_accepts_an_audit_document_or_json_path(monkeypatch):
+    """The MCP schema must expose both input forms the shared handler supports (#247)."""
+    received = []
+
+    def fake_report_build(**kwargs):
+        received.append(kwargs["audit"])
+        return {"ok": True}
+
+    monkeypatch.setattr("seohead.servers.handlers.report_build", fake_report_build)
+    tool = next(
+        tool
+        for tool in build_server()._tool_manager.list_tools()
+        if tool.name == "seo_report_build"
+    )
+
+    assert asyncio.run(tool.run({"audit": {"synthetic": True}})) == {"ok": True}
+    assert asyncio.run(tool.run({"audit": "synthetic-audit.json"})) == {"ok": True}
+    assert received == [{"synthetic": True}, "synthetic-audit.json"]
+
 
 async def _call_over_stdio(tool: str, arguments: dict) -> object:
     params = StdioServerParameters(

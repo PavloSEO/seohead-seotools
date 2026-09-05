@@ -500,7 +500,9 @@ def build_server():  # -> FastMCP
         )
 
     @mcp.tool(annotations=create_files, structured_output=True)
-    def seo_report_build(audit: dict, fmt: str = "xlsx", out: str | None = None) -> dict[str, Any]:
+    def seo_report_build(
+        audit: dict | str, fmt: str = "xlsx", out: str | None = None
+    ) -> dict[str, Any]:
         """Turn an audit document into a file: xlsx, docx, csv, md or json. Pass the dict
         returned by seo_site_audit, an SF Analyzer audit.json from sf_audit_run (or a
         path to either one's JSON) — both schemas are recognized and normalized before
