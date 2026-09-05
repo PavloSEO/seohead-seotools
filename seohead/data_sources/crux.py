@@ -49,6 +49,14 @@ def _api_error(exc: urllib.error.HTTPError) -> str:
         return str(exc.reason)
 
 
+def _response_object(raw: str) -> dict[str, Any] | None:
+    try:
+        body = json.loads(raw)
+    except (AttributeError, ValueError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
 def query(
     *,
     url: str | None = None,
@@ -69,7 +77,7 @@ def query(
     if bool(url) == bool(origin):
         raise ValueError("exactly one of url or origin is required")
     try:
-        key = api_key or crux_api_key()
+        api_token = api_key or crux_api_key()
     except MissingCredential as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -81,7 +89,7 @@ def query(
 
     fetch = fetcher or _default_fetcher
     try:
-        raw = fetch(payload, key)
+        raw = fetch(payload, api_token)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return {"ok": True, "target": url or origin, "metrics": {}, "note": "no CrUX data"}
@@ -89,16 +97,30 @@ def query(
     except (urllib.error.URLError, TimeoutError) as exc:
         return {"ok": False, "error": f"CrUX request failed: {exc}"}
 
-    body = json.loads(raw) if raw.strip() else {}
-    record = body.get("record") or {}
-    metric_data = record.get("metrics") or {}
+    body = _response_object(raw)
+    if body is None:
+        return {"ok": False, "error": "CrUX malformed response"}
+    record = body.get("record")
+    if not isinstance(record, dict):
+        return {"ok": False, "error": "CrUX malformed response"}
+    record_key = record.get("key", {})
+    metric_data = record.get("metrics", {})
+    if not isinstance(record_key, dict) or not isinstance(metric_data, dict):
+        return {"ok": False, "error": "CrUX malformed response"}
+    values_by_metric: dict[str, dict[str, Any]] = {}
+    for name, values in metric_data.items():
+        if not isinstance(values, dict):
+            return {"ok": False, "error": "CrUX malformed response"}
+        percentiles = values.get("percentiles", {})
+        if not isinstance(percentiles, dict):
+            return {"ok": False, "error": "CrUX malformed response"}
+        values_by_metric[name] = percentiles
     return {
         "ok": True,
         "target": url or origin,
-        "form_factor": (record.get("key") or {}).get("formFactor"),
+        "form_factor": record_key.get("formFactor"),
         "collection_period": record.get("collectionPeriod"),
         "metrics": {
-            name: {"p75": (values.get("percentiles") or {}).get("p75")}
-            for name, values in metric_data.items()
+            name: {"p75": percentiles.get("p75")} for name, percentiles in values_by_metric.items()
         },
     }
