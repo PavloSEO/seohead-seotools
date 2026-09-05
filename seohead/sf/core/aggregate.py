@@ -120,6 +120,50 @@ def _health_score(
     return max(0, min(100, round(score)))
 
 
+# A check that fires on most of a crawl is almost always wrong. This tool exists
+# to find the unusual, so a finding that describes the majority of a site is
+# either a site-wide fact stated one page at a time, or a defect in the check --
+# and the three defects found on live sites in issue #98 were all the second.
+# #94 accounted for 74% of one report before anybody noticed by reading it.
+#
+# Not a failure: a site really can have no meta descriptions anywhere, and saying
+# so 400 times is correct. This only says which checks a reviewer must look at
+# before trusting the report, which is the one line that would have caught all
+# three.
+IMPLAUSIBLE_SHARE = 0.5
+
+
+def _implausible_checks(issues: list[Issue], n_pages: int) -> list[dict[str, Any]]:
+    """Checks whose findings cover more than ``IMPLAUSIBLE_SHARE`` of the crawled pages.
+
+    Counted by distinct page, not by occurrence: a check can fire many times on
+    one page (#94 fired 392 times across 124 pages), and it is the breadth that
+    makes a finding suspect, not the volume.
+    """
+    if n_pages <= 0:
+        return []
+    pages_by_check: dict[str, set[str]] = {}
+    for issue in issues:
+        targets = {issue.target_url} if issue.target_url else set()
+        targets |= {
+            str(loc.get("url"))
+            for loc in issue.locations
+            if isinstance(loc, dict) and loc.get("url")
+        }
+        if targets:
+            pages_by_check.setdefault(issue.check, set()).update(targets)
+    flagged = [
+        {
+            "check": check_id,
+            "pages": len(urls),
+            "share": round(len(urls) / n_pages, 3),
+        }
+        for check_id, urls in pages_by_check.items()
+        if len(urls) / n_pages > IMPLAUSIBLE_SHARE
+    ]
+    return sorted(flagged, key=lambda row: (-row["share"], row["check"]))
+
+
 def aggregate(
     ctx: AuditContext,
     run: dict[str, Any],
@@ -200,6 +244,11 @@ def aggregate(
             "notice": by_severity.get("notice", 0),
         },
         "by_check": dict(sorted(by_check.items(), key=lambda kv: (-kv[1], kv[0]))),
+        # Checks a reviewer must look at before trusting the rest (issue #98).
+        # Empty is the ordinary case, and an empty list is still reported so
+        # "nothing looked suspicious" is visible rather than inferred from a
+        # missing key.
+        "implausible_checks": _implausible_checks(issues, n_pages),
         "health_score": _health_score(by_severity, n_pages, weights),
     }
 

@@ -105,6 +105,26 @@ def write_markdown(result: AuditResult, path: str) -> str:
         )
         w("")
 
+    # Printed above the findings, not in an appendix: this exists to be read
+    # before the report is believed, and a reader who has already gone through
+    # 400 findings has spent the effort it was meant to save (issue #98).
+    implausible = s.get("implausible_checks") or []
+    if implausible:
+        w("## Look at these before trusting the rest")
+        w("")
+        w(
+            "Each check below describes more than half the crawled pages. That can be true "
+            "-- a site really may have no meta description anywhere -- but it is also what "
+            "a broken check looks like, and it is worth one minute of checking against the "
+            "live site before the rest of this report is acted on."
+        )
+        w("")
+        w("| Check | Pages | Share of crawl |")
+        w("|---|---:|---:|")
+        for row in implausible:
+            w(f"| `{row['check']}` | {row['pages']} | {row['share']:.0%} |")
+        w("")
+
     # group issues by severity
     by_sev_issues: dict[str, list[Issue]] = defaultdict(list)
     for issue in result.issues:
