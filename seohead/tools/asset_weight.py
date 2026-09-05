@@ -51,7 +51,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from seohead.recon.net import UA, http_client
-from seohead.tools.parser import document_base_url
+from seohead.tools.parser import document_base_url, is_inert_template_content
 
 DEFAULT_TIMEOUT = 15.0
 # The issue's own suggested threshold for a single oversized file.
@@ -177,16 +177,24 @@ def is_render_blocking(tag_name: str, attrs: dict[str, Any]) -> bool:
 
 
 def find_render_blocking_resources(soup: BeautifulSoup, base_url: str) -> list[dict[str, Any]]:
-    """Render-blocking ``<script src>`` / ``<link rel=stylesheet>`` in ``<head>``."""
+    """Render-blocking ``<script src>`` / ``<link rel=stylesheet>`` in ``<head>``.
+
+    Skips ``<template>`` descendants: a fragment a script has not cloned in yet
+    blocks nothing, so it must not appear as a render-blocking resource (#236).
+    """
     head = soup.head
     if head is None:
         return []
     out = []
     for tag in head.find_all("script"):
+        if is_inert_template_content(tag):
+            continue
         src = tag.get("src")
         if src and is_render_blocking("script", tag.attrs):
             out.append({"url": urljoin(base_url, src), "tag": "script"})
     for tag in head.find_all("link"):
+        if is_inert_template_content(tag):
+            continue
         rels = tag.get("rel") or []
         rels = [rels] if isinstance(rels, str) else rels
         href = tag.get("href")
@@ -306,10 +314,18 @@ def flag_outlier_pages(
 
 
 def _discover_resources(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
-    """External ``<link rel=stylesheet>`` and ``<script src>`` URLs, deduplicated."""
+    """External ``<link rel=stylesheet>`` and ``<script src>`` URLs, deduplicated.
+
+    Skips ``<template>`` descendants: a stylesheet or script held only in a
+    DocumentFragment is never requested by a browser, so counting it would
+    fabricate bytes, minification, cache, and duplicate-library findings for a
+    resource nothing ever fetches (#236).
+    """
     seen: set[str] = set()
     out: list[dict[str, str]] = []
     for tag in soup.find_all("link"):
+        if is_inert_template_content(tag):
+            continue
         rels = tag.get("rel") or []
         rels = [rels] if isinstance(rels, str) else rels
         href = tag.get("href")
@@ -319,6 +335,8 @@ def _discover_resources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
                 seen.add(url)
                 out.append({"url": url, "kind": "css"})
     for tag in soup.find_all("script"):
+        if is_inert_template_content(tag):
+            continue
         src = tag.get("src")
         if src:
             url = urljoin(base_url, src.strip())

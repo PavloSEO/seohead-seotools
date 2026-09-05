@@ -10,7 +10,7 @@ infer the product from arbitrary HTML pages. This module therefore scores practi
 signals of model usefulness rather than treating mere file presence as success.
 
 The nine binary checks produce a score of ``passed * 10 / 9``:
-  1. An H1 containing the project name.
+  1. An H1 heading is present; when ``brand`` is supplied, it must name the project.
   2. At least three H2 sections.
   3. At least three Markdown links.
   4. A project or brand mention when ``brand`` is supplied.
@@ -50,8 +50,11 @@ _CATEGORY_HINTS = (
 def score_llms_txt(content: str, brand: str | None = None) -> dict[str, Any]:
     """Score ``llms.txt`` content against nine checks without network access.
 
-    ``brand`` supplies the project or brand name for check four. When omitted, the
-    check is deliberately reported as failed rather than inferred.
+    ``brand`` supplies the project or brand name for checks one and four. When
+    omitted, check four is deliberately reported as failed rather than inferred,
+    and check one is scored as mere heading presence -- with no expected name
+    to compare against, "the H1 names the project" is not something this
+    function can measure, so its own name says only what it actually checked.
     """
     if not content:
         return {"ok": False, "error": "llms.txt is empty or missing"}
@@ -60,7 +63,20 @@ def score_llms_txt(content: str, brand: str | None = None) -> dict[str, Any]:
     text_low = text.lower()
     lines = text.splitlines()
 
-    has_h1 = any(ln.lstrip().startswith("# ") and ln.strip("# ").strip() for ln in lines)
+    h1_text = next(
+        (
+            ln.lstrip("# ").strip()
+            for ln in lines
+            if ln.lstrip().startswith("# ") and ln.strip("# ").strip()
+        ),
+        None,
+    )
+    if brand:
+        h1_check_name = f"H1 heading names the project ({brand})"
+        has_h1 = h1_text is not None and brand.lower() in h1_text.lower()
+    else:
+        h1_check_name = "H1 heading is present"
+        has_h1 = h1_text is not None
     sections = [ln for ln in lines if ln.lstrip().startswith("## ")]
     links = re.findall(r"\[([^\]]+)\]\(([^)]+)\)", text)
 
@@ -81,7 +97,7 @@ def score_llms_txt(content: str, brand: str | None = None) -> dict[str, Any]:
     size_ok = len(content.encode("utf-8")) <= _MAX_BYTES
 
     checks = [
-        {"name": "H1 heading with project name", "passed": has_h1},
+        {"name": h1_check_name, "passed": has_h1},
         {"name": "At least 3 H2 sections", "passed": len(sections) >= 3},
         {"name": "At least 3 Markdown links", "passed": len(links) >= 3},
         {
@@ -146,7 +162,7 @@ def check_llms_txt(url: str, brand: str | None = None, timeout: float = 20.0) ->
     try:
         with client:
             resp = client.get(llms_url)
-        if resp.status_code == 404 or resp.status_code >= 400:
+        if resp.status_code == 404:
             # A missing file is a measured result, not a tool failure. Returning
             # ok=False would prevent the orchestrator from distinguishing absence
             # from a network error that made the check unavailable.
@@ -163,6 +179,19 @@ def check_llms_txt(url: str, brand: str | None = None, timeout: float = 20.0) ->
                     "curated context for AI systems; models must infer "
                     "the project from whichever pages they encounter"
                 ],
+            }
+        if resp.status_code >= 400:
+            # A 401/403/429/5xx answered the request without ever measuring whether
+            # the file exists (an access gate, a rate limit, or an upstream fault
+            # all withhold the body the same way a transport error does). Reporting
+            # this as exists:false would be a confident claim about content the
+            # server never actually served -- the same false-certainty mistake as
+            # treating a network error like a real absence.
+            return {
+                "ok": False,
+                "url": llms_url,
+                "status_code": resp.status_code,
+                "error": f"llms.txt could not be measured: server returned {resp.status_code}",
             }
         scored = score_llms_txt(resp.text, brand=brand)
         return {"url": llms_url, "status_code": resp.status_code, "exists": True, **scored}

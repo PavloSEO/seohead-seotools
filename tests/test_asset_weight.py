@@ -167,6 +167,24 @@ def test_find_render_blocking_resources_in_head():
     assert urls == {"https://example.com/a.js", "https://example.com/blocking.css"}
 
 
+def test_template_only_resources_are_not_render_blocking():
+    """A <template> is a DocumentFragment: nothing inside it blocks a paint that
+    never happens for it (issue #236 -- the same exclusion #140 gave links/images)."""
+    html = """
+    <html><head>
+      <template>
+        <script src="/never-loaded.js"></script>
+        <link rel="stylesheet" href="/never-loaded.css">
+      </template>
+      <script src="/real.js"></script>
+    </head><body></body></html>
+    """
+    soup = BeautifulSoup(html, features="lxml")
+    found = find_render_blocking_resources(soup, "https://example.com/")
+    urls = {f["url"] for f in found}
+    assert urls == {"https://example.com/real.js"}
+
+
 def test_font_display_swap_is_compliant():
     css = "@font-face { font-family: A; src: url(a.woff2); font-display: swap; }"
     assert find_missing_font_display(css) == []
@@ -600,6 +618,33 @@ def test_a_broken_resource_is_reported_not_silently_dropped():
 def test_page_fetch_failure_is_reported_as_an_error_not_raised():
     result = analyze_page_asset_weight("https://example.com/gone", fetcher=_fetcher({}))
     assert result == {"ok": False, "url": "https://example.com/gone", "status_code": 404}
+
+
+def test_template_only_resources_are_never_fetched():
+    """A stylesheet/script held only in a <template> is never requested by a browser,
+    so it must not be fetched, counted, or reported here either (issue #236). The
+    fetcher has no entry for the template-only URLs at all -- a fetch attempt on
+    them would 404 through the mapping's default and the test would still fail,
+    proving the exclusion happens before any network call, not just after."""
+    site = {
+        "https://example.com/": FakeResponse(
+            text=(
+                "<html><head>"
+                "<template>"
+                '<script src="/never-loaded.js"></script>'
+                '<link rel="stylesheet" href="/never-loaded.css">'
+                "</template>"
+                '<script src="/real.js"></script>'
+                "</head><body></body></html>"
+            )
+        ),
+        "https://example.com/real.js": FakeResponse(text="function f(){return 1}"),
+    }
+    result = analyze_page_asset_weight("https://example.com/", fetcher=_fetcher(site))
+    assert result["ok"] is True
+    urls = {r["url"] for r in result["resources"]}
+    assert urls == {"https://example.com/real.js"}
+    assert result["render_blocking"] == [{"url": "https://example.com/real.js", "tag": "script"}]
 
 
 def test_resource_fan_out_is_bounded():
