@@ -6,6 +6,8 @@ spot broken internal links and links that point at redirects (wasted crawl hops)
 
 from __future__ import annotations
 
+from urllib.parse import urldefrag
+
 from seohead.recon.net import http_client
 
 _UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
@@ -39,8 +41,9 @@ def check_links(
     seen: dict[str, dict] = {}
     for ln in links:
         href = ln.get("href")
-        if href and href.startswith(("http://", "https://")) and href not in seen:
-            seen[href] = ln
+        target, _fragment = urldefrag(href or "")
+        if target.startswith(("http://", "https://")) and target not in seen:
+            seen[target] = ln
     targets = list(seen.items())[:limit]
 
     broken: list[dict] = []

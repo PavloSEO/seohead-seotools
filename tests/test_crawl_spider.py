@@ -69,6 +69,68 @@ def test_visits_each_url_once_even_when_linked_twice():
     assert len(urls) == len(set(urls))
 
 
+def test_fragment_links_share_one_request_identity_but_remain_link_evidence():
+    site = {
+        "https://example.com/robots.txt": FakeResponse(
+            ROBOTS_OK, headers={"content-type": "text/plain"}
+        ),
+        "https://example.com/": page("/about#team", "/about"),
+        "https://example.com/about": page(),
+    }
+
+    result = _crawl(site)
+
+    assert [page.url for page in result.pages] == [
+        "https://example.com/",
+        "https://example.com/about",
+    ]
+    assert [edge.destination for edge in result.links] == [
+        "https://example.com/about#team",
+        "https://example.com/about",
+    ]
+
+
+def test_nofollow_query_link_does_not_consume_an_unenqueued_variant_slot():
+    site = {
+        "https://example.com/robots.txt": FakeResponse(
+            ROBOTS_OK, headers={"content-type": "text/plain"}
+        ),
+        "https://example.com/": FakeResponse(
+            '<a rel="nofollow" href="/catalog?source=ignored">ignored</a><a href="/next">next</a>'
+        ),
+        "https://example.com/next": page("/catalog?source=real"),
+        "https://example.com/catalog?source=real": page(),
+    }
+
+    result = _crawl(site, max_query_variants_per_path=1)
+
+    assert "https://example.com/catalog?source=real" in {page.url for page in result.pages}
+    assert result.excluded == {"nofollow": 1}
+
+
+def test_disabled_hyperlink_discovery_does_not_consume_a_query_variant_slot():
+    site = {
+        "https://example.com/robots.txt": FakeResponse(
+            ROBOTS_OK, headers={"content-type": "text/plain"}
+        ),
+        "https://example.com/": page("/catalog?source=ignored"),
+        "https://example.com/redirect": FakeResponse(
+            "", status_code=301, headers={"location": "/catalog?source=real"}
+        ),
+        "https://example.com/catalog?source=real": page(),
+    }
+
+    result = _crawl(
+        site,
+        crawl_hyperlinks=False,
+        max_query_variants_per_path=1,
+        seed_urls=["https://example.com/redirect"],
+    )
+
+    assert "https://example.com/catalog?source=real" in {page.url for page in result.pages}
+    assert result.excluded == {"hyperlink_discovery_off": 1}
+
+
 def test_external_links_are_recorded_but_never_fetched():
     result = _crawl()
     assert "https://other.com/x" not in {p.url for p in result.pages}

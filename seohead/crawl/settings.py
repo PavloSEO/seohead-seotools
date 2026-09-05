@@ -527,6 +527,8 @@ def validate(config: dict[str, Any]) -> None:
         raise ConfigError("limits.max_urls must be at least 1")
     if limits["max_depth"] < 0:
         raise ConfigError("limits.max_depth cannot be negative")
+    if limits["max_query_variants_per_path"] < 0:
+        raise ConfigError("limits.max_query_variants_per_path cannot be negative")
     if config["speed"]["min_delay_seconds"] < 0:
         raise ConfigError("speed.min_delay_seconds cannot be negative")
     if config["speed"]["concurrency"] < 1:

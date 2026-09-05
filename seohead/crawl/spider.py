@@ -547,7 +547,7 @@ def crawl_site(
     rather than a false clean result. ``nofollow`` is unaffected either way: it is derived
     from rel at parse time regardless of this setting.
     """
-    start = normalize_url(start_url)
+    start = _canonical_key(normalize_url(start_url))
     host = (urlsplit(start).hostname or "").lower() if start else ""
     # normalize_url is lenient — it turns "not a url" into "https://not a url" —
     # so the host is checked here rather than trusted.
@@ -670,15 +670,19 @@ def crawl_site(
             seen = {_canonical_key(start)}
 
         for seed in seed_urls or []:
-            seed = (seed or "").strip()
+            seed = _canonical_key((seed or "").strip())
             if not seed:
                 continue
-            reason = rules.rejection(seed, host) or extra_rejection(seed)
+            reason = rules.rejection(seed, host)
             if reason:
                 exclude(reason)
                 continue
-            key = _canonical_key(seed)
+            key = seed
             if key in seen:
+                continue
+            reason = extra_rejection(seed)
+            if reason:
+                exclude(reason)
                 continue
             seen.add(key)
             queue.append((seed, 0))
@@ -721,15 +725,20 @@ def crawl_site(
             if not crawl_redirects:
                 return
             if record.redirect_url and depth < depth_limit:
-                target = record.redirect_url
-                reason = rules.rejection(target, host) or extra_rejection(target)
+                target = _canonical_key(record.redirect_url)
+                reason = rules.rejection(target, host)
                 if reason:
                     exclude("redirect_off_host" if reason == "outside_host" else reason)
                 else:
-                    key = _canonical_key(target)
-                    if key not in seen:
-                        seen.add(key)
-                        queue.append((target, depth + 1))
+                    key = target
+                    if key in seen:
+                        return
+                    reason = extra_rejection(target)
+                    if reason:
+                        exclude(reason)
+                        return
+                    seen.add(key)
+                    queue.append((target, depth + 1))
 
         def handle_links(parsed: dict[str, Any] | None, url: str, depth: int) -> None:
             if parsed is None:
@@ -743,8 +752,9 @@ def crawl_site(
                 href = (link.get("href") or "").strip()
                 if not href:
                     continue
+                target = _canonical_key(href)
                 nofollow = bool(link.get("nofollow"))
-                reason = rules.rejection(href, host) or extra_rejection(href)
+                reason = rules.rejection(target, host)
                 is_external = reason == "outside_host"
                 # "store" and "crawl" are independent questions: an edge that will not be
                 # enqueued below is still real evidence of what the page links to. Both are
@@ -773,11 +783,15 @@ def crawl_site(
                 if reason:
                     exclude(reason)
                     continue
-                key = _canonical_key(href)
+                key = target
                 if key in seen:
                     continue
+                reason = extra_rejection(target)
+                if reason:
+                    exclude(reason)
+                    continue
                 seen.add(key)
-                queue.append((href, depth + 1))
+                queue.append((target, depth + 1))
 
         def handle_forms(parsed: dict[str, Any] | None, url: str) -> None:
             for form in (parsed or {}).get("forms") or []:

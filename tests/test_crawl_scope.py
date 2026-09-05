@@ -110,5 +110,10 @@ def test_a_valid_pattern_passes_validation():
     validate(config)
 
 
+def test_a_negative_query_variant_cap_is_rejected_before_the_crawl():
+    with pytest.raises(ConfigError, match="max_query_variants_per_path cannot be negative"):
+        load(overrides={"limits.max_query_variants_per_path": -1})
+
+
 def test_scope_reads_an_absent_config_as_the_default():
     assert Scope.from_config(None) == Scope()
