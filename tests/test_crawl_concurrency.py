@@ -244,6 +244,72 @@ def test_the_gate_hands_out_one_turn_per_delay_no_matter_how_many_ask():
     assert instants == [0.0, 0.25, 0.5, 0.75]
 
 
+# --- retry pacing: a retried timeout is a real dispatch too (#196) ---------
+
+
+def test_a_timeout_retry_is_paced_like_any_other_dispatch_sequential():
+    """#196: fetch_one's retry loop used to call ``wait`` once before every attempt
+    it would ever make, then loop straight back to the network on a timeout — so
+    retry_on_timeout=2 sent three requests back-to-back regardless of min_delay.
+    Every attempt, including a retry, must now wait its own turn."""
+    clock = _VirtualClock()
+    attempt_times: list[float] = []
+
+    def fetch(url: str):
+        if url.endswith("/robots.txt"):
+            return FakeResponse("User-agent: *\n", headers={"content-type": "text/plain"})
+        attempt_times.append(clock())
+        raise TimeoutError("read timed out")
+
+    result = crawl_site(
+        "https://example.com/",
+        fetcher=fetch,
+        min_delay=1.0,
+        retry_on_timeout=2,
+        sleeper=clock.sleep,
+        clock=clock,
+    )
+
+    assert len(attempt_times) == 3
+    gaps = [b - a for a, b in pairwise(attempt_times)]
+    assert all(gap >= 1.0 for gap in gaps), gaps
+    assert result.pages[0].error_kind == "timeout"
+
+
+def test_a_timeout_retry_is_paced_like_any_other_dispatch_concurrent():
+    """Same defect, concurrent mode: every worker's retry shares the one dispatch
+    gate, so no two attempts across the whole crawl -- first tries and retries
+    alike -- may land closer together than min_delay."""
+    clock = _VirtualClock()
+    attempt_times: list[float] = []
+    lock = threading.Lock()
+
+    def fetch(url: str):
+        if url.endswith("/robots.txt"):
+            return FakeResponse("User-agent: *\n", headers={"content-type": "text/plain"})
+        if url == "https://example.com/":
+            return page("/leaf0", "/leaf1")
+        with lock:
+            attempt_times.append(clock())
+        raise TimeoutError("read timed out")
+
+    result = crawl_site(
+        "https://example.com/",
+        fetcher=fetch,
+        min_delay=1.0,
+        retry_on_timeout=1,
+        concurrency=2,
+        max_urls=50,
+        sleeper=clock.sleep,
+        clock=clock,
+    )
+
+    assert len(attempt_times) == 4  # two leaves, one retry each
+    gaps = [b - a for a, b in pairwise(sorted(attempt_times))]
+    assert all(gap >= 1.0 for gap in gaps), gaps
+    assert {p.error_kind for p in result.pages if p.url != "https://example.com/"} == {"timeout"}
+
+
 # --- circuit breaker: the shared signal still stops the crawl --------------
 
 

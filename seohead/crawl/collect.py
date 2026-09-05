@@ -337,10 +337,12 @@ def fetch_one(
     non-empty) always bypasses it in both directions. A conditional revalidation only ever
     happens on the real client path: an injected ``fetcher`` has no way to carry request
     headers, so a stale entry behind a ``fetcher`` is simply re-fetched in full rather than
-    revalidated — still correct, just less efficient. ``wait``, when given, is called exactly
-    once, immediately before the one real network round trip this call makes — and is never
+    revalidated — still correct, just less efficient. ``wait``, when given, is called once
+    before every real network round trip this call makes, including a timeout retry — never
     called at all on a cache hit, which is what keeps a hit from consuming a throttle delay slot
-    or a concurrent dispatch turn it never needed.
+    or a concurrent dispatch turn it never needed. A retried timeout also updates ``throttle``
+    before that next ``wait()``, so a struggling origin is backed off from immediately rather
+    than only once every attempt in this call has already failed (#196).
     """
     record = PageRecord(url=url)
     if fetcher is None:
@@ -415,6 +417,19 @@ def fetch_one(
             kind = _classify_fetch_error(exc)
             if kind == "timeout" and attempt < retry_on_timeout:
                 attempt += 1
+                if throttle is not None:
+                    # Each failed attempt is real evidence the origin is struggling,
+                    # not only the one a caller happens to give up on — widen the
+                    # delay and collapse concurrency now, before the retry is
+                    # dispatched, rather than after every retry has already gone
+                    # out at the pre-timeout rate (#196).
+                    throttle.record_timeout()
+                if wait is not None:
+                    # The one call before the loop paced the first attempt only; a
+                    # retry is a real request too and must wait its own turn on the
+                    # (now-widened) delay, or it reuses that first paced slot for
+                    # every attempt this call makes.
+                    wait()
                 continue
             record.error = str(exc)
             record.error_kind = kind

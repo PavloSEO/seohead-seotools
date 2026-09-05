@@ -547,6 +547,12 @@ def validate(config: dict[str, Any]) -> None:
         raise ConfigError("limits.max_urls must be at least 1")
     if limits["max_depth"] < 0:
         raise ConfigError("limits.max_depth cannot be negative")
+    if limits["max_query_variants_per_path"] < 0:
+        # 0 is the crawler's own "unlimited" (see spider.py's truthy check on this
+        # value); a negative number is not a smaller budget, it makes every
+        # comparison against it (`len(variants) >= cap`) true immediately, which
+        # rejects the first query URL on every path and every one after it (#195).
+        raise ConfigError("limits.max_query_variants_per_path cannot be negative")
     if config["speed"]["min_delay_seconds"] < 0:
         raise ConfigError("speed.min_delay_seconds cannot be negative")
     if config["speed"]["concurrency"] < 1:

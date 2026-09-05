@@ -69,6 +69,57 @@ def test_visits_each_url_once_even_when_linked_twice():
     assert len(urls) == len(set(urls))
 
 
+def test_a_fragment_link_is_not_its_own_page():
+    """#194: a fragment never selects a distinct server resource, so a
+    fragment-bearing link must resolve to the same request and the same
+    PageRecord as its fragment-free sibling, not become its own page."""
+    requests: list[str] = []
+
+    def fetch(url):
+        requests.append(url)
+        if url.endswith("/robots.txt"):
+            return FakeResponse(
+                "User-agent: *\nDisallow:\n", headers={"content-type": "text/plain"}
+            )
+        if url == "https://example.com/":
+            return FakeResponse('<a href="/about#team">About</a><a href="/about">Plain</a>')
+        return FakeResponse("<title>About</title>")
+
+    result = crawl_site("https://example.com/", fetcher=fetch, sleeper=lambda _s: None, min_delay=0)
+    assert requests.count("https://example.com/about") == 1
+    assert "https://example.com/about#team" not in requests
+    urls = [p.url for p in result.pages]
+    assert urls.count("https://example.com/about") == 1
+    assert "https://example.com/about#team" not in urls
+    # Both anchors are still real evidence of what the page links to, fragment
+    # and all -- only the frontier and the fetched identity are deduplicated.
+    assert {e.destination for e in result.links} == {
+        "https://example.com/about#team",
+        "https://example.com/about",
+    }
+
+
+def test_a_fragment_variant_cannot_displace_a_later_unique_url():
+    """#194: with a small URL budget, several fragment variants of one page must
+    cost the frontier one slot, not one each, or they crowd out a distinct URL
+    discovered right after them."""
+    site = {
+        "https://example.com/robots.txt": FakeResponse(
+            "User-agent: *\nDisallow:\n", headers={"content-type": "text/plain"}
+        ),
+        "https://example.com/": page("/guide#first", "/guide#second", "/other"),
+        "https://example.com/guide": page(),
+        "https://example.com/other": page(),
+    }
+    result = _crawl(site, max_urls=3)
+    urls = {p.url for p in result.pages}
+    assert urls == {
+        "https://example.com/",
+        "https://example.com/guide",
+        "https://example.com/other",
+    }
+
+
 def test_external_links_are_recorded_but_never_fetched():
     result = _crawl()
     assert "https://other.com/x" not in {p.url for p in result.pages}
