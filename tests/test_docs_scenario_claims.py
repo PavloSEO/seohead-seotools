@@ -85,6 +85,7 @@ def test_robots_blocked_respecting_and_report_only_share_one_config():
     assert len(crawl_lines) == 2, chain
     configs = {line.split("--config", 1)[1].split()[0] for line in crawl_lines}
     assert len(configs) == 1, f"respecting and report-only runs use different configs: {configs}"
+    assert configs == {"./config.json"}
     assert "--robots report_only" in chain
 
 

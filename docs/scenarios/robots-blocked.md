@@ -31,21 +31,21 @@ Groups come back per user-agent with their `allow`, `disallow` and `crawl_delay`
 sitemap the file declares. Reading `robots.txt` by eye is how a rule that applies only to one
 agent gets mistaken for a site-wide block, and the other way round.
 
-**2. Put the same token in a crawl config, and crawl respecting it — the honest baseline.**
+**2. Save the same token as `./config.json`, and crawl respecting it — the honest baseline.**
 
 ```json
 {"robots": {"user_agent_token": "Googlebot"}}
 ```
 
 ```bash
-seohead crawl-site --url https://example.com --config ./googlebot.json --out-dir ./run
+seohead crawl-site --url https://example.com --config ./config.json --out-dir ./run
 ```
 
 **3. Crawl your own site again in report-only mode, from the same config, to see what the rules
 cost.**
 
 ```bash
-seohead crawl-site --url https://example.com --config ./googlebot.json --robots report_only --out-dir ./run
+seohead crawl-site --url https://example.com --config ./config.json --robots report_only --out-dir ./run
 ```
 
 `report_only` fetches `robots.txt`, reports every URL it would have blocked under the configured
