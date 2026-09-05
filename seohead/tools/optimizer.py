@@ -89,12 +89,34 @@ def compute_resize(
     return max(1, round(width * scale)), max(1, round(height * scale))
 
 
+_SVG_TEXT_ELEMENT_RE = re.compile(r"<text\b[^>]*>.*?</text\s*>", re.DOTALL | re.IGNORECASE)
+
+
 def minify_svg(text: str) -> str:
-    """Apply a conservative, text-preserving SVG whitespace pass."""
+    """Apply a conservative, text-preserving SVG whitespace pass.
+
+    Whitespace between and inside tags is only ever collapsing noise outside of
+    <text> elements. Inside one, a run of spaces can be the only thing separating
+    two <tspan>s, and xml:space="preserve" can make repeated spaces significant --
+    so every <text>...</text> block is protected before the collapsing regexes run,
+    and restored byte-for-byte afterward.
+    """
     output = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+
+    protected: list[str] = []
+
+    def _protect(match: re.Match[str]) -> str:
+        protected.append(match.group(0))
+        return f"\0{len(protected) - 1}\0"
+
+    output = _SVG_TEXT_ELEMENT_RE.sub(_protect, output)
     output = re.sub(r">\s+<", "><", output)
     output = re.sub(r"\s{2,}", " ", output)
-    return output.strip()
+    output = output.strip()
+
+    for index, block in enumerate(protected):
+        output = output.replace(f"\0{index}\0", block)
+    return output
 
 
 def scan_paths(paths: list[str]) -> list[str]:
