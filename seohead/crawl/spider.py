@@ -375,10 +375,11 @@ def _fetch_robots(
     """Read robots.txt. Returns ``(parsed_or_empty, note, unavailable)``.
 
     ``unavailable`` is true only when the fetch itself failed (network error),
-    the server (or the final hop of a redirect, see below) answered 5xx, or a
+    the server (or the final hop of a redirect, see below) answered 429/5xx, or a
     redirect could not be trusted — a host that could not say what is
-    disallowed, as distinct from one that has nothing to say. A 4xx robots.txt
-    means "no restrictions" per RFC 9309 and is not "unavailable". What
+    disallowed, as distinct from one that has nothing to say. A 404 or another
+    non-429 4xx robots.txt means "no restrictions" per RFC 9309 and is not
+    "unavailable". What
     happens when it is unavailable — stop the crawl, or continue as if
     unrestricted — is ``robots.unavailable_means_stop``, decided by the
     caller: RFC 9309 treats an unavailable robots.txt as a full disallow, and
@@ -452,7 +453,7 @@ def _fetch_robots(
         url = next_url
         redirected = True
 
-    if code is not None and 500 <= code < 600:
+    if code is not None and (code == 429 or 500 <= code < 600):
         return dict(EMPTY_ROBOTS), f"robots.txt returned {code}", True
     if code is not None and code >= 400:
         return dict(EMPTY_ROBOTS), "no robots.txt", False

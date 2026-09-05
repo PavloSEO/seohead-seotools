@@ -62,6 +62,10 @@ the report says `http_version_measurable: false`.
 | `soft404-check` | Soft 404: requests a deliberately non-existent URL; a 200 answer means the page lies to the robot about its status | requests a non-existent URL |
 | `hreflang-check` | hreflang annotations: x-default, self-reference, duplicates, malformed language codes | — |
 
+`robots-check` parses a successful robots.txt response. A 404 and every other 4xx response except
+429 report no robots.txt and a permissive crawl policy; a 429 or 5xx response returns `ok: false`
+because the rules could not be read, so the command never claims crawling is allowed.
+
 ### Content and markup
 
 | Command | What it does |
