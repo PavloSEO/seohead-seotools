@@ -318,10 +318,11 @@ class ResponseCache:
             return
         entry.stored_at = time.time()
         entry.max_age = max_age
-        # A 304 may carry a renewed validator even when the body itself is unchanged.
-        for name in ("etag", "last-modified"):
-            if response_headers.get(name):
-                entry.headers[name] = response_headers[name]
+        # RFC 9111 3.4: a 304 updates the stored response's header fields with whatever the
+        # origin sent on the 304 itself — the body is unchanged, but directives like
+        # X-Robots-Tag, Content-Type, or a renewed ETag can legitimately differ from what was
+        # cached. Fields the 304 is silent on stay as they were.
+        entry.headers.update({k.lower(): v for k, v in response_headers.items()})
         self._write(entry)
         self._bump("revalidations")
 

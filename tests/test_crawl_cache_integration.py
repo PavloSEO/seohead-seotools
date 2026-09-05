@@ -116,6 +116,40 @@ def test_a_stale_entry_with_an_etag_revalidates_with_a_conditional_request(monke
     }
 
 
+def test_a_304_that_changes_x_robots_tag_reports_the_new_directive_not_the_cached_one(
+    monkeypatch, tmp_path
+):
+    """#197: a 304 confirms the body but can still carry changed response metadata — an
+    origin that flips X-Robots-Tag from noindex to all while replaying the same page must be
+    reported with the current directive, not whatever was on the shelf from the first fetch."""
+    _patched(monkeypatch)
+    cache = ResponseCache(tmp_path)
+    client = FakeClient(
+        [
+            FakeResponse(
+                "<html><head><title>t</title></head><body></body></html>",
+                headers={
+                    "content-type": "text/html",
+                    "cache-control": "max-age=0",
+                    "etag": '"v1"',
+                    "x-robots-tag": "noindex",
+                },
+            ),
+            FakeResponse(
+                "",
+                status_code=304,
+                headers={"cache-control": "max-age=3600", "x-robots-tag": "all"},
+            ),
+        ]
+    )
+    first, _ = fetch_one("https://example.com/", client=client, cache=cache)
+    assert first.x_robots == "noindex"
+
+    second, _ = fetch_one("https://example.com/", client=client, cache=cache)
+    assert second.cache_status == "revalidated"
+    assert second.x_robots == "all"
+
+
 def test_a_second_user_agent_never_replays_the_first_ones_body(monkeypatch, tmp_path):
     """#131: a run configured with one User-Agent must never hand back the body a prior run
     fetched under a different one, even though the origin here never sends Vary at all — the
