@@ -58,8 +58,10 @@ interrupted run and the retry invalidates the checkpoint on purpose — a resume
 different rule set than it is about to apply would silently mix the two. It refetches from the
 start URL, exactly like a first run, and that is the correct behaviour, not a defect.
 
-After checking the result, `seohead log-scan --run ./run` audits the same two facts across the
-whole run: `run.crawl_resumed` and `run.crawl_finish_reason` in `audit.json`.
+Inspect `run.crawl_resumed` and `run.crawl_finish_reason` directly in `./run/audit.json` after
+the second run. They are run-manifest fields, not `log-scan` output. `seohead log-scan --run
+./run` is still useful afterward for its actual job: finding contradictions among the run's
+recorded facts.
 
 ## What resuming does and does not promise
 
