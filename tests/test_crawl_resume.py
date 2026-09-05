@@ -391,3 +391,72 @@ def test_a_resumed_crawl_keeps_link_rel_as_a_tuple(tmp_path):
         assert isinstance(edge.rel, tuple)
         assert edge.rel == ("nofollow", "noopener")
         assert edge.target == "_blank"
+
+
+SITE_WITH_A_FORM = {
+    "https://example.com/robots.txt": FakeResponse(
+        ROBOTS_OK, headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": FakeResponse(
+        "<html><head><title>t</title></head><body><h1>t</h1>"
+        '<form method="post" action="http://example.com/login">'
+        '<input type="password" name="p"></form>'
+        '<a href="/b">b</a></body></html>'
+    ),
+    "https://example.com/b": page(),
+}
+
+
+def test_a_resumed_crawl_keeps_the_forms_and_start_page_evidence_it_already_had(tmp_path):
+    """Issue #188: both are produced only for pages fetched in the current invocation, so a
+    resumed run finished reporting fewer forms than the interrupted one had already found,
+    and handed the pre-flight rendering gate an empty start page — reversing a verdict about
+    a page it had in fact already read. A resumed run that reports completion must not know
+    less than the run it continues."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    state_path = str(out_dir / "state.json")
+    links_path = str(out_dir / "links.jsonl")
+
+    full = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_A_FORM),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        config_fingerprint="fp",
+    )
+    assert full.forms, "the fixture must produce a form to lose in the first place"
+    assert full.start_page_evidence
+
+    part = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_A_FORM),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=1,
+        state_path=state_path,
+        links_path=links_path,
+        config_fingerprint="fp",
+    )
+    assert part.partial is True
+    assert part.forms, "the interrupted run already found the form"
+
+    resumed = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_A_FORM),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        state_path=state_path,
+        links_path=links_path,
+        config_fingerprint="fp",
+    )
+    assert resumed.resumed is True
+    assert resumed.partial is False
+
+    def forms(result):
+        return sorted((f.page, f.method, f.action, f.has_password) for f in result.forms)
+
+    assert forms(resumed) == forms(full)
+    assert resumed.start_page_evidence == full.start_page_evidence
