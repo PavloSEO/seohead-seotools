@@ -6,6 +6,7 @@ import json
 import pathlib
 import re
 
+from seohead.tools import dualcrawl
 from seohead.tools.render import (
     _jsonld_types,
     _links,
@@ -50,6 +51,32 @@ def test_only_internal_links_are_counted():
         '<a href="tel:+79001112233">Phone</a>'
     )
     assert _links(html, BASE) == {"https://example.com/catalog", "https://example.com/about"}
+
+
+def test_script_literal_anchor_markup_is_not_raw_link_evidence():
+    raw_html = """<body><div id="root"></div><script>
+    document.getElementById("root").innerHTML =
+    '<nav><a href="/catalog">Catalog</a><a href="/about">About</a></nav>';
+    </script></body>"""
+    rendered_html = (
+        '<body><div id="root"><nav><a href="/catalog">Catalog</a>'
+        '<a href="/about">About</a></nav></div></body>'
+    )
+
+    raw = _snapshot(raw_html, BASE)
+    rendered = _snapshot(rendered_html, BASE)
+    assert raw["links"] == 0
+    assert rendered["links"] == 2
+    assert any(
+        "2 of 2 internal links appear only after JavaScript" in finding
+        for finding in compare(raw, rendered)
+    )
+
+    evidence = dualcrawl.compare_evidence(
+        {BASE: {"links": _links(raw_html, BASE), "images": set()}},
+        {BASE: {"links": _links(rendered_html, BASE), "images": set()}},
+    )
+    assert evidence["summary"]["only_in_b"] == 2
 
 
 def test_jsonld_types_are_pulled_from_nested_graph():
