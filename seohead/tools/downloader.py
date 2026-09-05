@@ -18,6 +18,7 @@ raised out of :func:`download_images`; each URL yields a result dict carrying an
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import time
@@ -166,11 +167,15 @@ def _download_one(
     output_dir: str,
     structure: str,
     max_bytes: int | None,
+    user_agent: str,
 ) -> dict:
     """Fetch a single URL and write it to disk. Returns a result dict."""
     parsed = _parse_url(url)
     referer = parsed[2] if parsed else None
-    headers = {"User-Agent": DEFAULT_USER_AGENT}
+    # Use the caller's resolved user_agent, not a hard-coded constant: a fixed value
+    # here would win over options.user_agent on every request regardless of what the
+    # caller configured (#228).
+    headers = {"User-Agent": user_agent}
     if referer:
         headers["Referer"] = referer
 
@@ -218,6 +223,51 @@ def _download_one(
     }
 
 
+def _manifest_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "manifest.json")
+
+
+def _load_manifest(output_dir: str) -> dict[str, dict[str, object]]:
+    """Read a prior run's manifest, keyed by URL, dropping entries whose file is gone.
+
+    A stale entry -- naming a file that no longer exists -- would make skip_existing
+    falsely report a URL as already downloaded, and would carry a dangling reference
+    forward into the next manifest write.
+    """
+    try:
+        with open(_manifest_path(output_dir), encoding="utf-8") as handle:
+            raw = json.loads(handle.read())
+    except (OSError, ValueError):
+        return {}
+    entries = raw.get("images") if isinstance(raw, dict) else raw
+    live: dict[str, dict[str, object]] = {}
+    for entry in entries or ():
+        if not isinstance(entry, dict):
+            continue
+        url = entry.get("url")
+        rel_path = entry.get("path")
+        if not url or not rel_path:
+            continue
+        if os.path.isfile(os.path.join(output_dir, str(rel_path))):
+            live[str(url)] = {"path": str(rel_path), "bytes": entry.get("bytes")}
+    return live
+
+
+def _write_manifest(output_dir: str, entries: dict[str, dict[str, object]]) -> None:
+    """Write the manifest ``log-scan --images-dir`` needs to map a file back to its URL.
+
+    Without this, log-scan has no way to tell which URL a file on disk came from and
+    silently compares nothing, no matter how wrong a crawl's recorded size is (#226).
+    """
+    images = [
+        {"url": url, "path": data["path"], "bytes": data.get("bytes")}
+        for url, data in sorted(entries.items())
+    ]
+    with open(_manifest_path(output_dir), "w", encoding="utf-8") as handle:
+        json.dump({"images": images}, handle, indent=2)
+        handle.write("\n")
+
+
 def download_images(
     urls: list[str],
     output_dir: str,
@@ -228,11 +278,16 @@ def download_images(
     Options (all optional):
 
     * ``structure``     -- ``"flat"`` or ``"domain-path"`` (default).
-    * ``skip_existing`` -- skip URLs whose preview path already exists (default True).
+    * ``skip_existing`` -- skip URLs already recorded in ``manifest.json``, or whose
+      preview path already exists for a URL never recorded there (default True).
     * ``timeout``       -- per-request timeout in seconds (default 30).
     * ``max_bytes``     -- abort a download that grows past this size.
     * ``retries``       -- extra attempts per URL on failure (default 1).
     * ``user_agent``    -- override the default browser User-Agent.
+
+    Every successful download (fresh or skipped) is recorded in
+    ``output_dir/manifest.json``, mapping each URL to the file it produced, so a
+    later ``log-scan --images-dir`` run can compare a crawl's claims against reality.
 
     Returns one result dict per input URL, each shaped like
     ``{url, path, bytes, content_type, status, ok, error?, skipped?}``. This
@@ -285,11 +340,42 @@ def download_images(
             )
         return results
 
+    manifest_entries = _load_manifest(output_dir)
+
     try:
         for url in urls:
             try:
+                # The manifest, not a guessed filename, is authoritative once a URL has
+                # been downloaded: for a URL with no extension, guessing a preview name
+                # before the response is fetched cannot know the real Content-Type and
+                # would miss the file the previous run actually wrote (#227).
+                recorded = manifest_entries.get(url) if skip_existing else None
+                recorded_path = (
+                    os.path.join(output_dir, str(recorded["path"])) if recorded else None
+                )
+                if recorded_path and os.path.isfile(recorded_path):
+                    results.append(
+                        {
+                            "url": url,
+                            "path": recorded_path,
+                            "bytes": os.path.getsize(recorded_path),
+                            "content_type": None,
+                            "status": None,
+                            "ok": True,
+                            "skipped": True,
+                        }
+                    )
+                    continue
+
+                # Fallback for a URL the manifest has never seen: a real extension in
+                # the URL path makes this guess exact, and it also covers files placed
+                # in output_dir by something other than this function.
                 preview = target_path(url, output_dir, structure, "")
                 if skip_existing and os.path.exists(preview):
+                    manifest_entries[url] = {
+                        "path": os.path.relpath(preview, output_dir),
+                        "bytes": os.path.getsize(preview),
+                    }
                     results.append(
                         {
                             "url": url,
@@ -307,7 +393,9 @@ def download_images(
                 item: dict | None = None
                 for _ in range(retries + 1):
                     try:
-                        item = _download_one(client, url, output_dir, structure, max_bytes)
+                        item = _download_one(
+                            client, url, output_dir, structure, max_bytes, user_agent
+                        )
                         # A non-200 HTTP result is still a definitive answer;
                         # keep it rather than retrying blindly.
                         break
@@ -329,6 +417,14 @@ def download_images(
                     )
                 else:
                     results.append(item)
+                    # Only a genuinely finished file earns a manifest entry: a failed or
+                    # non-200 item carries path=None, so this can never point at a partial
+                    # download.
+                    if item.get("ok") and item.get("path"):
+                        manifest_entries[url] = {
+                            "path": os.path.relpath(item["path"], output_dir),
+                            "bytes": item.get("bytes"),
+                        }
             except Exception as exc:  # pragma: no cover - last-resort guard
                 results.append(
                     {
@@ -343,6 +439,10 @@ def download_images(
                 )
     finally:
         client.close()
+
+    if manifest_entries:
+        with contextlib.suppress(OSError):
+            _write_manifest(output_dir, manifest_entries)
 
     return results
 
