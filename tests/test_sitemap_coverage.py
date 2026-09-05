@@ -182,3 +182,32 @@ def test_run_sitemap_reports_a_broken_sitemap_instead_of_claiming_none_was_set(
         "network was enabled and a sitemap was fetched -- this reason is false on both counts"
     )
     assert "fetch/parse failed" in skipped["SITEMAP_DESYNC"]
+
+
+def test_stale_lastmod_names_the_crawled_home_page_not_a_bare_origin(monkeypatch, tmp_path):
+    """#285: SITEMAP_STALE_LASTMOD used ``_base_url`` directly, a bare origin with no
+    path -- it matches no row in pages.jsonl, so log-scan's findings_are_about_crawled_urls
+    rule flagged this site-wide finding as pointing outside the run's own page list. The
+    other site-wide checks in this module already route through ``_site_target`` for the
+    same reason; this one must too."""
+    ctx = _mini_ctx(tmp_path, ["https://example.com/"])
+    stale = (
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/</loc><lastmod>2020-01-01</lastmod></url></urlset>"
+    )
+
+    def fake_fetch(url, ua, timeout, retries=2):
+        if url == "https://example.com/robots.txt":
+            return b"User-agent: *\nSitemap: https://example.com/sitemap.xml\n"
+        if url == "https://example.com/sitemap.xml":
+            return stale
+        return None
+
+    monkeypatch.setattr(S, "_fetch", fake_fetch)
+    S.run_sitemap(ctx, sitemap_url="https://example.com/sitemap.xml")
+
+    stale_issues = [i for i in ctx.issues if i.check == "SITEMAP_STALE_LASTMOD"]
+    assert len(stale_issues) == 1
+    assert stale_issues[0].target_url == "https://example.com/", (
+        "target_url must be the crawled home page, not a bare origin absent from pages.jsonl"
+    )

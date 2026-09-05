@@ -33,6 +33,7 @@ an authenticity verdict.
 from __future__ import annotations
 
 import ipaddress
+import itertools
 import re
 import socket
 from collections import Counter, defaultdict
@@ -400,6 +401,7 @@ def analyze_log(
         parse = iis.parse if iis else _parse_apache
 
         total = parsed = skipped = 0
+        truncated = False
         by_family: dict[str, Counter] = defaultdict(Counter)
         bot_hits: Counter = Counter()
         bot_bytes: Counter = Counter()
@@ -407,17 +409,23 @@ def analyze_log(
         status_by_family: dict[str, Counter] = defaultdict(Counter)
         section_by_family: dict[str, Counter] = defaultdict(Counter)
         paths_by_family: dict[str, Counter] = defaultdict(Counter)
+        paths_truncated: set[str] = set()
         daily: Counter = Counter()
         first_time = last_time = None
 
-        for line in [*sample, *handle]:
+        # chain(), not [*sample, *handle]: the list literal forces the whole remaining
+        # file into memory before the first row is even parsed, which is exactly the
+        # eager read max_lines exists to prevent (#252). Stop pulling from the iterator
+        # entirely once the cap is hit, instead of continuing to "skip" every line the
+        # file still has -- that no longer bounds reads, only the skip counter.
+        for line in itertools.chain(sample, handle):
             line = line.rstrip("\n")
             if not line.strip():
                 continue
+            if total >= max_lines:
+                truncated = True
+                break
             total += 1
-            if total > max_lines:
-                skipped += 1
-                continue
             row = parse(line)
             if row is None:
                 skipped += 1
@@ -431,8 +439,17 @@ def analyze_log(
             by_family[family][name] += 1
             status_by_family[family][row["status"]] += 1
             section_by_family[family][_section(row["path"])] += 1
-            if len(paths_by_family[family]) < MAX_TRACKED_PATHS:
-                paths_by_family[family][row["path"]] += 1
+            # A full counter must keep incrementing paths it already tracks -- only a
+            # brand-new path should be refused once the cap is reached. Capping every
+            # increment here (#251) let a path counted before the cap filled silently
+            # undercount every repeat after: the family total stayed complete while its
+            # own top-paths breakdown quietly fell out of sync with it.
+            family_paths = paths_by_family[family]
+            path_value = row["path"]
+            if path_value in family_paths or len(family_paths) < MAX_TRACKED_PATHS:
+                family_paths[path_value] += 1
+            else:
+                paths_truncated.add(family)
             if bot:
                 bot_hits[name] += 1
                 bot_bytes[name] += row.get("bytes") or 0
@@ -450,7 +467,7 @@ def analyze_log(
         "ok": True,
         "path": path,
         "format": fmt,
-        "lines": {"total": total, "parsed": parsed, "skipped": skipped},
+        "lines": {"total": total, "parsed": parsed, "skipped": skipped, "truncated": truncated},
         "period": {
             "from": first_time.isoformat() if first_time else None,
             "to": last_time.isoformat() if last_time else None,
@@ -463,6 +480,7 @@ def analyze_log(
         "status_by_family": {f: dict(sorted(c.items())) for f, c in status_by_family.items()},
         "sections_by_family": {f: dict(c.most_common(20)) for f, c in section_by_family.items()},
         "top_paths_by_family": {f: dict(c.most_common(15)) for f, c in paths_by_family.items()},
+        "paths_truncated": sorted(paths_truncated),
         "daily": dict(sorted(daily.items())),
         "verification": verification,
     }

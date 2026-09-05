@@ -147,6 +147,26 @@ def test_a_check_that_deliberately_names_uncrawled_urls_is_not_flagged(tmp_path)
     assert logscan.scan(logscan.load_run(run))["anomaly_count"] == 0
 
 
+def test_follow_and_nofollow_inlinks_names_an_edge_not_a_crawled_page(tmp_path):
+    """#285: the finding names the destination of an in-host edge that received both a
+    followed and a nofollow link -- exactly the situation that can leave it outside
+    pages.jsonl (a nofollow-only path to it, a query-variant cap, an out-of-scope
+    exclusion). That is a page-versus-edge distinction, not a crawl gap this rule can
+    honestly report, so it belongs in the same exempt set as BROKEN_LINK."""
+    pages = [_page("https://example.com/")]
+    audit = {
+        "summary": {"by_check": {"FOLLOW_AND_NOFOLLOW_INLINKS": 1}},
+        "issues": [
+            {
+                "check": "FOLLOW_AND_NOFOLLOW_INLINKS",
+                "target_url": "https://example.com/blog?tag=target",
+            }
+        ],
+    }
+    run = _write_run(tmp_path, pages, audit)
+    assert logscan.scan(logscan.load_run(run))["anomaly_count"] == 0
+
+
 # ── #95: a canonical whose twin answered ─────────────────────────────────────
 
 

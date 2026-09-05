@@ -155,3 +155,79 @@ def test_findings_flag_error_rate_for_bots(tmp_path):
 def test_findings_mention_ai_crawlers(tmp_path):
     r = analyze_log(_write(tmp_path, COMBINED))
     assert any("GPTBot (OpenAI)" in finding for finding in r["findings"])
+
+
+# ── High-cardinality accumulator caps ────────────────────────────────────────
+
+
+def test_top_paths_keep_incrementing_after_the_path_cap_fills(tmp_path, monkeypatch):
+    """#251: once the tracked-path set is full, a repeat of an already-tracked path must
+    still increment -- only a brand-new path is refused. The bug capped every increment
+    on the cap, so a path counted before the cap filled silently stopped growing while
+    the family total it should sum to kept climbing, making top_paths_by_family false."""
+    from seohead.tools import logs
+
+    monkeypatch.setattr(logs, "MAX_TRACKED_PATHS", 2)
+    lines = "\n".join(
+        [
+            '192.0.2.1 - - [18/Mar/2024:00:00:01 +0000] "GET /first HTTP/1.1" 200 1 "-" '
+            '"Googlebot/2.1"',
+            '192.0.2.1 - - [18/Mar/2024:00:00:02 +0000] "GET /second HTTP/1.1" 200 1 "-" '
+            '"Googlebot/2.1"',
+            '192.0.2.1 - - [18/Mar/2024:00:00:03 +0000] "GET /third HTTP/1.1" 200 1 "-" '
+            '"Googlebot/2.1"',
+            '192.0.2.1 - - [18/Mar/2024:00:00:04 +0000] "GET /first HTTP/1.1" 200 1 "-" '
+            '"Googlebot/2.1"',
+        ]
+    )
+    r = analyze_log(_write(tmp_path, lines + "\n"))
+    assert r["by_family"]["googlebot"]["Googlebot"] == 4  # every hit counted in the family total
+    assert r["top_paths_by_family"]["googlebot"]["/first"] == 2  # both /first hits, not just one
+    assert r["paths_truncated"] == ["googlebot"]  # /third was refused once the cap was full
+
+
+def test_max_lines_does_not_consume_the_rest_of_the_file():
+    """#252: ``[*sample, *handle]`` materialized every remaining line before parsing the
+    first one, so max_lines only marked excess rows skipped after the whole file (and its
+    memory) was already consumed. A one-line cap must stop reading, not read everything
+    and then discard most of it."""
+    import builtins
+    from unittest.mock import patch
+
+    from seohead.tools import logs
+
+    line = '192.0.2.1 - - [18/Mar/2024:00:00:01 +0000] "GET / HTTP/1.1" 200 1 "-" "Googlebot/2.1"\n'
+
+    class SyntheticHandle:
+        def __init__(self, remaining: int) -> None:
+            self._sample_pending = True
+            self.remaining = remaining
+            self.iterated = 0
+
+        def readline(self) -> str:
+            if self._sample_pending:
+                self._sample_pending = False
+                return line
+            return ""
+
+        def __iter__(self):
+            for _ in range(self.remaining):
+                self.iterated += 1
+                yield line
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    handle = SyntheticHandle(remaining=25)
+    with patch.object(builtins, "open", return_value=handle):
+        result = logs.analyze_log("synthetic-access.log", max_lines=1, sample_size=1)
+
+    # One line must still be pulled to discover there *is* a line past the cap -- a
+    # generator has no way to report "more" without being asked for its next item --
+    # but the old code pulled and iterated all 25 remaining lines before parsing even
+    # the first one; stopping at 1 is the whole fix.
+    assert handle.iterated == 1, "a one-line cap must not pull the file's remaining lines"
+    assert result["lines"] == {"total": 1, "parsed": 1, "skipped": 0, "truncated": True}

@@ -146,10 +146,45 @@ def test_identical_config_produces_no_config_warning():
     assert preflight(before, after) == []
 
 
-def test_no_config_present_on_either_side_does_not_warn():
+def test_no_config_present_on_either_side_warns_unknown_comparability():
+    """#287: a missing manifest is an unknown comparison basis, not an established match --
+    the same distinction crawl_partial already draws. Silently treating "neither side
+    recorded a config" as "therefore they match" is exactly the bug: it let a native crawl
+    and an SF audit, or two runs under different settings, compare as if nothing differed."""
     before = _audit(["https://e.com/a"], [])
     after = _audit(["https://e.com/a"], [])
-    assert preflight(before, after) == []
+    warnings = preflight(before, after)
+    assert any("no crawl configuration" in w for w in warnings)
+
+
+def test_one_side_missing_crawl_config_warns_by_name():
+    """#287's reported case: a native crawl with a recorded manifest compared against a
+    run that has none (an SF audit, or a crawl_config write that never happened) must not
+    look like a match just because only one side has anything to compare."""
+    before = _audit(
+        ["https://e.com/a"],
+        [("TITLE_TOO_SHORT", "https://e.com/a")],
+        crawl_config={"rendering.mode": "raw"},
+    )
+    after = _audit(["https://e.com/a"], [])
+    warnings = preflight(before, after)
+    assert any("after" in w and "no crawl configuration" in w for w in warnings)
+
+
+def test_differing_sf_profiles_warn_even_without_a_full_manifest():
+    """#287: SF audits never record crawl_config, but they do record their export
+    profile -- a known, if partial, signal that check coverage differed between runs."""
+    before = _audit(["https://e.com/a"], [("TITLE_TOO_SHORT", "https://e.com/a")], profile="full")
+    after = _audit(["https://e.com/a"], [], profile="lite")
+    warnings = preflight(before, after)
+    assert any("profile" in w and "full" in w and "lite" in w for w in warnings)
+
+
+def test_identical_profile_does_not_add_a_profile_warning():
+    before = _audit(["https://e.com/a"], [], profile="full")
+    after = _audit(["https://e.com/a"], [], profile="full")
+    warnings = preflight(before, after)
+    assert not any("profile" in w for w in warnings)
 
 
 def test_warnings_are_included_in_the_compare_result():
