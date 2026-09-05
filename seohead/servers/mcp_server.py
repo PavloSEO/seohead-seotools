@@ -95,7 +95,8 @@ def build_server():  # -> FastMCP
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
     def seo_crawl_site(
-        url: str,
+        url: str | None = None,
+        urls: list[str] | None = None,
         max_urls: int = 200,
         max_depth: int = 5,
         min_delay: float = 0.5,
@@ -108,13 +109,21 @@ def build_server():  # -> FastMCP
         politeness adapts to the origin. Checks whose evidence a native crawl
         cannot produce are reported as skipped, never as clean.
 
+        Pass ``urls`` instead of ``url`` for list mode: fetch exactly that set,
+        depth 0, no link discovery -- the migration-audit shape (a redirect map,
+        a Search Console export). ``max_depth`` and ``concurrency`` have nothing
+        to discover in that mode and are ignored.
+
         ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
         anyway, and report what a compliant crawler would have missed) or
-        "ignore" (do not fetch it at all). ``concurrency`` is a per-origin
-        ceiling the adaptive throttle grows into, not a fixed thread count."""
+        "ignore" (do not fetch it at all) -- applied in list mode too, and named
+        in the result's ``discovery.directive_policy``, not only enforced
+        silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
+        grows into, not a fixed thread count."""
         return _checked(
             handlers.crawl_site(
                 url=url,
+                urls=urls,
                 max_urls=max_urls,
                 max_depth=max_depth,
                 min_delay=min_delay,

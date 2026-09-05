@@ -67,7 +67,8 @@ Crawl a site from a start URL by following links, then audit the result through 
 
 | Argument | Type | Default |
 |---|---|---|
-| `url` | `str` | `required` |
+| `url` | `str | None` | `None` |
+| `urls` | `list[str] | None` | `None` |
 | `max_urls` | `int` | `200` |
 | `max_depth` | `int` | `5` |
 | `min_delay` | `float` | `0.5` |
@@ -79,10 +80,17 @@ Crawl a site from a start URL by following links, then audit the result through 
 
 **Behavior and failure modes**
 
+Pass ``urls`` instead of ``url`` for list mode: fetch exactly that set,
+depth 0, no link discovery -- the migration-audit shape (a redirect map,
+a Search Console export). ``max_depth`` and ``concurrency`` have nothing
+to discover in that mode and are ignored.
+
 ``robots`` is "respect" (obey), "report_only" (fetch robots.txt, crawl
 anyway, and report what a compliant crawler would have missed) or
-"ignore" (do not fetch it at all). ``concurrency`` is a per-origin
-ceiling the adaptive throttle grows into, not a fixed thread count.
+"ignore" (do not fetch it at all) -- applied in list mode too, and named
+in the result's ``discovery.directive_policy``, not only enforced
+silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
+grows into, not a fixed thread count.
 
 ### `crawl-describe-settings`
 

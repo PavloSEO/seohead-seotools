@@ -17,7 +17,14 @@ from seohead.servers import handlers
 # A generous but real ceiling: CI fails if crawl-site --help grows past this,
 # which is the point — a new setting from here on must go through --config
 # rather than becoming another direct flag.
-HELP_LINE_CEILING = 25
+#
+# Raised by one for --urls (issue #21), and the reason is the distinction this
+# guard rests on: --urls names where the crawl's input comes from, alongside
+# --url, --sitemap and --input, rather than configuring how the crawl behaves.
+# Settings still go through --config; if this number moves again for anything
+# that is not a new input source, the flag is the thing to reconsider, not the
+# ceiling.
+HELP_LINE_CEILING = 26
 
 
 def _help_lines(capsys):
