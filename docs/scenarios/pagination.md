@@ -100,6 +100,6 @@ for non-indexable pagination. A site with 39 unreachable pages of products does 
 - **Whether `rel="next"` targets appear as real anchors.** The annotation is not cross-checked
   against the page's own anchor list — that is a named gap, not a clean result.
 - **Infinite scroll.** A series assembled by JavaScript has no `rel` annotations to read and no
-  hyperlinks to follow; [scenario 4](rendering.md) comes first.
+  hyperlinks to follow; the [rendering scenario](rendering.md) comes first.
 - **Whether the products on page 2 are indexed.** Reachability is not indexation, and nothing
   here reads the index.

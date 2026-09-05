@@ -100,7 +100,7 @@ architecture decision somebody made and forgot.
 - **Which of the two canonicals is the correct one.** The tool reports that a page declares two
   and prints both. Choosing is a person's job, and usually a template's fault.
 - **Why the target is non-indexable.** The finding names the target; whether its `noindex` is
-  deliberate is a separate question, and [scenario 16](noindex-audit.md) is how to ask it.
+  deliberate is a separate question, and the [noindex audit scenario](noindex-audit.md) is how to ask it.
 - **A conflict between an HTML canonical and an HTTP `Link` header.** Only the element is read.
 - **Anything on a page the crawl never fetched.** Check `run.crawl_partial` first: a canonical
   target outside the crawl's scope or budget is unjudged, not judged clean.

@@ -60,7 +60,7 @@ of four findings withheld and re-declared as a named skip on a partial crawl, al
 
 **5. Compare with the sitemap answer rather than repeating it.**
 
-Reachability against a sitemap is [scenario 3](structure.md)'s job, and it is a different
+Reachability against a sitemap is the [structure scenario](structure.md)'s job, and it is a different
 comparison: sitemap-declared minus reachable. This one is canonical targets minus link
 destinations. Running both is useful. Confusing them is not.
 

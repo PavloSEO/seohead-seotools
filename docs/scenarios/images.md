@@ -113,10 +113,10 @@ on non-200 responses will keep pushing. `crawl-site` adapts to latency for this 
 
 - **Whether the server is configured to serve them well.** This chain finds oversized files and
   fixes the files. It does not fix a missing `Cache-Control`, an absent CDN, or a server that
-  never enables compression — use [scenario 7](infrastructure.md) for that.
+  never enables compression — use the [infrastructure scenario](infrastructure.md) for that.
 - **Whether the image is the right image.** Nothing here judges whether a 3000px hero photo
   should exist at all, or whether it is the wrong crop. That is a person's call.
 - **Images injected by JavaScript after load.** The crawl reads what the HTML and CSS reference.
-  A gallery assembled client-side needs [scenario 4](rendering.md) first.
+  A gallery assembled client-side needs the [rendering scenario](rendering.md) first.
 - **Whether the saving survives deployment.** An archive is not a deploy. If the CMS regenerates
   derivatives on upload, the numbers above describe files the site may never serve.

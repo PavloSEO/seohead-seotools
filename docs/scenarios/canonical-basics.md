@@ -123,8 +123,8 @@ and one finding from the second:
 - **Whether Google honours it.** A canonical is a hint. Nothing in this loop reads the index,
   so it cannot tell you which URL was actually selected.
 - **A canonical injected by JavaScript.** The crawl reads the served HTML. If the tag is added
-  after hydration, run [scenario 4](rendering.md) first and read
+  after hydration, run the [rendering scenario](rendering.md) first and read
   `pages_by_representation` before believing a `CANONICAL_MISSING` count.
 - **Two canonical elements on one page.** A native crawl records the first one only; see
-  [scenario 12](canonical-conflicts.md).
+  the [canonical conflicts scenario](canonical-conflicts.md).
 - **A canonical sent as an HTTP `Link` header.** Only the HTML element is read.

@@ -99,7 +99,7 @@ Nothing paid.
 - **What a reader considers the content.** A page whose sidebar carries the real answer is
   extracted as if the sidebar were furniture. Override the selector when that is true.
 - **Content assembled by JavaScript.** An app shell reads as thin whatever it later renders.
-  See [scenario 4](rendering.md).
+  See the [rendering scenario](rendering.md).
 - **Whether the page has enough of the *right* words.** Relevance needs a query or a topic model
   to be relevant to, and neither is in this loop.
 - **Whether thin pages are costing anything.** No traffic or index-coverage data is here.

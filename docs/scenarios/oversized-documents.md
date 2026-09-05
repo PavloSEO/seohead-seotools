@@ -104,6 +104,6 @@ paid, nothing sent anywhere.
 - **What is inside the bytes.** Nothing here says whether the weight is inline CSS, embedded
   base64 assets or an over-generous template. That is a look at the document.
 - **The rendered weight.** The size recorded is the response as served. A page that assembles
-  most of itself client-side is measured before that happens — see [scenario 4](rendering.md).
+  most of itself client-side is measured before that happens — see the [rendering scenario](rendering.md).
 - **Whether compression is in play.** The size is what crossed the wire; whether the origin
   could have compressed it further is `headers-check`, not this chain.

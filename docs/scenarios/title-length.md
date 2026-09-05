@@ -99,4 +99,4 @@ licence and an export you already had to make — nothing extra is fetched for i
 - **Pixel width without an export.** Nothing in a native crawl produces it, and "Below 200
   Pixels" is not evaluated even when the column is present.
 - **Whether shortening it helps anything.** No ranking or click-through data is in this loop.
-  See [scenario 2](metadata.md) for where demand data would have to come from.
+  See the [metadata scenario](metadata.md) for where demand data would have to come from.

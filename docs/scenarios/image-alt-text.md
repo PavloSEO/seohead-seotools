@@ -103,9 +103,9 @@ you already made. Nothing paid.
 - **Whether the alt text that exists is any good.** "image1.jpg" as alt text passes every check
   here. Alt-text length is not thresholded either.
 - **Images injected by JavaScript.** The parse reads served HTML and CSS text. A gallery built
-  client-side needs [scenario 4](rendering.md) first.
+  client-side needs the [rendering scenario](rendering.md) first.
 - **Backgrounds declared in a linked stylesheet.** `parse` reads one document and performs no
   I/O of its own, so `url()` inside inline styles and `<style>` blocks is found and a `.css`
   file is reported as a resource whose contents were never opened.
 - **Anything about image weight.** That is a separate chain, and it ends in re-encoded files
-  rather than a list — see [scenario 1](images.md).
+  rather than a list — see the [images scenario](images.md).

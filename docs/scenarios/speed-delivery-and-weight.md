@@ -53,7 +53,7 @@ from the native crawl, which declares those frames missing so the checks are ski
 reported clean. Read image weight from `pages.jsonl`; read the two findings from `sf run`.
 
 Re-encoding those files, measuring the saving and shipping an archive is a different chain and it
-already exists: [scenario 1](images.md). Do not run both halves at once and report one number.
+already exists: The [images scenario](images.md). Do not run both halves at once and report one number.
 
 **4. Document weight and DOM complexity.** Both come out of the audit. `LARGE_HTML` fires on an
 absolute ceiling (200 KB by default) or on a multiple of the site's own median, and `HTML_BLOAT`

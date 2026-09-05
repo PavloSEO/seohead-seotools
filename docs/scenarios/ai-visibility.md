@@ -43,7 +43,7 @@ answer is spread across a carousel, a table image and three collapsibles is not 
 matter how correct it is.
 
 **4. Whether the answer survives without JavaScript.** AI crawlers almost never render. What
-[scenario 4](rendering.md) reports as "JS-dependent" is, for this audience, "absent".
+the [rendering scenario](rendering.md) reports as "JS-dependent" is, for this audience, "absent".
 
 ## What comes out
 

@@ -118,6 +118,6 @@ person reading the page.
   `HREFLANG_OUTSIDE_HEAD` needs the parse tree a native crawl builds; an export-only run names
   it skipped rather than reporting it clean.
 - **Whether the other end agrees.** Reciprocity, return links and target status are
-  [scenario 18](hreflang-return-links.md).
+  the [hreflang return links scenario](hreflang-return-links.md).
 - **Annotations delivered in an XML sitemap or an HTTP header.** Only the HTML `link` elements
   are read.
