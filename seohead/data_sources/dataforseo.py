@@ -215,9 +215,10 @@ def task_items(body: dict) -> list[dict]:
     for task in body.get("tasks") or []:
         for result in task.get("result") or []:
             if isinstance(result, dict):
-                nested = result.get("items")
-                if nested:
-                    items.extend(x for x in nested if isinstance(x, dict))
+                if "items" in result:
+                    nested = result["items"]
+                    if isinstance(nested, list):
+                        items.extend(x for x in nested if isinstance(x, dict))
                 else:
                     items.append(result)
     return items
