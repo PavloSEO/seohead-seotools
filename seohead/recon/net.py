@@ -223,6 +223,25 @@ def validate_url(url: str) -> str:
     return value
 
 
+class BlockedRedirectError(ValueError):
+    """A redirect's ``Location`` pointed at a target :func:`validate_url` refuses.
+
+    Raised instead of a bare ``ValueError`` so a caller built around a broad
+    ``except Exception`` — ``fetch_one`` (issue #175) and ``check_soft404`` alike
+    — can tell "we refused to follow this redirect" apart from a transport
+    failure and record it as the classified outcome it is: the response the
+    server sent us was real, only the next hop is refused. ``status_code`` and
+    ``location`` carry that response's status and the absolute target that was
+    refused, since raising from inside the event hook is the only place either
+    is still available — the caller never receives the response object itself.
+    """
+
+    def __init__(self, message: str, *, status_code: int, location: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.location = location
+
+
 def _guard_request(request: Any) -> None:
     validate_url(str(request.url))
 
@@ -231,8 +250,15 @@ def _guard_redirect(response: Any) -> None:
     if not getattr(response, "is_redirect", False):
         return
     location = response.headers.get("location")
-    if location:
-        validate_url(urljoin(str(response.request.url), location))
+    if not location:
+        return
+    target = urljoin(str(response.request.url), location)
+    try:
+        validate_url(target)
+    except ValueError as exc:
+        raise BlockedRedirectError(
+            str(exc), status_code=response.status_code, location=target
+        ) from exc
 
 
 def network_event_hooks() -> dict[str, list[Any]]:
