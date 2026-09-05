@@ -129,7 +129,7 @@ python scripts/generate_checks_reference.py
 | `SITEMAP_TOO_LARGE` | warning | sitemap | Sitemap exceeds the protocol's uncompressed size limit | Split the sitemap so each file stays under 50 MB uncompressed. The limit is about the document a search engine parses, so compressing it does not help. |
 | `SITEMAP_URL_DUPLICATED` | notice | sitemap | URL is declared in more than one sitemap | Declare each URL in exactly one sitemap. A URL in two files is usually a generator that ran twice, and it distorts every count taken from the declared set. |
 | `SITEMAP_DESYNC` | warning | sitemap | Sitemap and crawl URL sets are out of sync | Synchronize the sitemap with the site's actual set of canonical, indexable pages. |
-| `SITEMAP_FETCH_INCOMPLETE` | notice | sitemap | Some child sitemaps could not be fetched because of network or availability errors | Check that every child sitemap is reachable and retry the audit in case the sitemap service was temporarily slow. |
+| `SITEMAP_FETCH_INCOMPLETE` | notice | sitemap | Some child sitemaps could not be fetched or parsed | Check that every child sitemap is reachable, retry in case the service was temporarily slow, and validate the XML -- a 200 response with malformed markup (e.g. an unescaped '&' in a URL) fails here the same way a network error does. |
 
 ## 8.x — heuristics beyond SF
 
