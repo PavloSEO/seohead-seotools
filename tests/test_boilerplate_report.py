@@ -32,6 +32,25 @@ def test_template_only_boilerplate_does_not_change_the_hash():
     )
 
 
+def test_nested_template_content_does_not_create_a_minority_group():
+    def page(draft: str) -> str:
+        return (
+            "<html><body><header><nav>Same live menu"
+            f"<template><footer>{draft}</footer></template>"
+            "</nav></header><main>Article</main></body></html>"
+        )
+
+    report = B.boilerplate_consistency_report(
+        [
+            {"url": "https://site.tld/a", "html": page("draft-a")},
+            {"url": "https://site.tld/b", "html": page("draft-a")},
+            {"url": "https://site.tld/c", "html": page("draft-b")},
+        ]
+    )
+
+    assert report["minority_groups"] == []
+
+
 def test_report_flags_exactly_the_page_with_the_truncated_footer():
     pages = [{"url": f"https://site.tld/p{i}", "html": _GOOD_PAGE} for i in range(1, 5)] + [
         {"url": "https://site.tld/old-legacy-page", "html": _BAD_PAGE}
