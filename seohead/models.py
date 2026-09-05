@@ -65,6 +65,21 @@ class LinkInfo(_LinkInfoOptional):
     external: bool
 
 
+class HreflangAlternate(TypedDict):
+    """One `<link rel="alternate" hreflang="...">` declaration (issue #357).
+
+    The code and the href are kept exactly as the document wrote them: a code
+    with the wrong case or a malformed region is itself a finding, and
+    normalising on capture would hide it. ``url`` is that same href resolved
+    against the document base -- what a browser does -- so a reciprocity check
+    can compare targets without the original being lost.
+    """
+
+    lang: str
+    raw_href: str
+    url: str
+
+
 class FormInfo(TypedDict):
     """One `<form>` extracted from a page (issue #125)."""
 
@@ -135,6 +150,8 @@ class ParsedPage(_ParsedPageOptional):
     content_text: str
     content_area_strategy: str
     word_count: int
+    # Always extracted: see parse_html. Empty when the page declares none.
+    hreflang: list[HreflangAlternate]
 
 
 class ParseFetched(ParsedPage):
