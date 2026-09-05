@@ -14,7 +14,10 @@ SHA-256 hash under ``/.well-known/``, a path unlikely to collide with real
 content. Requests use the shared HTTP layer with redirects enabled because the
 final status matters, not the first hop. Strict AND logic requires agreement:
 two 2xx/3xx responses confirm a soft 404 (warning), two 404/410 responses pass,
-and disagreement produces ``unknown`` without a verdict.
+and disagreement produces ``unknown`` without a verdict. A probe whose redirect
+was refused by our own network guard (``recon.net.BlockedRedirectError``) is
+neither: the site tried to send the probe somewhere we refuse to go, which is
+worth reporting by name rather than folded into "the probes disagreed" (#175).
 """
 
 from __future__ import annotations
@@ -40,11 +43,17 @@ def probe_urls(start_url: str) -> list[str]:
 
 
 def classify_soft404(probes: list[dict[str, Any]]) -> str:
-    """Classify probes as ``pass``, ``warning`` (soft 404), or ``unknown``.
+    """Classify probes as ``pass``, ``warning`` (soft 404), ``refused``, or ``unknown``.
 
     Strict AND logic requires both probes to agree. Otherwise the result is
     ``unknown``: one 200 and one 404 response do not support a verdict.
+    ``refused`` is checked first and independently of that agreement: a probe
+    our own guard declined to follow never got a final status at all, and that
+    is a different fact from "the probes disagreed" — collapsing the two would
+    make a guard refusal indistinguishable from an inconclusive site (#175).
     """
+    if any(p.get("blocked_by_guard") for p in probes):
+        return "refused"
     conclusive = [p for p in probes if "status" in p and not p.get("access_blocked")]
     successful = [p for p in conclusive if 200 <= p["status"] < 400]
     correct_missing = [p for p in conclusive if p["status"] in (404, 410)]
@@ -62,7 +71,7 @@ def check_soft404(url: str, timeout: float = 20.0) -> dict[str, Any]:
     """Request two probes and classify soft-404 behavior. Network boundary."""
     targets = probe_urls(url)
     try:
-        from seohead.recon.net import http_client
+        from seohead.recon.net import BlockedRedirectError, http_client
 
         client, _ = http_client(timeout)
     except ImportError:
@@ -82,6 +91,20 @@ def check_soft404(url: str, timeout: float = 20.0) -> dict[str, Any]:
                             "redirected": str(resp.url) != target,
                         }
                     )
+                except BlockedRedirectError as exc:
+                    # A real response came back; only the next hop was refused. Recorded
+                    # with its own status/location rather than folded into "error" so
+                    # classify_soft404 can tell this apart from a plain probe failure.
+                    probes.append(
+                        {
+                            "url": target,
+                            "status": exc.status_code,
+                            "final_url": exc.location,
+                            "redirected": True,
+                            "blocked_by_guard": True,
+                            "error": str(exc),
+                        }
+                    )
                 except Exception as exc:
                     probes.append({"url": target, "error": str(exc)})
     except Exception as exc:
@@ -93,6 +116,10 @@ def check_soft404(url: str, timeout: float = 20.0) -> dict[str, Any]:
         "warning": (
             "soft 404: nonexistent URLs return 200/3xx responses and may create "
             "indexable low-value pages"
+        ),
+        "refused": (
+            "a probe's redirect target was refused by our own network guard "
+            "(it pointed at a private or non-public address); no soft-404 verdict is possible"
         ),
         "unknown": "the probes disagreed or did not complete; no verdict is available",
     }[verdict]

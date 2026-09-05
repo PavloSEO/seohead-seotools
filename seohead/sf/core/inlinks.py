@@ -266,6 +266,11 @@ def check_hreflang_targets(ctx: AuditContext) -> None:
         dest = rec.get("destination_url")
         if not src or not dest:
             continue
+        # #176 audit: this reads the single 2xx-preferring representative, not every
+        # variant under the key, but that stays correct here — unlike the bug in
+        # check_canonical_to_redirect, a 3xx and a 4xx twin agree on the verdict this
+        # check cares about (both are "broken"), so which one is picked only changes
+        # which status/redirect_url gets quoted, never whether HREFLANG_BROKEN_TARGET fires.
         target = ctx.page_by_norm.get(norm_url(dest))
         if target is None:
             continue  # external / not crawled — cannot classify the target
@@ -418,6 +423,9 @@ def _check_not_canonical(
     offenders = []
     for rec in entries:
         dest = rec.get("destination_url")
+        # #176 audit: correct by construction. A redirecting twin under this key rarely
+        # carries a canonical tag of its own (SF's parser reads canonical off the fetched
+        # HTML, and a 3xx has none) — the 2xx variant is the one this check needs.
         target = ctx.page_by_norm.get(norm_url(dest))
         if target is None:
             continue  # external / not crawled — cannot classify
@@ -467,6 +475,9 @@ def check_hreflang_reciprocity(ctx: AuditContext) -> None:
     for src_norm, dest_norm in sorted(edges):
         if (dest_norm, src_norm) in edges:
             continue  # B already names A back
+        # #176 audit: every read of page_by_norm below is "does this key exist in the
+        # crawl" or a display label — the reciprocity verdict itself comes entirely from
+        # the hreflang edge set above, so which variant is the representative is moot.
         target = ctx.page_by_norm.get(dest_norm)
         if target is None:
             continue  # external / not crawled — cannot fault it for not reciprocating
@@ -606,6 +617,11 @@ def check_inlink_composition(ctx: AuditContext) -> None:
         by_dest.setdefault(dest, []).append(rec)
 
     for dest, links in by_dest.items():
+        # #176 audit: correct by construction, same reasoning as check_unlinked_canonical —
+        # is_indexable is a property of the live page, so the 2xx-preferring representative
+        # is the variant "is this destination's inlink composition worth flagging" means.
+        # The per-source lookup at the bottom of this loop resolves each source individually,
+        # not a shared-key group, so the same single-representative read is simply correct.
         target = ctx.page_by_norm.get(norm_url(dest))
         if target is None or not target.is_indexable:
             continue
@@ -674,6 +690,8 @@ def check_discovery_path(ctx: AuditContext) -> None:
         path_norm = paths.get(norm_url(page.url))
         if path_norm is None or len(path_norm) - 1 <= max_depth:
             continue
+        # #176 audit: display only — the hop count and whether this fires both come from
+        # ``paths``/``max_depth`` above, computed over the edge graph, not over this label.
         path_urls = [ctx.page_by_norm[n].url if n in ctx.page_by_norm else n for n in path_norm]
         ctx.add(
             "DEEP_DISCOVERY_PATH",

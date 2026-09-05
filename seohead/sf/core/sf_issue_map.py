@@ -93,15 +93,11 @@ CATEGORIES: dict[str, list[Entry]] = {
     "Security": [
         _c("HTTP URLs", "HTTP_URL"),
         _c("Mixed Content", "MIXED_CONTENT", "INSECURE_SUBRESOURCE"),
-        _g("Form URL Insecure", "form action attributes are not extracted during the crawl"),
-        _g("Form On HTTP URL", "same: forms are not part of the parsed record"),
+        _c("Form URL Insecure", "FORM_URL_INSECURE"),
+        _c("Form On HTTP URL", "FORM_ON_HTTP_URL"),
         _c("Missing HSTS Header", "MISSING_HSTS"),
-        _g(
-            "Unsafe Cross Origin Links",
-            "target=_blank without rel=noopener is not checked; the link record has no rel "
-            "beyond nofollow",
-        ),
-        _g("Protocol-Relative Resource Links", "// resource URLs are resolved before recording"),
+        _c("Unsafe Cross Origin Links", "UNSAFE_CROSS_ORIGIN_LINK"),
+        _c("Protocol-Relative Resource Links", "PROTOCOL_RELATIVE_LINK"),
         _t("Missing Content-Security-Policy Header", "security-check"),
         _t("Missing X-Content-Type-Options Header", "security-check"),
         _t("Missing X-Frames-Options Header", "security-check"),
@@ -133,7 +129,7 @@ CATEGORIES: dict[str, list[Entry]] = {
     "Page Titles": [
         _c("Missing", "TITLE_MISSING"),
         _c("Multiple", "TITLE_MULTIPLE"),
-        _g("Outside <head>", "element position within the document is not recorded"),
+        _c("Outside <head>", "TITLE_OUTSIDE_HEAD"),
         _c("Duplicate", "TITLE_DUPLICATE"),
         _c("Over 60 Characters", "TITLE_TOO_LONG"),
         _c("Below 30 Characters", "TITLE_TOO_SHORT"),
@@ -147,7 +143,7 @@ CATEGORIES: dict[str, list[Entry]] = {
     ],
     "Meta Description": [
         _g("Multiple", "only the first meta description is kept during parsing"),
-        _g("Outside <head>", "element position within the document is not recorded"),
+        _c("Outside <head>", "DESC_OUTSIDE_HEAD"),
         _c("Missing", "DESC_MISSING"),
         _c("Duplicate", "DESC_DUPLICATE"),
         _c("Over 155 Characters", "DESC_TOO_LONG"),
@@ -225,7 +221,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         _c("Non-Indexable Canonical", "CANONICAL_NON_INDEXABLE"),
         _g("Invalid Attribute In Annotation", "rel attribute values are not validated"),
         _c("Contains Fragment URL", "CANONICAL_FRAGMENT"),
-        _g("Outside <head>", "element position within the document is not recorded"),
+        _c("Outside <head>", "CANONICAL_OUTSIDE_HEAD"),
         _c("Canonicalised", "CANONICALISED"),
         _c("Missing", "CANONICAL_MISSING"),
         _c("Unlinked", "UNLINKED_CANONICAL"),
@@ -245,7 +241,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         _c("Non-Indexable", "PAGINATION_NONINDEXABLE"),
     ],
     "Directives": [
-        _g("Outside <head>", "element position within the document is not recorded"),
+        _c("Outside <head>", "DIRECTIVES_OUTSIDE_HEAD"),
         _c("NoImageIndex", "NOIMAGEINDEX"),
         _c("Noindex", "NOINDEX"),
         _c("Nofollow", "NOFOLLOW_PAGE"),
@@ -274,7 +270,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         _c("Incorrect Language & Region Codes", "HREFLANG_INVALID_CODE"),
         _c("Multiple Entries", "HREFLANG_MULTIPLE_ENTRIES"),
         _c("Not Using Canonical", "HREFLANG_NOT_CANONICAL"),
-        _g("Outside <head>", "element position within the document is not recorded"),
+        _c("Outside <head>", "HREFLANG_OUTSIDE_HEAD"),
         _g("Unlinked Hreflang URLs", "hreflang targets are not tested against the link graph"),
         _c("Missing Self Reference", "HREFLANG_MISSING_SELF_REFERENCE"),
         _c("Missing X-Default", "HREFLANG_MISSING_XDEFAULT"),
@@ -310,7 +306,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         ),
     ],
     "Links": [
-        _g("Outlinks To Localhost", "a localhost destination is treated as any other off-host URL"),
+        _c("Outlinks To Localhost", "OUTLINK_TO_LOCALHOST"),
         _p(
             "Pages With Uncrawlable Internal Outlinks",
             "excluded destinations are counted by reason in the run's excluded map, but not "
@@ -325,10 +321,7 @@ CATEGORIES: dict[str, list[Entry]] = {
         ),
         _c("Pages With High External Outlinks", "HIGH_EXTERNAL_OUTLINKS"),
         _c("Pages With High Internal Outlinks", "HIGH_OUTLINKS"),
-        _g(
-            "Follow & Nofollow Internal Inlinks To Page",
-            "a page linked both ways from different sources is not called out",
-        ),
+        _c("Follow & Nofollow Internal Inlinks To Page", "FOLLOW_AND_NOFOLLOW_INLINKS"),
         _c("Internal Nofollow Inlinks Only", "ONLY_NOFOLLOW_INLINKS"),
         _c("Pages With High Crawl Depth", "DEEP_CRAWL_DEPTH", "DEEP_DISCOVERY_PATH"),
         _p(
@@ -420,19 +413,23 @@ CATEGORIES: dict[str, list[Entry]] = {
         _o("URL Is Not on Google", "needs Search Console"),
     ],
     "Validation": [
-        _g("Missing <head> Tag", "document skeleton validity is not asserted"),
-        _g("Multiple <head> Tags", "document skeleton validity is not asserted"),
-        _g("Missing <body> Tag", "document skeleton validity is not asserted"),
-        _g("Multiple <body> Tags", "document skeleton validity is not asserted"),
+        _c("Missing <head> Tag", "HEAD_MISSING"),
+        _c("Multiple <head> Tags", "HEAD_MULTIPLE"),
+        _c("Missing <body> Tag", "BODY_MISSING"),
+        _c("Multiple <body> Tags", "BODY_MULTIPLE"),
         _c("HTML Document Over 2MB", "LARGE_HTML"),
         _p(
             "Resource Over 2MB",
             "a body above the configured ceiling is recorded and not parsed; it is a limit, "
             "not a finding",
         ),
-        _g("Invalid HTML Elements In <head>", "element position within the document is not read"),
-        _g("<body> Element Preceding <html>", "document skeleton validity is not asserted"),
-        _g("<head> Not First In <html> Element", "document skeleton validity is not asserted"),
+        _c("Invalid HTML Elements In <head>", "INVALID_HEAD_ELEMENT"),
+        # Both collapse, after an HTML5 parser recovers from either shape of malformed
+        # markup, into the same resolved fact: something other than <head> is the first
+        # element under <html>. See seohead/tools/parser.py's _head_not_first for what was
+        # verified directly against lxml before writing this as one check.
+        _c("<body> Element Preceding <html>", "HEAD_NOT_FIRST"),
+        _c("<head> Not First In <html> Element", "HEAD_NOT_FIRST"),
         _o(
             "High Carbon Rating",
             "a derived score over transfer weight; the weight itself is already reported and "

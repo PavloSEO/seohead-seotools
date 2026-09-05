@@ -38,6 +38,9 @@ dependencies = [
     "beautifulsoup4>=4.12,<5",
     "defusedxml>=0.7,<1",
     "Pillow>=10.2,<13",
+    # SF export encoding detection (seohead/sf/core/loader.py) once utf-8/utf-16
+    # both reject the bytes -- a real detector, not a latin-1 catch-all (#160).
+    "charset-normalizer>=3.3,<4",
     "pydantic>=2.6,<3",
     # Pydantic requires TypedDict from here below Python 3.12; see seohead/models.py.
     "typing_extensions>=4.7; python_version < '3.12'",

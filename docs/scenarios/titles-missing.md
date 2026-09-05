@@ -10,7 +10,7 @@ fix. A page with no title is one page. A title shared by nine pages is one templ
 
 ## Covers
 
-- **Page Titles** — Missing · Multiple · Duplicate
+- **Page Titles** — Missing · Multiple · Duplicate · Outside <head>
 
 ## The chain
 
@@ -65,6 +65,13 @@ not reported clean:
 { "id": "TITLE_MULTIPLE", "reason": "no titles_multiple export (export this SF filter to enable)" }
 ```
 
+**6. Add `TITLE_OUTSIDE_HEAD`, which needs the parse tree the crawl in step 1 already built.**
+A browser closes `<head>` at the first element that does not belong there — an invalid tag
+sitting between the title and the rest of the metadata — and reads everything after that point
+from `<body>` instead, silently. The title still exists; it is just read from the wrong place.
+Step 1's crawl records this per page automatically, and neither a plain Screaming Frog export
+nor `sf run --exports-dir` on its own can raise it: Screaming Frog has no notion of it either.
+
 ## What comes out
 
 The grouping, straight out of `audit.json`, is the part worth reading:
@@ -104,7 +111,8 @@ beyond the crawl that was going to happen anyway.
   fit, or brand voice.
 - **Whether two `<title>` elements exist**, unless a Screaming Frog export supplies that filter.
   The crawl keeps the first title and does not count the rest.
-- **Whether a title sits outside `<head>`.** Element position within the document is not
-  recorded at all, by either input mode.
+- **Whether a title sits outside `<head>` on a plain Screaming Frog export.** `TITLE_OUTSIDE_HEAD`
+  needs the parse tree a native crawl builds; an export-only run names it skipped rather than
+  reporting it clean.
 - **Anything about pages the crawl did not reach.** Read `run.crawl_partial` before treating a
   count as "the site".

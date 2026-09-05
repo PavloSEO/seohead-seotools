@@ -46,6 +46,19 @@ from tests.chains.chain_site import run_chain_site
 # never runs.
 _NOT_WIRED_INTO_CRAWL = frozenset({"INLINK_BOILERPLATE_ONLY"})
 
+# Same shape again (issue #125): UNSAFE_CROSS_ORIGIN_LINK and PROTOCOL_RELATIVE_LINK are
+# wired in -- crawl_site adds them directly, from seohead.crawl.link_findings -- but only
+# when link_attributes.capture is on, which this test's crawls also leave at its default
+# (off). The other four checks issue #125 added (OUTLINK_TO_LOCALHOST,
+# FOLLOW_AND_NOFOLLOW_INLINKS, FORM_URL_INSECURE, FORM_ON_HTTP_URL) need no such setting and
+# are genuinely exercised by every crawl below, so they are not excluded here.
+#
+# What is no longer here is the whole computed body this set used to open with: every check
+# whose source was "heuristic" or "sitemap" was excluded wholesale, because neither module
+# was called from a crawl at all. Issue #165 wired both in, so the exclusion that stood for
+# "this pipeline never runs" is gone and only the three settings-gated ids remain.
+_NOT_WIRED_INTO_CRAWL |= {"UNSAFE_CROSS_ORIGIN_LINK", "PROTOCOL_RELATIVE_LINK"}
+
 # SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP are the two sitemap-sourced ids
 # crawl_site answers itself, from its own link-graph reconciliation
 # (reconcile_sitemap), never through sitemap_coverage.run_sitemap -- the same
@@ -76,6 +89,15 @@ def _owning_spy(check_id: str, source: str, spies: dict[str, object]):
     if source == "sitemap":
         return spies["sitemap"]
     return spies["rules"]
+
+
+# Same shape again (issue #125): UNSAFE_CROSS_ORIGIN_LINK and PROTOCOL_RELATIVE_LINK are
+# wired in -- crawl_site adds them directly, from seohead.crawl.link_findings -- but only
+# when link_attributes.capture is on, which this test's crawls also leave at its default
+# (off). The other four checks issue #125 added (OUTLINK_TO_LOCALHOST,
+# FOLLOW_AND_NOFOLLOW_INLINKS, FORM_URL_INSECURE, FORM_ON_HTTP_URL) need no such setting and
+# are genuinely exercised by every crawl below, so they are not excluded here.
+_NOT_WIRED_INTO_CRAWL |= {"UNSAFE_CROSS_ORIGIN_LINK", "PROTOCOL_RELATIVE_LINK"}
 
 
 @pytest.fixture(scope="module")
@@ -152,7 +174,11 @@ def test_the_excluded_set_names_only_checks_actually_absent_from_the_registry():
     """A ratchet: this set may shrink further, but every id in it must still be
     a real check this test's own crawl configuration genuinely never exercises."""
     assert set(CHECKS) >= _NOT_WIRED_INTO_CRAWL
-    assert {"INLINK_BOILERPLATE_ONLY"} == _NOT_WIRED_INTO_CRAWL
+    assert {
+        "INLINK_BOILERPLATE_ONLY",
+        "UNSAFE_CROSS_ORIGIN_LINK",
+        "PROTOCOL_RELATIVE_LINK",
+    } == _NOT_WIRED_INTO_CRAWL
 
 
 def test_the_twelve_checks_issue_128_reported_are_no_longer_silently_uninvoked(site, tmp_path):

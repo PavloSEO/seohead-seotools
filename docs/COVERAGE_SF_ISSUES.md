@@ -15,17 +15,29 @@ here is written about *our own* behaviour.
 
 | Status | Count | Meaning |
 |---|---:|---|
+<<<<<<< HEAD
 | check | 93 | a registry check finds it |
 | tool | 33 | a command outside the crawl registry finds it |
 | partial | 20 | we find part of it; the missing part is stated |
 | gap | 38 | we should find it and do not |
+=======
+| check | 114 | a registry check finds it |
+| tool | 33 | a command outside the crawl registry finds it |
+| partial | 17 | we find part of it; the missing part is stated |
+| gap | 20 | we should find it and do not |
+>>>>>>> origin/main
 | out of scope | 136 | a decision, with its reason |
 | **total** | **320** | |
 
 108 of the out-of-scope entries are two whole categories declined as single
 decisions — accessibility and AMP, each explained in its own section below. Of the
+<<<<<<< HEAD
 remaining 212 issues, **126 are found today**, 20 are
 found in part, 38 are gaps worth closing, and
+=======
+remaining 212 issues, **147 are found today**, 17 are
+found in part, 20 are gaps worth closing, and
+>>>>>>> origin/main
 28 need something we have decided not to build.
 
 A gap is not a defect. It is a named, deliberate absence — which is the only kind worth
@@ -57,11 +69,11 @@ having, because the alternative is an absence nobody has noticed.
 |---|---|---|---|
 | HTTP URLs | check | `HTTP_URL` |  |
 | Mixed Content | check | `MIXED_CONTENT` `INSECURE_SUBRESOURCE` |  |
-| Form URL Insecure | gap | — | form action attributes are not extracted during the crawl |
-| Form On HTTP URL | gap | — | same: forms are not part of the parsed record |
+| Form URL Insecure | check | `FORM_URL_INSECURE` |  |
+| Form On HTTP URL | check | `FORM_ON_HTTP_URL` |  |
 | Missing HSTS Header | check | `MISSING_HSTS` |  |
-| Unsafe Cross Origin Links | gap | — | target=_blank without rel=noopener is not checked; the link record has no rel beyond nofollow |
-| Protocol-Relative Resource Links | gap | — | // resource URLs are resolved before recording |
+| Unsafe Cross Origin Links | check | `UNSAFE_CROSS_ORIGIN_LINK` |  |
+| Protocol-Relative Resource Links | check | `PROTOCOL_RELATIVE_LINK` |  |
 | Missing Content-Security-Policy Header | tool | `security-check` |  |
 | Missing X-Content-Type-Options Header | tool | `security-check` |  |
 | Missing X-Frames-Options Header | tool | `security-check` |  |
@@ -90,7 +102,7 @@ having, because the alternative is an absence nobody has noticed.
 |---|---|---|---|
 | Missing | check | `TITLE_MISSING` |  |
 | Multiple | check | `TITLE_MULTIPLE` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `TITLE_OUTSIDE_HEAD` |  |
 | Duplicate | check | `TITLE_DUPLICATE` |  |
 | Over 60 Characters | check | `TITLE_TOO_LONG` |  |
 | Below 30 Characters | check | `TITLE_TOO_SHORT` |  |
@@ -103,7 +115,7 @@ having, because the alternative is an absence nobody has noticed.
 | Issue | Status | Found by | Note |
 |---|---|---|---|
 | Multiple | gap | — | only the first meta description is kept during parsing |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `DESC_OUTSIDE_HEAD` |  |
 | Missing | check | `DESC_MISSING` |  |
 | Duplicate | check | `DESC_DUPLICATE` |  |
 | Over 155 Characters | check | `DESC_TOO_LONG` |  |
@@ -168,7 +180,7 @@ having, because the alternative is an absence nobody has noticed.
 | Non-Indexable Canonical | check | `CANONICAL_NON_INDEXABLE` |  |
 | Invalid Attribute In Annotation | gap | — | rel attribute values are not validated |
 | Contains Fragment URL | check | `CANONICAL_FRAGMENT` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `CANONICAL_OUTSIDE_HEAD` |  |
 | Canonicalised | check | `CANONICALISED` |  |
 | Missing | check | `CANONICAL_MISSING` |  |
 | Unlinked | check | `UNLINKED_CANONICAL` |  |
@@ -191,7 +203,7 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `DIRECTIVES_OUTSIDE_HEAD` |  |
 | NoImageIndex | check | `NOIMAGEINDEX` |  |
 | Noindex | check | `NOINDEX` |  |
 | Nofollow | check | `NOFOLLOW_PAGE` |  |
@@ -214,7 +226,7 @@ having, because the alternative is an absence nobody has noticed.
 | Incorrect Language & Region Codes | check | `HREFLANG_INVALID_CODE` |  |
 | Multiple Entries | check | `HREFLANG_MULTIPLE_ENTRIES` |  |
 | Not Using Canonical | check | `HREFLANG_NOT_CANONICAL` |  |
-| Outside <head> | gap | — | element position within the document is not recorded |
+| Outside <head> | check | `HREFLANG_OUTSIDE_HEAD` |  |
 | Unlinked Hreflang URLs | gap | — | hreflang targets are not tested against the link graph |
 | Missing Self Reference | check | `HREFLANG_MISSING_SELF_REFERENCE` |  |
 | Missing X-Default | check | `HREFLANG_MISSING_XDEFAULT` |  |
@@ -244,14 +256,14 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Outlinks To Localhost | gap | — | a localhost destination is treated as any other off-host URL |
+| Outlinks To Localhost | check | `OUTLINK_TO_LOCALHOST` |  |
 | Pages With Uncrawlable Internal Outlinks | partial | — | excluded destinations are counted by reason in the run's excluded map, but not attributed back to the pages that linked them |
 | Pages Without Internal Outlinks | check | `NO_INTERNAL_OUTLINKS` |  |
 | Non-Indexable Page Inlinks Only | check | `ONLY_NONINDEXABLE_SOURCE_INLINKS` |  |
 | Internal Nofollow Outlinks | partial | — | nofollow is recorded per edge and gates crawling; there is no page-level finding for having them |
 | Pages With High External Outlinks | check | `HIGH_EXTERNAL_OUTLINKS` |  |
 | Pages With High Internal Outlinks | check | `HIGH_OUTLINKS` |  |
-| Follow & Nofollow Internal Inlinks To Page | gap | — | a page linked both ways from different sources is not called out |
+| Follow & Nofollow Internal Inlinks To Page | check | `FOLLOW_AND_NOFOLLOW_INLINKS` |  |
 | Internal Nofollow Inlinks Only | check | `ONLY_NOFOLLOW_INLINKS` |  |
 | Pages With High Crawl Depth | check | `DEEP_CRAWL_DEPTH` `DEEP_DISCOVERY_PATH` |  |
 | Internal Outlinks With No Anchor Text | partial | `GENERIC_ANCHOR_TEXT` | empty anchors are recorded; the generic-anchor check covers the wording, not the absence |
@@ -342,15 +354,15 @@ having, because the alternative is an absence nobody has noticed.
 
 | Issue | Status | Found by | Note |
 |---|---|---|---|
-| Missing <head> Tag | gap | — | document skeleton validity is not asserted |
-| Multiple <head> Tags | gap | — | document skeleton validity is not asserted |
-| Missing <body> Tag | gap | — | document skeleton validity is not asserted |
-| Multiple <body> Tags | gap | — | document skeleton validity is not asserted |
+| Missing <head> Tag | check | `HEAD_MISSING` |  |
+| Multiple <head> Tags | check | `HEAD_MULTIPLE` |  |
+| Missing <body> Tag | check | `BODY_MISSING` |  |
+| Multiple <body> Tags | check | `BODY_MULTIPLE` |  |
 | HTML Document Over 2MB | check | `LARGE_HTML` |  |
 | Resource Over 2MB | partial | — | a body above the configured ceiling is recorded and not parsed; it is a limit, not a finding |
-| Invalid HTML Elements In <head> | gap | — | element position within the document is not read |
-| <body> Element Preceding <html> | gap | — | document skeleton validity is not asserted |
-| <head> Not First In <html> Element | gap | — | document skeleton validity is not asserted |
+| Invalid HTML Elements In <head> | check | `INVALID_HEAD_ELEMENT` |  |
+| <body> Element Preceding <html> | check | `HEAD_NOT_FIRST` |  |
+| <head> Not First In <html> Element | check | `HEAD_NOT_FIRST` |  |
 | High Carbon Rating | out of scope | — | a derived score over transfer weight; the weight itself is already reported and the rating adds a model, not a measurement |
 
 ## Accessibility

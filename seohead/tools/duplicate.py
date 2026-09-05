@@ -13,10 +13,31 @@ The implementation uses Charikar's SimHash algorithm:
      the document fingerprint.
   4. Fingerprint similarity is ``1 - (Hamming distance / 64)``.
 
-For candidate retrieval, LSH divides the 64-bit fingerprint into fixed-width
-bands. Two documents become candidates when at least one band matches; the exact
-Hamming similarity must still meet the configured threshold before they are
-joined into a cluster.
+Every real site is templated: most of any page's text is shared chrome that
+survived content-area scoping (see ``content_area.py``) — a repeated CTA, a
+disclaimer, a related-items rail. Left alone, that shared text dominates step 3's
+majority vote on every document, so the whole corpus converges on nearly the same
+fingerprint regardless of how different each page's own content actually is, and
+every LSH band collides into one bucket instead of pruning anything (issue #162).
+Once a corpus is large enough for the statistic to mean something
+(``_MIN_DOCS_FOR_TEMPLATE_FILTER``), ``find_duplicates`` first finds shingles that
+occur in nearly every document (``_TEMPLATE_DOC_FREQ_RATIO``) and zeroes their
+vote before hashing: they carry no information about which documents are alike,
+so they should not get to decide the fingerprint. Below that corpus size no
+shingle is discounted, because two or three documents legitimately sharing "all"
+of their shingles is exactly the near-duplicate case this tool exists to catch,
+not a template.
+
+For candidate retrieval, LSH divides the (template-damped) 64-bit fingerprint
+into fixed-width bands. Two documents become candidates when at least one band
+matches, and the exact Hamming similarity must still meet the configured
+threshold before an edge joins them. That per-edge check alone does not make a
+valid cluster: chaining A-B and B-C edges connects A and C by transitivity even
+when A and C were never compared and do not meet the threshold together (issue
+#161). So each connected component is re-verified afterward and, if it is not
+already a clique, split into complete-linkage subgroups — every member pair
+inside a reported cluster, not just the edges LSH happened to follow, is
+guaranteed to meet ``threshold``.
 
 Exact duplicates (identical text) are found separately, by hashing each
 document's text with SHA-1. A cluster whose members are all exact duplicates
@@ -56,6 +77,13 @@ _BANDS = 16
 _BAND_BITS = 4
 _DEFAULT_THRESHOLD = 0.92  # 1 - 5/64 ~= 0.922; lower similarity is not a match
 
+# A shingle occurring in this fraction of the corpus or more is treated as the
+# site's own template rather than page content (see the module docstring).
+_TEMPLATE_DOC_FREQ_RATIO = 0.9
+# Below this many documents, "shared by nearly everyone" is not a meaningful
+# statistic — it is indistinguishable from a small set of genuine near-duplicates.
+_MIN_DOCS_FOR_TEMPLATE_FILTER = 20
+
 
 def _tokenize(text: str) -> list[str]:
     """Return lowercase alphanumeric tokens with at least two characters.
@@ -86,23 +114,37 @@ def fnv1a_64(data: str) -> int:
     return h
 
 
-def simhash(text: str, k: int = 3) -> int:
-    """Return a 64-bit SimHash fingerprint; identical texts produce the same hash."""
-    toks = _tokenize(text)
-    sh = shingles(toks, k)
+def _weighted_simhash(
+    sh: list[tuple[str, ...]], weight: dict[tuple[str, ...], float] | None = None
+) -> int:
+    """Return a 64-bit SimHash fingerprint from precomputed shingles.
+
+    ``weight`` scales an individual shingle's vote; a shingle absent from the
+    mapping (or ``weight=None``) counts fully, at 1.0. ``find_duplicates`` uses
+    this to zero out shingles that turn out to be the corpus's shared template
+    rather than page content (see ``_template_shingles``).
+    """
     if not sh:
         return 0
-    # Accumulate each bit's +1/-1 vote across all shingle hashes.
-    v = [0] * 64
+    # Accumulate each bit's +1/-1 vote, scaled by shingle weight, across all shingles.
+    v = [0.0] * 64
     for piece in sh:
+        w = 1.0 if weight is None else weight.get(piece, 1.0)
+        if w == 0.0:
+            continue
         h = fnv1a_64(" ".join(piece))
         for i in range(64):
-            v[i] += 1 if (h >> i) & 1 else -1
+            v[i] += w if (h >> i) & 1 else -w
     fp = 0
     for i in range(64):
         if v[i] > 0:
             fp |= 1 << i
     return fp
+
+
+def simhash(text: str, k: int = 3) -> int:
+    """Return a 64-bit SimHash fingerprint; identical texts produce the same hash."""
+    return _weighted_simhash(shingles(_tokenize(text), k))
 
 
 def hamming(a: int, b: int) -> int:
@@ -134,6 +176,66 @@ def _band_keys(fp: int, bands: int = _BANDS, band_bits: int = _BAND_BITS) -> lis
     return keys
 
 
+def _template_shingles(
+    shingle_lists: list[list[tuple[str, ...]]],
+) -> set[tuple[str, ...]]:
+    """Return shingles occurring in at least ``_TEMPLATE_DOC_FREQ_RATIO`` of the corpus.
+
+    Below ``_MIN_DOCS_FOR_TEMPLATE_FILTER`` documents this returns an empty set: with
+    only a handful of documents, "shared by nearly all of them" describes the exact
+    near-duplicate case this tool exists to find, not a template to discount.
+    """
+    n = len(shingle_lists)
+    if n < _MIN_DOCS_FOR_TEMPLATE_FILTER:
+        return set()
+    doc_freq: dict[tuple[str, ...], int] = defaultdict(int)
+    for sh in shingle_lists:
+        for piece in set(sh):
+            doc_freq[piece] += 1
+    cutoff = n * _TEMPLATE_DOC_FREQ_RATIO
+    return {piece for piece, df in doc_freq.items() if df >= cutoff}
+
+
+def _complete_linkage_groups(
+    members: list[str], fingerprints: dict[str, int], threshold: float
+) -> list[list[str]]:
+    """Split a union-find component into groups where every internal pair meets ``threshold``.
+
+    LSH candidate retrieval only guarantees that each edge it followed meets the
+    threshold, not every pair reachable by chaining edges together — a component
+    is not automatically a valid cluster (issue #161). Finding the true maximum
+    clique cover is NP-hard; this greedily grows one clique at a time, starting
+    from the strongest remaining edge, so the most similar pairs are the ones
+    that survive — never dropped in favor of a weaker pair that happened to claim
+    a shared member first. Every group returned really is a clique, though a
+    weaker edge whose endpoints both end up claimed by a stronger clique is
+    reported as no cluster at all rather than forced into an invalid one.
+    """
+    adjacency: dict[str, set[str]] = {m: set() for m in members}
+    edges: list[tuple[float, str, str]] = []
+    for i, a in enumerate(members):
+        for b in members[i + 1 :]:
+            sim = similarity(fingerprints[a], fingerprints[b])
+            if sim >= threshold:
+                adjacency[a].add(b)
+                adjacency[b].add(a)
+                edges.append((sim, a, b))
+    edges.sort(key=lambda e: (-e[0], e[1], e[2]))
+
+    remaining = set(members)
+    groups: list[list[str]] = []
+    for _sim, a, b in edges:
+        if a not in remaining or b not in remaining:
+            continue  # one endpoint already claimed by a stronger clique
+        clique = {a, b}
+        for node in sorted(remaining - clique):
+            if clique <= adjacency[node]:  # node is adjacent to every member so far
+                clique.add(node)
+        remaining -= clique
+        groups.append(sorted(clique))
+    return groups
+
+
 def find_duplicates(
     items: list[dict[str, Any]],
     threshold: float = _DEFAULT_THRESHOLD,
@@ -144,10 +246,11 @@ def find_duplicates(
     """Find exact and near-duplicate groups in a list of documents.
 
     Each item is ``{"id": str, "text": str}``, where ``id`` may be a URL or
-    any stable key, plus an optional ``indexable`` flag (default True). Near
-    duplicates are groups whose exact similarity is at least ``threshold``;
-    LSH retrieves candidates without an all-pairs scan, while the reported
-    pair values are calculated with exact Hamming similarity.
+    any stable key, plus an optional ``indexable`` flag (default True). A
+    cluster is complete-linkage: every pair of its members, not only the pairs
+    LSH happened to compare, has exact Hamming similarity at least
+    ``threshold`` (see the module docstring for both the LSH candidate step
+    and the template-damping that keeps a templated corpus sub-quadratic).
 
     ``only_indexable`` (default True) drops non-indexable items before either
     comparison: a page canonicalised to another is an intended twin, not a
@@ -175,14 +278,25 @@ def find_duplicates(
             out["fingerprints"] = {}
         return out
 
-    fingerprints: dict[str, int] = {}
     texts: dict[str, str] = {}
+    doc_shingles: dict[str, list[tuple[str, ...]]] = {}
     for it in items:
         doc_id = it.get("id") or it.get("url") or ""
         text = it.get("text") or ""
         if doc_id:
-            fingerprints[str(doc_id)] = simhash(text, k=k)
-            texts[str(doc_id)] = text
+            doc_id = str(doc_id)
+            texts[doc_id] = text
+            doc_shingles[doc_id] = shingles(_tokenize(text), k)
+
+    # A shingle in nearly every document is the site's template, not distinguishing
+    # content; damping it before hashing is what keeps a templated corpus's
+    # fingerprints — and therefore its LSH buckets — from collapsing onto each
+    # other (see the module docstring).
+    template = _template_shingles(list(doc_shingles.values()))
+    weight = {piece: 0.0 for piece in template} if template else None
+    fingerprints: dict[str, int] = {
+        doc_id: _weighted_simhash(sh, weight) for doc_id, sh in doc_shingles.items()
+    }
 
     # Exact groups are found by content hash, independent of the near-duplicate
     # pass below, so they are unaffected by threshold or LSH banding.
@@ -230,39 +344,42 @@ def find_duplicates(
                     candidate_pairs.add(tuple(sorted((a, b))))
                     union(a, b)
 
-    # Group documents by their union-find root.
-    groups: dict[str, list[str]] = defaultdict(list)
+    # Group documents by their union-find root. Candidate retrieval only connects
+    # pairs that individually cleared the threshold, so a component is a set of
+    # documents reachable through such edges — not yet a verified cluster (issue
+    # #161: B can bridge unrelated A and C by being near both).
+    components: dict[str, list[str]] = defaultdict(list)
     for doc_id in fingerprints:
-        groups[find(doc_id)].append(doc_id)
+        components[find(doc_id)].append(doc_id)
 
     clusters: list[dict[str, Any]] = []
-    for members in groups.values():
+    for members in components.values():
         if len(members) < 2:
             continue  # A singleton cannot be a duplicate cluster.
-        # A cluster where every member shares the same content hash is fully
-        # explained by exact duplication and already listed in
-        # exact_duplicates; reporting it again here would double-report it.
-        if len({hash_of[m] for m in members}) == 1:
-            continue
-        # Calculate all pair similarities inside each cluster for reporting.
-        pairs = []
-        for i in range(len(members)):
-            for j in range(i + 1, len(members)):
-                a, b = members[i], members[j]
-                pairs.append(
-                    {
-                        "a": a,
-                        "b": b,
-                        "similarity": round(similarity(fingerprints[a], fingerprints[b]), 4),
-                    }
-                )
-        clusters.append(
-            {
-                "members": members,
-                "pairs": pairs,
-                "min_similarity": min(p["similarity"] for p in pairs),
-            }
-        )
+        # Split into complete-linkage subgroups so every reported cluster's pairs,
+        # not only the edges LSH followed, meet the threshold.
+        for clique in _complete_linkage_groups(members, fingerprints, threshold):
+            # A clique where every member shares the same content hash is fully
+            # explained by exact duplication and already listed in
+            # exact_duplicates; reporting it again here would double-report it.
+            if len({hash_of[m] for m in clique}) == 1:
+                continue
+            pairs = [
+                {
+                    "a": a,
+                    "b": b,
+                    "similarity": round(similarity(fingerprints[a], fingerprints[b]), 4),
+                }
+                for i, a in enumerate(clique)
+                for b in clique[i + 1 :]
+            ]
+            clusters.append(
+                {
+                    "members": clique,
+                    "pairs": pairs,
+                    "min_similarity": min(p["similarity"] for p in pairs),
+                }
+            )
 
     clusters.sort(key=lambda c: -c["min_similarity"])
     result: dict[str, Any] = {

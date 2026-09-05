@@ -65,6 +65,25 @@ def test_parse_html_options_off():
     assert r["links"] == []
 
 
+def test_template_link_is_not_extracted():
+    """<template> content is never rendered or requested (issue #140)."""
+    html = (
+        '<html><body><template><a href="/template-link">gone</a></template>'
+        "<p>Real content paragraph with enough words to be meaningful for a test.</p>"
+        "</body></html>"
+    )
+    r = parser.parse_html(html, "https://site.tld/page")
+    assert r["links"] == []
+
+
+def test_noscript_link_is_still_extracted():
+    """Unlike <template>, <noscript> is real fallback markup a browser or crawler can load."""
+    html = '<html><body><noscript><a href="/fallback-link">fb</a></noscript></body></html>'
+    r = parser.parse_html(html, "https://site.tld/page")
+    hrefs = {ln["href"] for ln in r["links"]}
+    assert "https://site.tld/fallback-link" in hrefs
+
+
 # ── robots ───────────────────────────────────────────────────────────────────
 
 

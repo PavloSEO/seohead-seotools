@@ -95,8 +95,9 @@ seohead report-build --audit ./run/audit.json --format xlsx --out ./hreflang.xls
 - **Whether an hreflang target is indexable.** The target's status is checked; its `noindex` is
   not cross-referenced. A reciprocal, canonical, 200-answering annotation pointing at a page
   nobody may index still reads clean here.
-- **Whether the annotations are in `<head>`.** Element position is not recorded, so an
-  annotation in the body — which browsers and crawlers ignore — is judged as if it counted.
+- **Whether the annotations are in `<head>`, from the graph checks in this chain.** They read the
+  export's annotation list, not the parse tree; `HREFLANG_OUTSIDE_HEAD` answers this instead, from
+  a native crawl — see [scenario 32](hreflang-codes.md).
 - **Whether the right language is being served.** Nothing here reads a search result. The chain
   proves the annotations are structurally sound; which page a search engine then shows in
   Austria is outside it.
