@@ -200,6 +200,8 @@ def _build_kwargs(cmd: str, args: argparse.Namespace) -> tuple[str, dict[str, An
     elif cmd == "crawl-site":
         if args.url:
             kw["url"] = args.url
+        if getattr(args, "urls", None):
+            kw["urls"] = _split_list(args.urls)
         for flag in (
             "config",
             "max_urls",
@@ -470,6 +472,11 @@ def _add_flags(sub: argparse.ArgumentParser, cmd: str) -> None:
             "(performs network lookups)",
         )
     if cmd == "crawl-site":
+        _source_flag(
+            sub,
+            "--urls",
+            help="comma-separated URL list: list mode, no discovery",
+        )
         sub.add_argument("--max-urls", type=int, help="URL budget (default 200)")
         sub.add_argument("--out-dir", help="directory for pages.jsonl and audit.json")
         sub.add_argument("--config", help="path to a crawler config file (JSON)")

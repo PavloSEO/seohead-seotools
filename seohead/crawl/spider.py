@@ -665,6 +665,12 @@ def crawl_site(
             excluded.update(loaded_state.excluded)
             for path_key, variants in loaded_state.query_budget.items():
                 query_budget[path_key] = set(variants)
+            # Both are produced only for pages fetched in this invocation, so a
+            # resumed run would otherwise finish reporting fewer forms than the
+            # interrupted one had already found, and would hand the rendering
+            # gate an empty start page (issue #188).
+            result.forms.extend(FormEdge(**entry) for entry in loaded_state.forms)
+            result.start_page_evidence = dict(loaded_state.start_page_evidence)
         else:
             queue = deque([(start, 0)])
             seen = {_canonical_key(start)}
@@ -1006,6 +1012,8 @@ def crawl_site(
                             path_key: sorted(variants)
                             for path_key, variants in query_budget.items()
                         },
+                        forms=[dataclasses.asdict(form) for form in result.forms],
+                        start_page_evidence=dict(result.start_page_evidence),
                     ),
                 )
 

@@ -59,6 +59,12 @@ DEFAULTS: dict[str, Any] = {
         # honour: the redirect target is recorded on the page record either way.
         "external": {"store": True},
         "follow_nofollow": False,
+        # List mode only (no ``url``, only ``urls``): a redirect is recorded as
+        # given -- the hop is never followed as a new page -- but a migration
+        # audit needs to know where the chain actually ends, not just that a
+        # hop exists. Off by default because it is extra requests per redirect
+        # a plain status check does not need.
+        "resolve_redirect_destination": False,
     },
     "limits": {
         "max_urls": 200,
@@ -225,6 +231,7 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         "discovery.redirects.crawl",
         "discovery.external.store",
         "discovery.follow_nofollow",
+        "discovery.resolve_redirect_destination",
         # Every limit truncates the corpus, and a truncated crawl produces false
         # "not linked from anywhere" conclusions.
         "limits.max_urls",
@@ -310,6 +317,11 @@ DESCRIPTIONS: dict[str, str] = {
     "discovery.redirects.crawl": "Request discovered redirect targets (fetch them).",
     "discovery.external.store": "Keep discovered external links in the report.",
     "discovery.follow_nofollow": "Follow links marked rel=nofollow instead of skipping them.",
+    "discovery.resolve_redirect_destination": (
+        "List mode only: follow a fetched redirect past its first hop to where it actually "
+        "lands, recording every hop. Depth stays 0; this is a per-URL chain walk, not link "
+        "discovery."
+    ),
     "limits.max_urls": "Maximum number of URLs the crawl will fetch.",
     "limits.max_depth": "Maximum link depth from the start URL.",
     "limits.max_query_variants_per_path": "Maximum distinct query strings kept per URL path.",

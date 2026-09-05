@@ -352,3 +352,109 @@ def test_text_ratio_is_a_percentage_matching_the_analyzer_threshold():
     ratio = result.pages[0].text_ratio
     assert ratio > 1, f"expected a percentage, got {ratio} which reads as a fraction"
     assert ratio <= 100
+
+
+# ── robots.txt in list mode, and the redirect chain (issue #21) ──────────────
+
+
+def test_list_mode_reads_robots_per_host_and_records_what_it_blocked():
+    """List mode has no single site to resolve robots.txt against up front: every URL in
+    the list is independent and may live on a different host. Each host's policy is fetched
+    as that host is first encountered, and what it disallows is recorded even under a policy
+    that still fetches, so "this would be blocked" stays visible rather than only showing up
+    as a page that silently went missing."""
+    responses = {
+        "https://a.example/robots.txt": FakeResponse(
+            "User-agent: *\nDisallow: /private/\n", headers={"content-type": "text/plain"}
+        ),
+        "https://b.example/robots.txt": FakeResponse(
+            "User-agent: *\n", headers={"content-type": "text/plain"}
+        ),
+        "https://a.example/public": FakeResponse(HTML),
+        "https://a.example/private/x": FakeResponse(HTML),
+        "https://b.example/private/x": FakeResponse(HTML),
+    }
+    result = collect_urls(
+        [
+            "https://a.example/public",
+            "https://a.example/private/x",
+            "https://b.example/private/x",
+        ],
+        fetcher=_fetch(responses),
+        min_delay=0,
+        robots_policy="respect",
+    )
+
+    fetched = {page.url for page in result.pages}
+    # Same path, two hosts, two different policies — so the answer must be per host.
+    assert "https://a.example/private/x" not in fetched
+    assert "https://b.example/private/x" in fetched
+    assert "https://a.example/public" in fetched
+    assert result.robots_blocked == ["https://a.example/private/x"]
+
+
+def test_a_robots_txt_that_cannot_be_read_does_not_block_the_whole_list():
+    """A single-site crawl can treat an unreadable robots.txt as "stop, we do not know the
+    rules". List mode cannot: one unreachable host would then decide the fate of URLs on
+    every other host in the list, which are unrelated to it by construction."""
+    responses = {
+        "https://down.example/robots.txt": ConnectionError("no route to host"),
+        "https://down.example/page": FakeResponse(HTML),
+    }
+    result = collect_urls(
+        ["https://down.example/page"],
+        fetcher=_fetch(responses),
+        min_delay=0,
+        robots_policy="respect",
+    )
+
+    assert [page.url for page in result.pages] == ["https://down.example/page"]
+    assert result.robots_blocked == []
+
+
+def test_resolving_a_redirect_destination_records_every_hop_and_where_it_landed():
+    """A migration audit needs to know where a chain ends, not merely that a hop exists.
+    List mode never follows a redirect as link discovery — depth stays 0 — so this is an
+    explicit per-URL chain walk, off by default because a plain status check does not need
+    the extra requests."""
+    responses = {
+        "https://example.com/old": FakeResponse(
+            "", status_code=301, headers={"location": "https://example.com/mid"}
+        ),
+        "https://example.com/mid": FakeResponse(
+            "", status_code=302, headers={"location": "https://example.com/new"}
+        ),
+        "https://example.com/new": FakeResponse(HTML),
+    }
+    result = collect_urls(
+        ["https://example.com/old"],
+        fetcher=_fetch(responses),
+        min_delay=0,
+        resolve_redirect_destination=True,
+    )
+
+    page = result.pages[0]
+    assert page.url == "https://example.com/old"
+    assert page.final_url == "https://example.com/new"
+    assert [hop["url"] for hop in page.redirect_chain] == [
+        "https://example.com/mid",
+        "https://example.com/new",
+    ]
+    assert [hop["status_code"] for hop in page.redirect_chain] == [302, 200]
+
+
+def test_an_unresolved_redirect_reports_an_empty_chain_rather_than_a_false_destination():
+    """Off by default, and the absence has to be legible: an empty chain beside a non-empty
+    redirect_url means "nobody followed this", which is a different statement from "this
+    redirect resolves to nothing"."""
+    responses = {
+        "https://example.com/old": FakeResponse(
+            "", status_code=301, headers={"location": "https://example.com/new"}
+        ),
+    }
+    result = collect_urls(["https://example.com/old"], fetcher=_fetch(responses), min_delay=0)
+
+    page = result.pages[0]
+    assert page.redirect_url == "https://example.com/new"
+    assert page.redirect_chain == []
+    assert page.final_url == ""

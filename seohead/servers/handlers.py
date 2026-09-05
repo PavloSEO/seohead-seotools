@@ -422,8 +422,17 @@ def crawl_site(
             cache=cache,
             extra_request_headers=settings["http"]["headers"] or None,
             adaptive=settings["speed"]["adaptive"],
+            robots_policy=settings["robots"]["policy"],
+            robots_token=settings["robots"]["user_agent_token"],
+            resolve_redirect_destination=settings["discovery"]["resolve_redirect_destination"],
         )
-        discovery = {"mode": "list"}
+        discovery = {
+            "mode": "list",
+            # #21: the configured policy must be stated, not merely applied — a report that
+            # says nothing here is indistinguishable from one that silently ignored it.
+            "directive_policy": settings["robots"]["policy"],
+            "robots_blocked": len(result.robots_blocked),
+        }
 
     requires_rendering = False
     requires_rendering_reason = ""
