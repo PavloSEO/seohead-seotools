@@ -35,6 +35,7 @@ SF_DOCUMENT = {
     },
     "issues": [],
     "pages": [{"url": "https://example.test/", "status_code": 200, "metrics": {}}],
+    "groups": [],
 }
 
 
@@ -53,12 +54,38 @@ def test_missing_site_audit_schema_is_refused():
     assert "schema" in result["error"]
 
 
+def test_marked_site_audit_with_malformed_required_containers_is_refused(tmp_path):
+    """#338: the marker alone is not enough for a writer to safely consume the document."""
+    for field, value in (("findings", "not a list"), ("pages", {}), ("summary", [])):
+        doc = copy.deepcopy(SITE_DOCUMENT)
+        doc[field] = value
+        result = build_report(doc, fmt="md", path=str(tmp_path / f"site-{field}.md"))
+        assert result["ok"] is False
+        assert field in result["error"]
+
+
 def test_unsupported_sf_schema_version_is_refused_and_names_the_marker(tmp_path):
     doc = {**SF_DOCUMENT, "schema_version": "999.0"}
     result = build_report(doc, fmt="md", path=str(tmp_path / "out.md"))
     assert result["ok"] is False
     assert "schema_version" in result["error"]
     assert "999.0" in result["error"]
+
+
+def test_marked_sf_audit_with_malformed_required_containers_is_refused(tmp_path):
+    """#338: reject every container normalization or a writer would dereference."""
+    for field, value in (
+        ("run", []),
+        ("summary", "not a mapping"),
+        ("issues", {}),
+        ("pages", {}),
+        ("groups", {}),
+    ):
+        doc = copy.deepcopy(SF_DOCUMENT)
+        doc[field] = value
+        result = build_report(doc, fmt="md", path=str(tmp_path / f"sf-{field}.md"))
+        assert result["ok"] is False
+        assert field in result["error"]
 
 
 def test_correctly_versioned_site_audit_still_renders(tmp_path):

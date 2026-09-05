@@ -149,20 +149,43 @@ def _detect_kind(document: dict[str, Any]) -> tuple[str | None, str | None]:
     produces, and ``error`` is ``None`` in that case -- the generic message in
     :func:`build_report` already names the unrecognized top-level keys (#151).
     """
-    if document.get("findings") is not None:
+    if "findings" in document or "schema" in document:
         marker = document.get("schema")
         if marker != _SITE_AUDIT_SCHEMA:
             return None, (
                 f"unsupported or missing 'schema' marker {marker!r}; "
                 f"site-audit reports require exactly {_SITE_AUDIT_SCHEMA!r}"
             )
+        invalid = [
+            name
+            for name, expected in (("findings", list), ("pages", list), ("summary", dict))
+            if not isinstance(document.get(name), expected)
+        ]
+        if invalid:
+            return None, f"site-audit has invalid or missing container(s): {', '.join(invalid)}"
         return "site-audit", None
-    if isinstance(document.get("issues"), list) and isinstance(document.get("pages"), list):
+    if "issues" in document or "schema_version" in document:
         marker = document.get("schema_version")
         if marker != _SF_AUDIT_SCHEMA_VERSION:
             return None, (
                 f"unsupported or missing 'schema_version' marker {marker!r}; "
                 f"SF Analyzer audits require exactly {_SF_AUDIT_SCHEMA_VERSION!r}"
+            )
+        invalid = [
+            name
+            for name, expected in (
+                ("run", dict),
+                ("summary", dict),
+                ("issues", list),
+                ("pages", list),
+                ("groups", list),
+            )
+            if not isinstance(document.get(name), expected)
+        ]
+        if invalid:
+            return (
+                None,
+                f"SF Analyzer audit has invalid or missing container(s): {', '.join(invalid)}",
             )
         return "sf-audit", None
     return None, None

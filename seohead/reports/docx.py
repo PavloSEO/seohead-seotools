@@ -90,7 +90,12 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
         doc.add_heading(f"{SEVERITY_TITLES.get(level, level)} — {len(chunk)}", level=1)
         if level == "critical":
             warn = doc.add_paragraph()
-            run = warn.add_run("These issues are preventing the site from ranking correctly now.")
+            run = warn.add_run(
+                "These are the highest-severity issues this audit found, by the "
+                "aggregator's severity rules. This report does not measure current "
+                "search rankings, so it does not say whether these issues have "
+                "already cost the site any."
+            )
             run.bold = True
             run.font.color.rgb = RGBColor(0xC0, 0, 0)
         for finding in chunk[:_MAX_FINDINGS_PER_LEVEL]:
