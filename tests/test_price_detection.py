@@ -153,3 +153,48 @@ def test_structure_is_measured_even_without_prices():
     assert structure["priced_items"] == 0
     assert structure["images"] == 1
     assert structure["spec_rows"] == 1
+
+
+# --- qualified symbols must not be recoded to a bare-symbol currency -------
+QUALIFIED = [
+    ("CA$ 1,299.50", 1299.5, "CAD"),
+    ("AU$ 1,299.50", 1299.5, "AUD"),
+    ("HK$ 1,299.50", 1299.5, "HKD"),
+    ("CN¥ 1,299.50", 1299.5, "CNY"),
+]
+
+
+@pytest.mark.parametrize(("text", "value", "currency"), QUALIFIED)
+def test_a_qualified_symbol_resolves_to_its_own_currency_not_the_bare_symbols(
+    text, value, currency
+):
+    # Before the fix, "CA$"/"AU$"/"HK$" matched on their inner bare "$" and
+    # came back USD, and "CN¥" matched on its inner "¥" and came back JPY.
+    found = parse_price(text)
+    assert found is not None, f"no price found in {text!r}"
+    assert found["value"] == value
+    assert found["currency"] == currency
+
+
+def test_schema_build_publishes_the_qualified_currency_not_a_recoded_one():
+    from seohead.tools.schema_build import build_schema
+
+    url = "https://shop.example.com/product/widget"
+    html = "<html><body><h1>Widget</h1><p>CA$ 1,299.50</p></body></html>"
+    result = build_schema(url=url, html=html)
+    webpage = next(
+        node for node in result["suggested_graph"]["@graph"] if node.get("@id") == "#webpage"
+    )
+    assert webpage["offers"]["priceCurrency"] == "CAD"
+
+
+def test_an_unrecognised_qualified_symbol_is_no_price_not_a_guessed_one():
+    # "SG$" names no currency this table resolves unambiguously; guessing USD
+    # from the inner bare "$" would be a wrong finding, which is worse than none.
+    assert parse_price("SG$100") is None
+
+
+def test_bare_dollar_and_yen_are_unaffected_by_the_qualifier_guard():
+    assert parse_price("$19.99")["currency"] == "USD"
+    assert parse_price("¥100")["currency"] == "JPY"
+    assert parse_price("R$ 100")["currency"] == "BRL"

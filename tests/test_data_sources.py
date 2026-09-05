@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -302,6 +303,41 @@ def test_metrika_row_cap_exists_so_a_typo_cannot_pull_a_million_rows():
 
     assert metrika.ROW_CAP == 100_000
     assert metrika.PAGE_PAUSE > 0  # Paging without a pause can exhaust the request quota.
+
+
+def test_metrika_paginated_failure_keeps_the_usage_already_made(monkeypatch, journal):
+    """A page-two failure must not erase the request that page one already spent.
+
+    Before the fix, the aggregate ``report.paginated`` spend row was written only after the
+    whole loop finished, so an exception on a later page left the journal with no entry at
+    all — hiding both the successful first page and the failing second attempt from anyone
+    diagnosing an interrupted collection.
+    """
+    from seohead.data_sources import metrika
+
+    client = metrika.MetrikaClient(token="synthetic")
+    calls = {"count": 0}
+
+    def fake_request(_url):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {"data": [{"metrics": [1]}] * 100, "total_rows": 300, "query": {}}
+        raise metrika.MetrikaError(503, "synthetic outage")
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    monkeypatch.setattr(metrika.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(metrika.MetrikaError) as exc:
+        client.report({"metrics": "ym:s:visits"}, paginate=True, limit=100)
+
+    assert exc.value.status == 503
+    assert calls["count"] == 2  # Both the successful page and the failing attempt ran.
+
+    rows = spend.read_all()
+    assert len(rows) == 1  # The interrupted collection still leaves usage in the journal.
+    assert rows[0]["cost"] == 2  # One completed page plus the one that raised.
+    assert rows[0]["items"] == 100  # Rows collected before the failure are not discarded.
+    assert rows[0]["extra"]["outcome"] == "failed"
 
 
 # --- Arsenkin task batches -------------------------------------------------
@@ -668,6 +704,137 @@ class _FakeSearchAsyncResponse:
 
     def __init__(self, operation_id: str):
         self._body = json.dumps({"id": operation_id}).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read(self):
+        return self._body
+
+
+def test_yandex_cloud_search_batch_reports_a_rejected_submission_as_an_error_not_a_timeout(
+    monkeypatch, journal
+):
+    """A provider rejection (HTTP 4xx) must never be billed or read back as a lost timeout.
+
+    Before the fix, a non-200 submission was silently dropped from the returned mapping, and the
+    caller's only signal was the query's absence — indistinguishable from an operation that was
+    genuinely billed and simply timed out while polling.
+    """
+
+    def fake_urlopen(request, timeout=None, context=None):
+        raise _make_http_error(400, '{"message": "invalid query"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    client = yandex_cloud.WebSearch(api_key="test-key", folder_id="test-folder")
+    results = client.search_batch(["synthetic invalid query"], timeout=0)
+
+    entry = results["synthetic invalid query"]
+    assert entry["status"] == "rejected"
+    assert "400" in entry["error"]
+    assert entry["docs"] == []
+    assert "operation_id" not in entry
+
+    rows = spend.read_all()
+    assert len(rows) == 1
+    assert rows[0]["cost"] == 0  # A rejected submission was never billed.
+    assert rows[0]["extra"]["operation_ids"] == {}  # No operation exists to recover.
+
+
+def test_serp_fetch_never_calls_a_rejected_query_billed(monkeypatch, journal):
+    """serp_fetch's note must not claim a rejected query's operation is in the spend journal."""
+    from seohead.servers import handlers
+
+    def fake_urlopen(request, timeout=None, context=None):
+        raise _make_http_error(400, '{"message": "invalid query"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    real_websearch = yandex_cloud.WebSearch
+    monkeypatch.setattr(
+        yandex_cloud,
+        "WebSearch",
+        lambda: real_websearch(api_key="test-key", folder_id="test-folder"),
+    )
+
+    result = handlers.serp_fetch(query="synthetic invalid query")
+
+    assert result["not_returned"] == []  # A rejection is an error, not a timeout.
+    assert result["note"] is None
+    assert result["results"]["synthetic invalid query"]["status"] == "rejected"
+
+
+def test_yandex_cloud_search_batch_dedupes_exact_duplicate_queries_before_billing(
+    monkeypatch, journal
+):
+    """A repeated query string must be billed once and its one result must stay retrievable.
+
+    Before the fix, each duplicate created its own paid operation, but both wrote into the same
+    dict key: the later completion silently overwrote the former, hiding one paid result forever
+    while the ledger showed two charges with no operation id to recover either from.
+    """
+    calls = []
+
+    def fake_urlopen(request, timeout=None, context=None):
+        calls.append(request)
+        if request.get_method() == "GET":
+            return _FakeOperationDoneResponse("https://example.com/", "result")
+        return _FakeSearchAsyncResponse("only-operation")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(yandex_cloud.time, "sleep", lambda _seconds: None)
+
+    client = yandex_cloud.WebSearch(api_key="test-key", folder_id="test-folder")
+    results = client.search_batch(["same query", "same query"])
+
+    submissions = [c for c in calls if c.get_method() == "POST"]
+    assert len(submissions) == 1  # The duplicate never reaches the provider a second time.
+    assert list(results) == ["same query"]
+    assert results["same query"]["operation_id"] == "only-operation"
+
+    rows = spend.read_all()
+    assert len(rows) == 1
+    assert rows[0]["cost"] == 1  # Billed exactly once for the one operation created.
+    assert rows[0]["extra"]["operation_ids"] == {"same query": "only-operation"}
+
+
+def test_serp_fetch_reconciles_requested_and_returned_for_duplicate_queries(monkeypatch, journal):
+    """requested/returned must reconcile exactly, including when the input repeats a query."""
+    from seohead.servers import handlers
+
+    def fake_urlopen(request, timeout=None, context=None):
+        if request.get_method() == "GET":
+            return _FakeOperationDoneResponse("https://example.com/", "result")
+        return _FakeSearchAsyncResponse("only-operation")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(yandex_cloud.time, "sleep", lambda _seconds: None)
+    real_websearch = yandex_cloud.WebSearch
+    monkeypatch.setattr(
+        yandex_cloud,
+        "WebSearch",
+        lambda: real_websearch(api_key="test-key", folder_id="test-folder"),
+    )
+
+    result = handlers.serp_fetch(queries=["same query", "same query"])
+
+    assert result["requested"] == 1
+    assert result["returned"] == 1
+    assert result["not_returned"] == []
+
+
+class _FakeOperationDoneResponse:
+    """Minimal context-manager double for a completed ``searchAsync`` operation."""
+
+    status = 200
+
+    def __init__(self, url: str, title: str):
+        xml = f"<doc><url>{url}</url><title>{title}</title></doc>"
+        body = {"done": True, "response": {"rawData": base64.b64encode(xml.encode()).decode()}}
+        self._body = json.dumps(body).encode("utf-8")
 
     def __enter__(self):
         return self

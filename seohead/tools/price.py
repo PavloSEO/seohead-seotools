@@ -34,6 +34,10 @@ CURRENCY_MARKERS: tuple[tuple[str, str | None], ...] = (
     ("р.", "RUB"),
     ("у.е.", None),
     ("R$", "BRL"),
+    ("CA$", "CAD"),
+    ("AU$", "AUD"),
+    ("HK$", "HKD"),
+    ("CN¥", "CNY"),
     ("Kč", "CZK"),
     ("zł", "PLN"),
     ("CHF", "CHF"),
@@ -78,8 +82,21 @@ CURRENCY_MARKERS: tuple[tuple[str, str | None], ...] = (
 _GROUP_SPACES = "    "
 _GROUP_SEPARATORS = _GROUP_SPACES + ".,'’"
 
+
+def _marker_pattern(marker: str) -> str:
+    """Escape one marker, blocking a bare $ or ¥ from matching inside a qualified symbol.
+
+    "CA$", "AU$", "HK$" and "CN¥" are their own listed markers and win on their own, since
+    ``finditer`` returns the leftmost successful match first. Without this guard, a country
+    prefix this table does not recognise (any other "XX$") would still let the bare symbol
+    match starting one character later, silently recoding an unknown currency as USD or JPY.
+    """
+    escaped = re.escape(marker)
+    return rf"(?<![A-Za-z]){escaped}" if marker in ("$", "¥") else escaped
+
+
 _MARKER_ALTERNATION = "|".join(
-    re.escape(marker) for marker, _ in sorted(CURRENCY_MARKERS, key=lambda m: -len(m[0]))
+    _marker_pattern(marker) for marker, _ in sorted(CURRENCY_MARKERS, key=lambda m: -len(m[0]))
 )
 _AMOUNT = rf"\d{{1,3}}(?:[{re.escape(_GROUP_SEPARATORS)}]\d{{1,3}})*|\d+"
 
