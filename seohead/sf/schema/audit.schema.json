@@ -28,6 +28,7 @@
         "generated_at": {"type": "string"},
         "profile": {"type": ["string", "null"]},
         "exports_used": {"type": "array", "items": {"type": "string"}},
+        "exports_encodings": {"type": "object"},
         "crawl_valid": {"type": "boolean"},
         "crawl_invalid_reason": {"type": ["string", "null"]},
         "crawl_partial": {"type": "boolean"},
@@ -37,6 +38,17 @@
         "collector": {"type": "string"},
         "exports_missing": {"type": "array", "items": {"type": "string"}},
         "checks_skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "reason"],
+            "properties": {
+              "id": {"type": "string"},
+              "reason": {"type": "string"}
+            }
+          }
+        },
+        "checks_disabled": {
           "type": "array",
           "items": {
             "type": "object",

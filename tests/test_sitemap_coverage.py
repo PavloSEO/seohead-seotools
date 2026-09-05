@@ -113,3 +113,72 @@ def test_sitemap_parses_clean_urlset():
     out = S._parse_sitemap_bytes(xml, "ua", 1, set(), {"x.com"})
     assert [e["loc"] for e in out] == ["https://example.com/a", "https://example.com/b"]
     assert out[0]["lastmod"] == "2025-01-01"
+
+
+def test_a_parse_error_is_a_named_failure_not_a_silent_empty_result():
+    """#146: a document that fetched fine but doesn't parse (an unescaped '&' is the
+    classic generator bug) must be distinguishable from "no such document" -- both used
+    to return [] with nothing recorded anywhere."""
+    broken = (
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/a?x=1&y=2</loc></url></urlset>"  # bare '&'
+    )
+    fails: list[str] = []
+    out = S._parse_sitemap_bytes(
+        broken, "ua", 1, set(), set(), failures=fails, source="https://example.com/sitemap.xml"
+    )
+    assert out == []
+    assert fails == ["https://example.com/sitemap.xml"], (
+        "a parse failure on a fetched document must be named, the same way a fetch "
+        "failure already is"
+    )
+
+
+def _mini_ctx(tmp_path, crawled_urls):
+    """The minimum AuditContext run_sitemap() needs, built from a real SF export."""
+    import csv
+
+    from seohead.sf.config import load_config
+    from seohead.sf.core.context import AuditContext
+    from seohead.sf.core.loader import load_exports
+
+    with open(tmp_path / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Address", "Content Type", "Status Code", "Indexability"])
+        writer.writerows([[u, "text/html", "200", "Indexable"] for u in crawled_urls])
+    return AuditContext(load_exports(str(tmp_path)), load_config(None))
+
+
+def test_run_sitemap_reports_a_broken_sitemap_instead_of_claiming_none_was_set(
+    monkeypatch, tmp_path
+):
+    """#146: network was enabled and a sitemap with a 200 and real content was fetched, so
+    the skip reason "no sitemap URL set (no export and network disabled)" would itself be
+    false -- both halves of it. A malformed sitemap must surface as a named fetch/parse
+    failure, not disappear into that false reason.
+    """
+    ctx = _mini_ctx(tmp_path, ["https://example.com/a"])
+    broken = (
+        b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        b"<url><loc>https://example.com/a?x=1&y=2</loc></url></urlset>"
+    )
+
+    def fake_fetch(url, ua, timeout, retries=2):
+        if url == "https://example.com/robots.txt":
+            return b"User-agent: *\n"
+        if url == "https://example.com/sitemap.xml":
+            return broken
+        return None
+
+    monkeypatch.setattr(S, "_fetch", fake_fetch)
+    summary = S.run_sitemap(ctx, sitemap_url="https://example.com/sitemap.xml")
+
+    assert summary["urls_in_sitemap"] == 0
+    assert summary["sitemap_fetch_failures"] == ["https://example.com/sitemap.xml"]
+    assert any(issue.check == "SITEMAP_FETCH_INCOMPLETE" for issue in ctx.issues)
+    skipped = {s.id: s.reason for s in ctx.skipped}
+    assert "SITEMAP_DESYNC" in skipped
+    assert skipped["SITEMAP_DESYNC"] != "no sitemap URL set (no export and network disabled)", (
+        "network was enabled and a sitemap was fetched -- this reason is false on both counts"
+    )
+    assert "fetch/parse failed" in skipped["SITEMAP_DESYNC"]

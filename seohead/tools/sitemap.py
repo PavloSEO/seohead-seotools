@@ -27,6 +27,7 @@ Depends only on the Python stdlib plus ``httpx`` and ``lxml``.
 from __future__ import annotations
 
 import gzip
+import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -54,6 +55,10 @@ MAX_REDIRECTS = 8
 
 _USER_AGENT = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
 _GZIP_MAGIC = b"\x1f\x8b"
+_GUNZIP_CHUNK = 64 * 1024  # read granularity for the bounded gunzip loop below
+# One message for "too large", raised whichever stage (compressed or decompressed) catches
+# it, so a caller sees one consistent failure rather than branching on which check fired.
+_TOO_LARGE_MSG = f"Response too large (> {MAX_XML_BYTES} bytes)"
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
@@ -303,26 +308,51 @@ def parse_sitemap(xml_bytes: bytes, base_url: str) -> dict:
 def _maybe_gunzip(url: str, body: bytes) -> bytes:
     """Decompress *body* if it is a ``.gz`` sitemap or has a gzip magic header.
 
-    ``httpx`` already handles the ``Content-Encoding`` header transparently, so
-    this only needs to catch gzipped *payloads* (``.xml.gz`` files, or servers
-    that gzip the body without advertising it).
+    Reads through the decompressor in ``_GUNZIP_CHUNK``-sized steps and aborts as soon as
+    the output exceeds :data:`MAX_XML_BYTES`, rather than materialising the whole stream
+    first: ``gzip.decompress()`` has no size bound of its own, so a 2 MB payload can expand
+    to 2 GiB in under two seconds regardless of the pre-decompression size check in
+    :func:`_fetch` (issue #148). zlib's deflate format tops out around a 1032:1 compression
+    ratio (https://www.zlib.net/zlib_tech.html), so bounding the *output* at
+    ``MAX_XML_BYTES`` bounds the peak extra memory this can cost to about one document's
+    worth of XML, independent of how the compressed bytes were crafted -- a compressed input
+    already capped well under that ratio's worth of ``MAX_XML_BYTES`` can never reach the
+    ceiling before ``_GzipFile.read()`` itself runs out of bytes to expand.
+
+    Mirrors the bounded-read loop ``seohead/sf/core/sitemap_coverage.py``'s ``_safe_gunzip``
+    already uses for its own, independent sitemap fetch -- the two modules don't share code
+    across the tools/sf layering boundary, but the bound is the same one either way.
+
+    ``httpx`` already handles the ``Content-Encoding`` header transparently, so this only
+    needs to catch gzipped *payloads* (``.xml.gz`` files, or servers that gzip the body
+    without advertising it).
     """
     path = urlsplit(url).path.lower()
     looks_gzip = body[:2] == _GZIP_MAGIC
-    if path.endswith(".gz") or looks_gzip:
-        try:
-            return gzip.decompress(body)
-        except (OSError, EOFError, gzip.BadGzipFile):
-            # Not actually gzip (or truncated): fall back to the raw bytes.
-            return body
-    return body
+    if not (path.endswith(".gz") or looks_gzip):
+        return body
+    out = bytearray()
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(body)) as gz:
+            while True:
+                chunk = gz.read(_GUNZIP_CHUNK)
+                if not chunk:
+                    break
+                out += chunk
+                if len(out) > MAX_XML_BYTES:
+                    raise ValueError(_TOO_LARGE_MSG)
+    except (OSError, EOFError, gzip.BadGzipFile):
+        # Not actually gzip (or truncated): fall back to the raw bytes, same as before.
+        return body
+    return bytes(out)
 
 
 def _fetch(client: httpx.Client, url: str) -> bytes:
     """Fetch *url* and return its (decompressed) body bytes.
 
     Raises ``httpx.HTTPError`` on transport failure or a non-2xx status, and
-    ``ValueError`` if the body exceeds :data:`MAX_XML_BYTES`.
+    ``ValueError`` if the body exceeds :data:`MAX_XML_BYTES` either compressed or, once
+    decompressed, in :func:`_maybe_gunzip`.
     """
     resp = client.get(
         url,
@@ -334,7 +364,7 @@ def _fetch(client: httpx.Client, url: str) -> bytes:
     resp.raise_for_status()
     body = resp.content
     if len(body) > MAX_XML_BYTES:
-        raise ValueError(f"Response too large (> {MAX_XML_BYTES} bytes)")
+        raise ValueError(_TOO_LARGE_MSG)
     return _maybe_gunzip(str(resp.url), body)
 
 

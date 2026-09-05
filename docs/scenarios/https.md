@@ -11,26 +11,47 @@ neither breaks anything loudly.
 
 ## Covers
 
-- **Security** — HTTP URLs · Mixed Content
+- **Security** — HTTP URLs · Mixed Content · Form URL Insecure · Form On HTTP URL · Unsafe Cross Origin Links · Protocol-Relative Resource Links
 
 ## The chain
 
-**1. Crawl, and let every URL be judged by its own scheme.**
+**1. Crawl with link attributes captured, and let every URL be judged by its own scheme.**
+
+```json
+{"link_attributes": {"capture": true}}
+```
 
 ```bash
 seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./run
 ```
 
 `HTTP_URL` fires on any crawled URL that starts with `http://` — not on the site, on the URL.
-That is what turns "we migrated" into a list of the places that did not.
+That is what turns "we migrated" into a list of the places that did not. `link_attributes.capture`
+is a second, unrelated cost (see step 2) worth paying in the same crawl rather than a second one.
 
-**2. Scan the run.**
+**2. Read the link- and form-shaped residues of a migration nobody re-audits.**
+
+Four checks fire straight from that one crawl, no extra request:
+
+| Finding | The question it answers |
+|---|---|
+| `FORM_URL_INSECURE` | does a `<form>` submit to `action="http://…"`, critical regardless of the page's own scheme? |
+| `FORM_ON_HTTP_URL` | does a password field sit on a plain-HTTP page — credentials leaked before the action URL is even reached? |
+| `UNSAFE_CROSS_ORIGIN_LINK` | does a `target="_blank"` link omit `rel="noopener"`/`"noreferrer"`, handing the opened page a live handle back? |
+| `PROTOCOL_RELATIVE_LINK` | was an href written as `//host/path`, silently following whatever scheme served the current page? |
+
+The first two need only what every crawl already records (a form's action and whether it holds
+a password field); the last two need `link_attributes.capture` from step 1 — off by default
+because the extra per-link data has a real memory cost on a large crawl (see that setting's
+own docstring in `seohead/crawl/settings.py`).
+
+**3. Scan the run.**
 
 ```bash
 seohead log-scan --run ./run
 ```
 
-**3. Ask what the origin does with an insecure request.**
+**4. Ask what the origin does with an insecure request.**
 
 ```bash
 seohead security-check --url https://example.com
@@ -49,7 +70,7 @@ seohead security-check --url https://example.com
 redirected, every old link, bookmark and printed URL keeps arriving unencrypted, and the HTTP
 copies of your pages keep existing.
 
-**4. Look at what the pages themselves load.**
+**5. Look at what the pages themselves load.**
 
 ```bash
 seohead asset-weight-check --url https://example.com/page
@@ -58,13 +79,13 @@ seohead asset-weight-check --url https://example.com/page
 Each subresource is listed with its own URL, so an `http://` entry on an HTTPS page is visible
 directly. In the audit the same thing appears as `MIXED_CONTENT` and `INSECURE_SUBRESOURCE`.
 
-**5. Confirm one page's markup by hand.**
+**6. Confirm one page's markup by hand.**
 
 ```bash
 seohead parse --url https://example.com/page
 ```
 
-**6. Report both lists together.**
+**7. Report the lists together.**
 
 ```bash
 seohead report-build --audit ./run/audit.json --format xlsx --out ./https.xlsx
@@ -72,14 +93,19 @@ seohead report-build --audit ./run/audit.json --format xlsx --out ./https.xlsx
 
 ## What comes out
 
-Two lists that go to two different places. The HTTP URLs are a redirect rule and a pass over
+Four lists that go to four different places. The HTTP URLs are a redirect rule and a pass over
 the templates that still hardcode a scheme. The mixed content is an editorial and template fix:
-old post bodies with absolute `http://` image URLs, and a widget embedded years ago.
+old post bodies with absolute `http://` image URLs, and a widget embedded years ago. The forms
+list is two different repairs (an action to point at `https://`, a page that must move to HTTPS
+before its own login form is trustworthy at all). The link list is a template fix in the
+component that opens external links in a new tab, or a copyeditor's habit of pasting a CDN URL
+without a scheme.
 
 ## What it costs
 
-The crawl, plus one request each for `security-check`, `asset-weight-check` and `parse` on the
-pages you inspect by hand. Nothing paid.
+The crawl (`link_attributes.capture` adds memory, not requests), plus one request each for
+`security-check`, `asset-weight-check` and `parse` on the pages you inspect by hand. Nothing
+paid.
 
 ## What it cannot answer
 
@@ -94,3 +120,5 @@ pages you inspect by hand. Nothing paid.
   needs analytics or logs, and `log-analyze` if you have the logs.
 - **Whether an insecure subresource is load-bearing.** A blocked tracking pixel and a blocked
   stylesheet look identical in the list and are not the same emergency.
+- **A form or link written by JavaScript.** The edge and form lists are built from served HTML;
+  see [scenario 4](rendering.md).

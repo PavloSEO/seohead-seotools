@@ -103,15 +103,15 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
     ws = wb.create_sheet("Findings")
     ws.append(["Severity", "Source", "URL", "Finding"])
     _style_header(ws)
-    from seohead.reports import SEVERITY_TITLES
+    from seohead.reports import SEVERITY_TITLES, neutralize_formula
 
     for finding in document.get("findings") or []:
         ws.append(
             [
                 SEVERITY_TITLES.get(finding.get("severity"), finding.get("severity")),
-                finding.get("source", ""),
-                finding.get("url", ""),
-                finding.get("text", ""),
+                neutralize_formula(finding.get("source", "")),
+                neutralize_formula(finding.get("url", "")),
+                neutralize_formula(finding.get("text", "")),
             ]
         )
         colour = _HEAD.get(finding.get("severity"))
@@ -151,7 +151,7 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
     ws.append(titles)
     _style_header(ws)
     for page in pages:
-        ws.append([page.get(c, "") for c in columns])
+        ws.append([neutralize_formula(page.get(c, "")) for c in columns])
     if ws.max_row > 1:
         ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{ws.max_row}"
     _autofit(ws, {1: 70, 3: 60, 5: 40})

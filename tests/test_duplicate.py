@@ -1,5 +1,7 @@
 """Offline tests for near-duplicate detection with SimHash and LSH."""
 
+import random
+
 from seohead.tools import duplicate as D
 
 TEXT_A = (
@@ -158,3 +160,104 @@ def test_fingerprints_on_request():
 def test_fingerprints_empty_input_respects_flag():
     assert "fingerprints" not in D.find_duplicates([])
     assert D.find_duplicates([], with_fingerprints=True)["fingerprints"] == {}
+
+
+def _make_templated_corpus(n, rng, template_tokens=600, tail_tokens=30):
+    """A shared "site template" plus a per-document unique random tail, so every
+    document is genuinely distinct despite sharing most of its text."""
+    template = " ".join(f"tpl{i:04d}" for i in range(template_tokens))
+    items = []
+    for i in range(n):
+        tail = " ".join(f"u{i}_{j}_{rng.randint(0, 10**9)}" for j in range(tail_tokens))
+        items.append({"id": f"/page-{i}", "text": template + " " + tail})
+    return items
+
+
+def test_bridging_pair_is_not_joined_into_a_transitive_mega_cluster():
+    # Issue #161: A is near B (0.9219) and B is near C (0.9531), but A and C
+    # (0.9062) never clear the threshold together. Transitive union-find must
+    # not silently place all three in one cluster on the strength of edges that
+    # never included the A-C pair.
+    base = " ".join(f"shared{i:03d}" for i in range(300))
+    tail_a = " ".join(f"onlyA{i}" for i in range(12))
+    tail_c = " ".join(f"onlyC{i}" for i in range(12))
+    items = [
+        {"id": "A", "text": base + " " + tail_a},
+        {"id": "B", "text": base},
+        {"id": "C", "text": base + " " + tail_c},
+    ]
+    threshold = 0.92
+    r = D.find_duplicates(items, threshold=threshold)
+    all_members = {m for c in r["clusters"] for m in c["members"]}
+    assert not {"A", "B", "C"} <= all_members
+    # The module's contract: every pair inside every reported cluster clears
+    # the threshold, not merely the edges LSH happened to compare.
+    for c in r["clusters"]:
+        assert c["min_similarity"] >= threshold
+        for p in c["pairs"]:
+            assert p["similarity"] >= threshold
+
+
+def test_every_reported_cluster_is_a_verified_clique():
+    # General form of the bridging fixture: for any cluster this module
+    # returns, every pairwise similarity it reports must clear the threshold —
+    # a cluster is complete-linkage, not just transitively connected.
+    common = "the quick brown fox jumps over the lazy dog every single morning"
+    items = [
+        {"id": "A", "text": common + " alpha version notes for release one"},
+        {"id": "B", "text": common + " beta version notes for release two"},
+        {"id": "C", "text": common + " gamma version notes for release three"},
+    ]
+    threshold = 0.7
+    r = D.find_duplicates(items, threshold=threshold)
+    for c in r["clusters"]:
+        for p in c["pairs"]:
+            assert p["similarity"] >= threshold
+
+
+def test_templated_corpus_does_not_collapse_into_one_false_cluster():
+    # Issue #162: on a corpus dominated by shared template text, LSH bands
+    # used to fill one giant bucket and union-find then merged nearly the
+    # whole corpus into a single NEAR_DUPLICATE cluster, even though every
+    # page's tail here is independently random — no two pages are alike.
+    rng = random.Random(1234)
+    items = _make_templated_corpus(200, rng)
+    r = D.find_duplicates(items, threshold=0.92)
+    assert r["count"] == 200
+    assert r["clusters"] == []
+
+
+def test_templated_corpus_still_finds_a_genuine_duplicate_pair():
+    # Damping the shared template must not blind the tool to two documents
+    # that are genuinely alike beyond the template: they share a second
+    # "extra" block that only they share, so it is not damped away.
+    rng = random.Random(55)
+    items = _make_templated_corpus(40, rng, template_tokens=200, tail_tokens=20)
+    extra = " ".join(f"extra{i:03d}" for i in range(40))
+    template = " ".join(f"tpl{i:04d}" for i in range(200))
+    items[0]["text"] = template + " " + extra + " tailone"
+    items[1]["text"] = template + " " + extra + " tailtwo"
+    r = D.find_duplicates(items, threshold=0.92)
+    cluster_members = {frozenset(c["members"]) for c in r["clusters"]}
+    assert frozenset({"/page-0", "/page-1"}) in cluster_members
+    assert len(r["clusters"]) == 1  # nothing else in the corpus is genuinely alike
+
+
+def test_template_shingles_ignored_below_minimum_corpus_size():
+    # Below _MIN_DOCS_FOR_TEMPLATE_FILTER, "shared by nearly everyone" describes
+    # a real near-duplicate set, not a template, so nothing is damped.
+    shared = D.shingles(["shared"] * 10, k=3)
+    docs = [shared for _ in range(3)]
+    assert D._template_shingles(docs) == set()
+
+
+def test_template_shingles_detected_above_minimum_corpus_size():
+    template_tokens = [f"shared{i}" for i in range(50)]
+    docs = []
+    for i in range(25):
+        tail = [f"only{i}_{j}" for j in range(5)]
+        docs.append(D.shingles(template_tokens + tail, k=3))
+    template = D._template_shingles(docs)
+    assert D.shingles(template_tokens, k=3)[0] in template
+    # A shingle unique to one document is never treated as template text.
+    assert D.shingles(["only0_0", "only0_1", "only0_2"], k=3)[0] not in template

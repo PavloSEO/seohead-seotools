@@ -17,8 +17,12 @@ import json
 import os
 import stat
 from dataclasses import dataclass, field
+from typing import Any
 
-SCHEMA_VERSION = "crawl_state.v1"
+# v2 adds forms and start_page_evidence (issue #188). A v1 file is rejected
+# rather than read with those two empty: a resumed crawl that silently drops a
+# finding it had already produced is exactly the failure this bump prevents.
+SCHEMA_VERSION = "crawl_state.v2"
 
 
 @dataclass
@@ -41,6 +45,15 @@ class CrawlState:
     # reopens on every resume stops capping anything.
     excluded: dict[str, int] = field(default_factory=dict)
     query_budget: dict[str, list[str]] = field(default_factory=dict)
+    # Forms found before the checkpoint, and the start page's own evidence.
+    # Both are produced only for pages fetched in the current invocation, so
+    # without them here a resumed run reports completion while silently losing
+    # a form finding it had already made and reversing the start page's
+    # rendering verdict (issue #188). They are small next to the link graph --
+    # a handful of forms, and one page's HTML -- so they stay inline rather
+    # than becoming another sidecar the way links.jsonl had to.
+    forms: list[dict[str, Any]] = field(default_factory=list)
+    start_page_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def ensure_safe_dir(directory: str) -> None:
@@ -92,6 +105,8 @@ def load(path: str, start_url: str, config_fingerprint: str = "") -> tuple[Crawl
             str(path): [str(q) for q in variants]
             for path, variants in (raw.get("query_budget") or {}).items()
         }
+        forms = [dict(entry) for entry in raw.get("forms") or []]
+        start_page_evidence = dict(raw.get("start_page_evidence") or {})
     except (TypeError, ValueError, AttributeError):
         # AttributeError: excluded/query_budget present but not JSON objects
         # (e.g. a list), so ``.items()`` itself fails.
@@ -104,6 +119,8 @@ def load(path: str, start_url: str, config_fingerprint: str = "") -> tuple[Crawl
         config_fingerprint=raw.get("config_fingerprint") or "",
         excluded=excluded,
         query_budget=query_budget,
+        forms=forms,
+        start_page_evidence=start_page_evidence,
     )
     return state, f"resuming from checkpoint: {len(queue)} URL(s) queued, {len(seen)} seen"
 
@@ -119,6 +136,8 @@ def save(path: str, state: CrawlState) -> None:
         "config_fingerprint": state.config_fingerprint,
         "excluded": state.excluded,
         "query_budget": state.query_budget,
+        "forms": state.forms,
+        "start_page_evidence": state.start_page_evidence,
     }
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as handle:

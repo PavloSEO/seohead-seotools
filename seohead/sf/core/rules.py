@@ -611,6 +611,9 @@ def check_canonical_chain(ctx: AuditContext) -> None:
             path.append(nxt)
             seen.add(nxt)
             cur = nxt
+        # #176 audit: a representative read, but only for display — the walk above already
+        # decided the chain from the edge map alone, so which variant's URL string gets
+        # printed here changes nothing about whether or how CANONICAL_CHAIN fires.
         chain = []
         for n in path:
             tgt = ctx.page_by_norm.get(n)
@@ -647,20 +650,29 @@ def check_canonical_to_redirect(ctx: AuditContext) -> None:
             continue  # external / not crawled — cannot classify
         if any(t.status_code is not None and 200 <= int(t.status_code) < 300 for t in targets):
             continue
-        target = targets[0]
-        code = target.status_code
-        redirect_url = ctx.redirect_map.get(target.url)
-        is_redirect = (code is not None and 300 <= code <= 399) or bool(redirect_url)
-        if is_redirect:
-            ctx.add(
-                "CANONICAL_TO_REDIRECT",
-                target_url=page.url,
-                details={
-                    "canonical": canonical,
-                    "canonical_status_code": code,
-                    "redirect_url": redirect_url or target.url,
-                },
-            )
+        # #176: reading targets[0] made the verdict depend on crawl order — a 404 crawled
+        # before its 301 twin under the same normalised key hid a real CANONICAL_TO_REDIRECT.
+        # The normalised key can't say which literal variant the canonical tag actually named,
+        # so any target that answers with a redirect is enough to report one, exactly the mirror
+        # of the "any 2xx clears it" guard above.
+        redirecting = [
+            (t, ctx.redirect_map.get(t.url) or t.url)
+            for t in targets
+            if (t.status_code is not None and 300 <= int(t.status_code) <= 399)
+            or ctx.redirect_map.get(t.url)
+        ]
+        if not redirecting:
+            continue  # every target under the key is a plain non-2xx, non-redirect response
+        target, redirect_url = redirecting[0]
+        ctx.add(
+            "CANONICAL_TO_REDIRECT",
+            target_url=page.url,
+            details={
+                "canonical": canonical,
+                "canonical_status_code": target.status_code,
+                "redirect_url": redirect_url,
+            },
+        )
 
 
 def check_unlinked_canonical(ctx: AuditContext) -> None:
@@ -687,6 +699,10 @@ def check_unlinked_canonical(ctx: AuditContext) -> None:
     for source_norm, target_norm in edges.items():
         sources_by_target[target_norm].append(source_norm)
     for target_norm, source_norms in sources_by_target.items():
+        # #176 audit: correct by construction. The claim here is about the live page's own
+        # inlink count, and the redirecting twin under a shared key never carries that count
+        # (SF attributes Inlinks to the URL that actually receives them) — the 2xx-preferring
+        # representative is the only variant this check could mean.
         target = ctx.page_by_norm.get(target_norm)
         if target is None:
             continue  # canonical points outside the crawl — cannot classify
@@ -745,6 +761,8 @@ def check_pagination_series(ctx: AuditContext) -> None:
     has_predecessor = set(next_map.values())
     reported: set[str] = set()
 
+    # #176 audit: display only, like the equivalent helper in check_canonical_chain — the
+    # walk over next_map already decided the series and the loop before any URL is printed.
     def _url_of(n: str) -> str:
         page = ctx.page_by_norm.get(n)
         return page.url if page is not None else n
@@ -776,6 +794,10 @@ def check_pagination_series(ctx: AuditContext) -> None:
             continue
         if start in has_predecessor:
             continue  # not the head of its series
+        # #176 audit: correct by construction, same reasoning as check_unlinked_canonical —
+        # is_indexable and inlinks are properties of the live page, and a redirecting twin
+        # under this key would report neither, so the 2xx-preferring representative is the
+        # only variant "is this series head unlinked" can mean.
         page = ctx.page_by_norm.get(start)
         if page is None or not page.is_indexable or _rec(page).get("crawl_depth") == 0:
             continue
@@ -967,6 +989,105 @@ def check_compression(ctx: AuditContext) -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# Element position & document skeleton (issue #123)
+#
+# A browser closes <head> at the first element that does not belong there, and
+# everything after that point is read from <body> instead — a canonical or a
+# robots directive placed there silently stops applying, while the source text
+# still looks fine. Screaming Frog has no notion of this at all: the signal
+# exists only where seohead.tools.parser.parse_html resolved the tree (see its
+# module docstring for what was verified against lxml directly), so — like the
+# static Lighthouse audits just above — these need a native seohead crawl.
+# --------------------------------------------------------------------------
+
+_ELEMENT_POSITION_CHECKS: dict[str, str] = {
+    "title_outside_head": "TITLE_OUTSIDE_HEAD",
+    "meta_description_outside_head": "DESC_OUTSIDE_HEAD",
+    "canonical_outside_head": "CANONICAL_OUTSIDE_HEAD",
+    "directives_outside_head": "DIRECTIVES_OUTSIDE_HEAD",
+    "hreflang_outside_head": "HREFLANG_OUTSIDE_HEAD",
+}
+# Title/description ask about the page's own indexable content, matching
+# check_titles/check_descriptions; canonical/directives/hreflang matter on any
+# HTML page, matching check_canonical_directives.
+_ELEMENT_POSITION_ON_INDEXABLE_ONLY = frozenset(
+    {"title_outside_head", "meta_description_outside_head"}
+)
+
+_SKELETON_CHECKS = (
+    "HEAD_MISSING",
+    "HEAD_MULTIPLE",
+    "BODY_MISSING",
+    "BODY_MULTIPLE",
+    "INVALID_HEAD_ELEMENT",
+    "HEAD_NOT_FIRST",
+)
+_SKELETON_FIELDS = ("head_count", "body_count", "head_not_first", "invalid_head_elements")
+
+_NO_POSITION_EVIDENCE = (
+    "no element-position evidence (needs a native seohead crawl; Screaming Frog has no "
+    "notion of this on its own)"
+)
+
+
+def check_element_position(ctx: AuditContext) -> None:
+    """Outside-<head> checks for title, description, canonical, directives, and hreflang."""
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
+    for field, check_id in _ELEMENT_POSITION_CHECKS.items():
+        if (
+            ctx.internal_df is None
+            or find_column(ctx.internal_df, INTERNAL_FIELD_MAP[field]) is None
+        ):
+            ctx.skip(check_id, _NO_POSITION_EVIDENCE)
+            continue
+        pages = (
+            ctx.indexable_html_pages()
+            if field in _ELEMENT_POSITION_ON_INDEXABLE_ONLY
+            else ctx.html_pages()
+        )
+        for page in pages:
+            if _rec(page).get(field):
+                ctx.add(check_id, target_url=page.url)
+
+
+def check_document_skeleton(ctx: AuditContext) -> None:
+    """Document-skeleton validity: <head>/<body> presence, count, and order.
+
+    One finding per page, never one per stray element — a page with two
+    <body> tags is a single BODY_MULTIPLE, not one per tag.
+    """
+    from .normalize import INTERNAL_FIELD_MAP, find_column
+
+    has_evidence = ctx.internal_df is not None and all(
+        find_column(ctx.internal_df, INTERNAL_FIELD_MAP[field]) is not None
+        for field in _SKELETON_FIELDS
+    )
+    if not has_evidence:
+        for check_id in _SKELETON_CHECKS:
+            ctx.skip(check_id, _NO_POSITION_EVIDENCE)
+        return
+    for page in ctx.html_pages():
+        rec = _rec(page)
+        head_count = rec.get("head_count") or 0
+        body_count = rec.get("body_count") or 0
+        if head_count == 0:
+            ctx.add("HEAD_MISSING", target_url=page.url)
+        elif head_count > 1:
+            ctx.add("HEAD_MULTIPLE", target_url=page.url, details={"head_count": head_count})
+        if body_count == 0:
+            ctx.add("BODY_MISSING", target_url=page.url)
+        elif body_count > 1:
+            ctx.add("BODY_MULTIPLE", target_url=page.url, details={"body_count": body_count})
+        invalid = str(rec.get("invalid_head_elements") or "")
+        if invalid:
+            elements = [e.strip() for e in invalid.split(",") if e.strip()]
+            ctx.add("INVALID_HEAD_ELEMENT", target_url=page.url, details={"elements": elements})
+        if rec.get("head_not_first"):
+            ctx.add("HEAD_NOT_FIRST", target_url=page.url)
+
+
 def check_og(ctx: AuditContext) -> None:
     """Check Open Graph presence.
 
@@ -1115,6 +1236,8 @@ ALL_CHECKS = [
     check_doctype,
     check_viewport,
     check_compression,
+    check_element_position,
+    check_document_skeleton,
     check_og,
     check_redirect_chains,
     check_native_exports,
