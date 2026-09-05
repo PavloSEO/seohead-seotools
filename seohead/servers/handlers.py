@@ -1394,10 +1394,14 @@ def serp_fetch(
         return {"ok": False, "error": str(exc)}
     except RuntimeError as exc:
         return {"ok": False, "error": str(exc)}
-    results = {
-        q: {"docs": v.get("docs", []), "error": v.get("error"), "status": v.get("status")}
-        for q, v in raw.items()
-    }
+    results = {}
+    for q, v in raw.items():
+        entry = {"docs": v.get("docs", []), "error": v.get("error"), "status": v.get("status")}
+        if v.get("operation_id") is not None:
+            entry["operation_id"] = v["operation_id"]
+        if v.get("http_status") is not None:
+            entry["http_status"] = v["http_status"]
+        results[q] = entry
     # A query is only ever absent here because its operation was billed and never finished
     # before the timeout: search_batch already gives every rejected or lost submission an
     # explicit entry above, so this is never a stand-in for "the provider said no".
