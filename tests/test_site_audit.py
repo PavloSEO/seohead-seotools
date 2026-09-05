@@ -272,6 +272,54 @@ def test_excel_sheets_have_no_blank_row_under_the_header(tmp_path):
         assert any(v is not None for v in first), f"{name}: first data row is empty"
 
 
+def test_formula_leading_titles_are_neutralized_in_xlsx(tmp_path):
+    """A crawled page's own title must not become a live spreadsheet formula (#153)."""
+    import copy
+
+    from openpyxl import load_workbook
+
+    for lead in ("=", "+", "-", "@"):
+        doc = copy.deepcopy(DOCUMENT)
+        doc["pages"][0]["title"] = f'{lead}HYPERLINK("http://evil.example/steal","click")'
+        doc["findings"][0]["text"] = f"{lead}cmd|' /C calc'!A0"
+        target = tmp_path / f"r-{ord(lead)}.xlsx"
+        build_report(doc, fmt="xlsx", path=str(target))
+        wb = load_workbook(target)
+        title_cell = wb["Pages"]["C2"]
+        finding_cell = wb["Findings"]["D2"]
+        assert title_cell.data_type == "s", f"lead {lead!r}: title became a live formula"
+        assert finding_cell.data_type == "s", f"lead {lead!r}: finding text became a live formula"
+        assert title_cell.value == "'" + doc["pages"][0]["title"]
+
+
+def test_formula_leading_titles_are_neutralized_in_csv(tmp_path):
+    """The CSV field must not begin with a formula-leading character either (#153)."""
+    import copy
+    import csv
+
+    for lead in ("=", "+", "-", "@"):
+        doc = copy.deepcopy(DOCUMENT)
+        doc["pages"][0]["title"] = f'{lead}HYPERLINK("http://evil.example/steal","click")'
+        target = tmp_path / f"r-{ord(lead)}.csv"
+        build_report(doc, fmt="csv", path=str(target))
+        with target.with_suffix(".pages.csv").open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.reader(fh, delimiter=";"))
+        title_field = rows[1][2]  # columns: url, status, title, ...
+        assert not title_field.startswith(lead), f"lead {lead!r} reached the CSV cell unescaped"
+        assert title_field.startswith("'")
+
+
+def test_ordinary_titles_are_written_byte_for_byte_unchanged(tmp_path):
+    """Titles/finding text with no formula-leading character must pass through untouched."""
+    from openpyxl import load_workbook
+
+    target = tmp_path / "r.xlsx"
+    build_report(DOCUMENT, fmt="xlsx", path=str(target))
+    wb = load_workbook(target)
+    assert wb["Pages"]["C2"].value == DOCUMENT["pages"][0]["title"]
+    assert wb["Findings"]["D2"].value == DOCUMENT["findings"][0]["text"]
+
+
 def test_missing_key_security_headers_are_warnings_not_notices():
     """Missing HSTS and CSP must remain actionable warnings, not generic notices."""
     assert classify("missing strict-transport-security — enforce HTTPS") == "warning"
