@@ -64,4 +64,4 @@ One request per page. Local parsing. Nothing paid.
 - **Whether the content is good.** Extraction is not judgement.
 - **What a *reader* considers the content.** A page whose sidebar carries the real answer will
   be extracted as if the sidebar were furniture. Override the selector when that is the case.
-- **Content assembled by JavaScript.** See [scenario 4](rendering.md).
+- **Content assembled by JavaScript.** See the [rendering scenario](rendering.md).

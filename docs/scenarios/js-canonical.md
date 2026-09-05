@@ -91,5 +91,5 @@ want the site-wide mismatch list. Nothing paid.
   Console data in this loop.
 - **A canonical sent as an HTTP header that differs by user agent.** One fetch, one answer.
 - **Whether the two URLs are really duplicates.** That is a content question —
-  [scenario 6](content.md) and `duplicate-check` — not a directive question.
+  the [content scenario](content.md) and `duplicate-check` — not a directive question.
 - **A canonical written after the capture milestone.** The DOM is read at `load` by default.

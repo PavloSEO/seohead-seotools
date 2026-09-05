@@ -110,7 +110,7 @@ still around to agree with it.
   genuinely cannot tell. A `noimageindex` on a stock-photo landing page is policy; the same tag
   on a product gallery is a bug.
 - **A directive added by JavaScript.** The audit reads the served HTML and the response
-  headers. See [scenario 4](rendering.md).
+  headers. See the [rendering scenario](rendering.md).
 - **What `robots.txt` blocks.** Crawling and indexing are different questions; step 1 answers
   the first one and nothing else here does.
 - **Directives on a page the crawl skipped.** A URL blocked by `robots.txt` was never fetched,

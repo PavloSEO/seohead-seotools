@@ -90,7 +90,7 @@ One request per crawled page, plus one live confirmation. No paid API, no render
 - **An H1 whose only text is an image's alt attribute.** That is not detected: the heading reads
   as empty and is reported as missing.
 - **Where the H1 sits on the page.** Order and nesting are a separate chain —
-  see [scenario 15](heading-hierarchy.md).
-- **Headings written by JavaScript.** The crawl reads served HTML; see [scenario 4](rendering.md)
+  see the [heading hierarchy scenario](heading-hierarchy.md).
+- **Headings written by JavaScript.** The crawl reads served HTML; see the [rendering scenario](rendering.md)
   before concluding a page has no H1.
 - **Whether the H1 targets the right thing.** No demand or ranking data is in this loop.

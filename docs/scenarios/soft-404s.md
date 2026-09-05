@@ -57,7 +57,7 @@ seohead log-scan --run ./run
 ```
 
 `THIN_CONTENT` clustering on paths that share a prefix, plus `LOW_TEXT_RATIO` on the same URLs,
-is what a catch-all template looks like from the outside. [Scenario 16](duplicate-content.md)
+is what a catch-all template looks like from the outside. The [duplicate content scenario](duplicate-content.md)
 groups them properly.
 
 **4. Check whether the sitemap is publishing them.**
@@ -100,7 +100,7 @@ paid.
 - **Whether a 200-with-no-content page is intentional.** A search-results page or an empty
   category legitimately returns 200 and looks identical to a soft 404 from the outside.
 - **Soft 404s produced only after rendering.** A shell that returns 200 and writes "not found"
-  with JavaScript passes this probe. See [scenario 4](rendering.md).
+  with JavaScript passes this probe. See the [rendering scenario](rendering.md).
 - **How many exist.** The probe answers "does this host do it", not "on how many URLs", because
   the set of nonexistent URLs is infinite by definition.
 - **Whether any of them are indexed.** Reachability is not indexation.

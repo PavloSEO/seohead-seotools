@@ -84,3 +84,28 @@ def test_every_scenario_says_what_it_cannot_answer():
         p.name for p in SCENARIOS if "cannot answer" not in p.read_text(encoding="utf-8").lower()
     ]
     assert not missing, f"scenarios with no limits section: {missing}"
+
+
+def test_no_scenario_links_to_another_by_number():
+    """Cross-references name the scenario, not its position in the catalogue.
+
+    The catalogue was renumbered as it grew, and 47 links across 35 files kept the
+    number they were written with. By the time this was noticed the numbers were not
+    merely stale — they were wrong about a different file: `[scenario 4]` pointed at
+    rendering.md, which is scenario 35, while scenario 4 is broken-pages.md. A reader
+    trusting the numeral went somewhere else entirely.
+
+    Nothing caught it because the link still resolved: the path was right and only the
+    label lied, so no link checker and no doc-count gate had anything to object to.
+    Removing the numeral removes the class — a name cannot go stale when the thing it
+    names is renumbered.
+    """
+    numbered = re.compile(r"\[scenario\s+\d+\]\([a-z0-9-]+\.md\)", re.IGNORECASE)
+    offenders = []
+    for path in SCENARIOS:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if numbered.search(line):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert not offenders, (
+        "scenario cross-references must name the scenario, not its number:\n" + "\n".join(offenders)
+    )

@@ -71,4 +71,4 @@ One request per page checked. Nothing paid, no Google API involved.
   decides, and quality and trust signals nobody can read are part of it.
 - **Whether the data is true.** Nothing verifies that the declared address or price is real.
   Markup that contradicts the visible page is a manual-action risk this cannot see.
-- **Markup injected after load.** See [scenario 4](rendering.md).
+- **Markup injected after load.** See the [rendering scenario](rendering.md).

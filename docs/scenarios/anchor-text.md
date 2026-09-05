@@ -135,6 +135,6 @@ One URL, two contradictory signals about whether it should be crawled and ranked
 - **Whether the anchor text is good.** "Industrial pumps" is descriptive and may still be the
   wrong description. Every check here is structural; wording is a person's judgement.
 - **Anchors written by JavaScript.** The edge list is built from served HTML. See
-  [scenario 4](rendering.md).
+  the [rendering scenario](rendering.md).
 - **Composition on a partial crawl.** "Every inlink to this page is X" is a claim about the
   whole site; check `run.crawl_partial` before repeating it.

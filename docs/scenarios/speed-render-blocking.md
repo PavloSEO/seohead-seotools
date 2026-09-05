@@ -45,7 +45,7 @@ seohead headers-check --url https://example.com/page
 ```
 
 A 900 ms first byte and three blocking resources are two separate tasks, and doing the second
-first wastes the sprint. [Scenario 18](speed-server-response.md) is the other half.
+first wastes the sprint. The [speed server response scenario](speed-server-response.md) is the other half.
 
 **5. Take the whole delivery picture, if this is a takeover rather than a tune-up.**
 

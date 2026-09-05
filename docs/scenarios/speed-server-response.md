@@ -104,5 +104,5 @@ rather than lower it.
 - **Whether the number is yours.** A crawl measures the origin under load you are applying. Read
   `response_time` next to the rate the run used, both of which the run manifest records.
 - **Anything about the rest of the load.** First byte is the start of the page, not the page.
-  Render-blocking resources and payload are [scenario 19](speed-render-blocking.md) and
-  [scenario 21](speed-delivery-and-weight.md).
+  Render-blocking resources and payload are the [speed render blocking scenario](speed-render-blocking.md) and
+  the [speed delivery and weight scenario](speed-delivery-and-weight.md).

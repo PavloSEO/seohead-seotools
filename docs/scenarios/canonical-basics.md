@@ -126,5 +126,5 @@ and one finding from the second:
   after hydration, run the [rendering scenario](rendering.md) first and read
   `pages_by_representation` before believing a `CANONICAL_MISSING` count.
 - **Two canonical elements on one page.** A native crawl records the first one only; see the
-  [conflicting-canonicals scenario](canonical-conflicts.md).
+  [canonical conflicts scenario](canonical-conflicts.md).
 - **A canonical sent as an HTTP `Link` header.** Only the HTML element is read.

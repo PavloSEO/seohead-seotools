@@ -92,7 +92,7 @@ mistake, and paying for four hundred pages to learn what one page would have sai
 - **Duplicate H2 text across the site.** H2 duplication is not aggregated, and no length
   threshold is applied to H2 at all.
 - **Headings inserted by JavaScript.** A raw fetch of an app shell returns no headings, which
-  reads identically to a page with none. Check [scenario 4](rendering.md) first when the body
+  reads identically to a page with none. Check the [rendering scenario](rendering.md) first when the body
   text is also thin.
 - **Whether a heading says anything.** "Read more" and a lone icon are structurally valid
   headings and editorially useless.

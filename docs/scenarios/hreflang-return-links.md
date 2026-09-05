@@ -97,8 +97,8 @@ seohead report-build --audit ./run/audit.json --format xlsx --out ./hreflang.xls
   nobody may index still reads clean here.
 - **Whether the annotations are in `<head>`, from the graph checks in this chain.** They read the
   export's annotation list, not the parse tree; `HREFLANG_OUTSIDE_HEAD` answers this instead, from
-  a native crawl — see [scenario 32](hreflang-codes.md).
+  a native crawl — see the [hreflang codes scenario](hreflang-codes.md).
 - **Whether the right language is being served.** Nothing here reads a search result. The chain
   proves the annotations are structurally sound; which page a search engine then shows in
   Austria is outside it.
-- **Codes and self-references.** Those are [scenario 19](hreflang-codes.md).
+- **Codes and self-references.** Those are the [hreflang codes scenario](hreflang-codes.md).
