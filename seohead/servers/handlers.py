@@ -269,6 +269,39 @@ def _sitemap_comparable_pages(result: Any, start_url: str) -> list[str]:
     return comparable
 
 
+def _rewrite_pages_sidecar(path: str, pages: list[Any]) -> None:
+    """Replace the streamed page sidecar with every page's current field values.
+
+    ``path`` is the same file the spider appended to line-by-line as pages were
+    fetched (``pages_resume_path`` in ``crawl_site``), written before render
+    escalation exists to mutate ``result.pages`` in place. Called only once
+    escalation has actually re-fetched something, so the file catches up to
+    whatever changed rather than being rewritten on every run for nothing.
+    Written to a temp file in the same directory first and swapped in with
+    ``os.replace``, which POSIX and Windows both guarantee is atomic within one
+    filesystem, so a process killed mid-write leaves the previous, still
+    internally-consistent version in place rather than a half-written file
+    (issue #244's third acceptance criterion).
+    """
+    import contextlib
+    import dataclasses
+    import json
+    import os
+    import tempfile
+
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".pages-rewrite-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for page in pages:
+                fh.write(json.dumps(dataclasses.asdict(page)) + "\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(tmp_path)
+        raise
+
+
 def crawl_site(
     url: str | None = None,
     urls: list[str] | None = None,
@@ -300,6 +333,7 @@ def crawl_site(
     robots.txt declares it; with none given, those checks skip by name
     rather than guess at a default sitemap location.
     """
+    import contextlib
     import json
     import os
     from datetime import datetime, timezone
@@ -338,16 +372,31 @@ def crawl_site(
     out_dir = settings["output"]["dir"] or None
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    pages_path = (
+    # The human-readable export: absent whenever the operator turned it off. Only
+    # ``collect_urls`` (the list-mode branch below, which has no resume mechanism of
+    # its own) is allowed to treat this as the whole story.
+    pages_export_path = (
         os.path.join(out_dir, "pages.jsonl")
         if out_dir and settings["output"]["write_pages_jsonl"]
         else None
+    )
+    # Tied to out_dir alone, not the write_pages_jsonl toggle -- same shape as
+    # links_path below. spider.crawl_site's resume mechanism reloads previously
+    # fetched pages from whatever path it was given as out_path; passing None
+    # here whenever the export was off used to defeat that reload silently, so a
+    # resumed run reported fewer pages than the interrupted one had already
+    # found (issue #242). When the export is on the two paths are the same file;
+    # when it is off, a private sidecar the operator never asked to see still
+    # carries what a resume needs, and is removed once there is nothing left to
+    # resume (see the "finished" cleanup after the spider call below).
+    pages_resume_path = pages_export_path or (
+        os.path.join(out_dir, ".pages_resume.jsonl") if out_dir else None
     )
     # Tied to out_dir alone, not the write_pages_jsonl toggle: this sidecar is what makes a
     # resumed run's result.links whole again (see spider.crawl_site), a correctness need
     # distinct from whether the operator also wants pages.jsonl as a human-readable export.
     links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
-    # Same "tied to out_dir, gated by its own toggle" shape as pages_path: a
+    # Same "tied to out_dir, gated by its own toggle" shape as pages_export_path: a
     # decision log is a diagnostic artifact, not something a resumed run
     # depends on (issue #134).
     decisions_path = (
@@ -381,7 +430,7 @@ def crawl_site(
             robots_policy=settings["robots"]["policy"],
             scope=settings["scope"],
             seed_urls=sitemap_seed["declared"] or None,
-            out_path=pages_path,
+            out_path=pages_resume_path,
             links_path=links_path,
             decisions_path=decisions_path,
             credential_headers=settings["http"]["credential_headers"],
@@ -411,6 +460,16 @@ def crawl_site(
             crawl_redirects=settings["discovery"]["redirects"]["crawl"],
             capture_link_attributes=settings["link_attributes"]["capture"],
         )
+        # Nothing left to resume into, so the private sidecar (used only when the
+        # human-readable export was off) would otherwise linger as a hidden, ever
+        # more stale copy of pages.jsonl's data next to a finished run's output.
+        if (
+            pages_resume_path
+            and pages_resume_path != pages_export_path
+            and result.finish_reason == "finished"
+        ):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(pages_resume_path)
         discovery = {
             "mode": "spider",
             "max_depth_reached": result.max_depth_reached,
@@ -433,7 +492,7 @@ def crawl_site(
             max_seconds=max_seconds,
             min_delay=settings["speed"]["min_delay_seconds"],
             timeout=settings["http"]["timeout_seconds"],
-            out_path=pages_path,
+            out_path=pages_export_path,
             credential_headers=settings["http"]["credential_headers"],
             max_response_bytes=settings["limits"]["max_response_bytes"],
             max_url_length=settings["limits"]["max_url_length"],
@@ -469,6 +528,13 @@ def crawl_site(
         if rendering_config["mode"] != "raw" and result.pages:
             escalation = _run_render_escalation(result, rendering_config, settings)
             render_escalation.apply_rendered_evidence(result.pages, result.links, escalation)
+            # The spider already streamed pages_resume_path during the crawl, before
+            # this escalation existed to mutate result.pages -- so whichever pages
+            # were re-fetched now have audit-and-memory evidence the file on disk
+            # does not, and a resumed run or a pages.jsonl reader would see stale
+            # static evidence next to an audit.json that says rendered (#244).
+            if pages_resume_path and escalation.render_requests:
+                _rewrite_pages_sidecar(pages_resume_path, result.pages)
             render_summary = {
                 "mode": escalation.mode,
                 "patterns_sampled": escalation.patterns_sampled,
@@ -613,14 +679,28 @@ def crawl_site(
         from seohead.crawl.linkgraph import inlink_composition
 
         link_position = inlink_composition(result.links)
-        for page in link_position["pages"]:
-            if page["boilerplate_only"]:
-                ctx.add(
-                    "INLINK_BOILERPLATE_ONLY",
-                    target_url=page["url"],
-                    occurrences_count=page["inlinks_total"],
-                    details={"by_position": page["by_position"]},
-                )
+        # "Never linked from body content" is a claim about every inlink a page
+        # has -- exactly the shape #246 asks graph-wide claims to withhold on a
+        # partial crawl: the missing frontier could still hold the one content
+        # link that would clear this page. Unlike LOW_LINK_SCORE and its three
+        # siblings (see aggregate.GRAPH_WIDE_FINDING_CHECKS), this is computed
+        # here rather than in seohead.sf, so it needs its own guard instead of
+        # joining that withholding pass.
+        if result.partial:
+            ctx.skip(
+                "INLINK_BOILERPLATE_ONLY",
+                "crawl is partial: 'never linked from body content' cannot be "
+                "proven when the crawl did not reach every URL",
+            )
+        else:
+            for page in link_position["pages"]:
+                if page["boilerplate_only"]:
+                    ctx.add(
+                        "INLINK_BOILERPLATE_ONLY",
+                        target_url=page["url"],
+                        occurrences_count=page["inlinks_total"],
+                        details={"by_position": page["by_position"]},
+                    )
 
     # Same shape again (issue #125): pure functions over the crawl's own LinkEdge/FormEdge
     # evidence, never through the SF-export analyzer. Localhost outlinks, the per-target

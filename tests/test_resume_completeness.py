@@ -74,3 +74,70 @@ def test_the_checkpoint_carries_every_field_it_claims_to():
     state_fields = {f.name for f in dataclasses.fields(CrawlState)}
     missing = CHECKPOINTED - state_fields
     assert not missing, f"claimed checkpointed but absent from CrawlState: {sorted(missing)}"
+
+
+# SIDECAR above says *what* is reloadable on resume; it says nothing about whether the
+# one production caller actually wires the corresponding path unconditionally. #242 was
+# exactly that gap: handlers.crawl_site tied the "pages" sidecar's path to
+# output.write_pages_jsonl on top of out_dir, so a resumed run silently lost pages while
+# this file's classification of "pages" as SIDECAR stayed correct and green throughout --
+# the third resume defect (after #141, #188) to slip past a guard watching the field
+# rather than the caller wiring it to spider.crawl_site. Mapping each SIDECAR field to
+# the keyword argument spider.crawl_site accepts for it means a future SIDECAR field is
+# caught here too, not just today's two -- see test_sidecar_paths_reach_the_spider_below.
+_SIDECAR_KWARGS = {"pages": "out_path", "links": "links_path"}
+
+
+def test_sidecar_paths_reach_the_spider_whenever_out_dir_is_set(tmp_path, monkeypatch):
+    """handlers.crawl_site must hand spider.crawl_site a real path for every SIDECAR
+    field whenever out_dir is configured, independent of any other setting --
+    output.write_pages_jsonl in particular, since disabling the human-readable pages.jsonl
+    export must not also disable the resume mechanism that field depends on.
+
+    This is deliberately caller-level rather than field-level: it does not know why a
+    setting might one day gate a SIDECAR path, only that out_dir being set is the sole
+    condition SIDECAR promises to honour. If a genuinely new reason to omit a sidecar path
+    ever appears, that is a real design question worth a deliberate exception here, not a
+    reason to skip this test.
+    """
+    import contextlib
+    import json
+
+    import seohead.crawl.spider as spider_mod
+    from seohead.servers import handlers
+
+    assert set(_SIDECAR_KWARGS) == SIDECAR, (
+        "a SIDECAR field has no entry in _SIDECAR_KWARGS above -- name the keyword "
+        "argument spider.crawl_site accepts for it before this test can cover it"
+    )
+
+    class _StopAtSpider(Exception):
+        pass
+
+    captured: dict[str, object] = {}
+
+    def fake_crawl_site(*_args, **kwargs):
+        captured.update(kwargs)
+        raise _StopAtSpider
+
+    monkeypatch.setattr(spider_mod, "crawl_site", fake_crawl_site)
+
+    # write_pages_jsonl is the one existing toggle shaped like #242's cause: something
+    # that turns a human-readable export off and, if wired into the same path, would
+    # take the sidecar down with it. Both settings must still reach the spider.
+    for write_pages_jsonl in (True, False):
+        out_dir = tmp_path / f"run-{write_pages_jsonl}"
+        config_path = tmp_path / f"crawl-{write_pages_jsonl}.json"
+        config_path.write_text(json.dumps({"output": {"write_pages_jsonl": write_pages_jsonl}}))
+        captured.clear()
+        with contextlib.suppress(_StopAtSpider):
+            handlers.crawl_site(
+                url="https://example.com/", out_dir=str(out_dir), config=str(config_path)
+            )
+        for field_name, kwarg_name in _SIDECAR_KWARGS.items():
+            assert captured.get(kwarg_name), (
+                f"with out_dir set and write_pages_jsonl={write_pages_jsonl}, "
+                f"spider.crawl_site received {kwarg_name}={captured.get(kwarg_name)!r} for "
+                f"SIDECAR field {field_name!r} -- a resumed run would silently lose it "
+                "(issue #242)"
+            )
