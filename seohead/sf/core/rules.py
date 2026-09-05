@@ -1070,10 +1070,23 @@ def check_charset(ctx: AuditContext) -> None:
     # no meta charset anywhere) is a real finding, not missing evidence (#268) — while an
     # export that never carries the column at all still honestly skips.
     if not _has_column(ctx, "meta_charset"):
+        # Without this column, absence is unmeasurable rather than absent. A page
+        # whose Content-Type carries no charset may still declare <meta charset>
+        # in its HTML, which an export without the column does not show, so
+        # firing on the header alone reports a defect nobody measured. Gating on
+        # any page *happening* to carry a header charset -- which is what this
+        # check did before #396 -- decided that question with evidence that
+        # cannot answer it.
+        #
+        # The reason says which column is missing, not that Content-Type carries
+        # no charset: on a run where some pages do carry one, that sentence was
+        # simply untrue, and a skip reason a reader cannot trust is worth less
+        # than no reason at all.
         ctx.skip(
             "MISSING_CHARSET",
-            "no charset visibility (Content-Type carries no charset and no Meta Charset "
-            "column; needs a native seohead crawl or Custom Extraction in SF)",
+            "no Meta Charset column, so a page without a header charset cannot be "
+            "distinguished from one declaring <meta charset> (needs a native seohead "
+            "crawl or Custom Extraction in SF)",
         )
         return
     for page in pages:

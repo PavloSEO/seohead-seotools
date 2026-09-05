@@ -350,3 +350,33 @@ def test_lighthouse_checks_never_fire_on_a_redirect_or_error_stub():
         # ...never on the stubs standing in for a redirect or an error.
         assert "https://example.com/old-page" not in fired.get(check_id, set())
         assert "https://example.com/gone" not in fired.get(check_id, set())
+
+
+def test_a_header_charset_cannot_prove_another_page_is_missing_one(tmp_path):
+    """The case no fixture covered: no Meta Charset column at all, and some pages
+    carrying charset in Content-Type while others do not.
+
+    Firing on the second page would report a defect nobody measured -- its HTML
+    may well declare <meta charset>, which an export without that column does not
+    show. Before #396 the check ran here on exactly that reasoning and produced a
+    finding; it must skip instead, and the reason must name the missing column
+    rather than claim Content-Type carries no charset, which is untrue on this
+    very input.
+    """
+    import csv
+
+    from seohead.sf.core.audit import run_audit
+
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    with open(exports / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Address", "Content Type", "Status Code", "Indexability"])
+        writer.writerow(["https://example.com/a", "text/html; charset=UTF-8", "200", "Indexable"])
+        writer.writerow(["https://example.com/b", "text/html", "200", "Indexable"])
+    result = run_audit(input_mode="parse-exports", exports_dir=str(exports), log=lambda m: None)
+
+    assert not [i for i in result.issues if i.check == "MISSING_CHARSET"]
+    reason = next(s.reason for s in result.skipped if s.id == "MISSING_CHARSET")
+    assert "Meta Charset column" in reason
+    assert "Content-Type carries no charset" not in reason
