@@ -6,9 +6,20 @@ spot broken internal links and links that point at redirects (wasted crawl hops)
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 from seohead.recon.net import http_client
 
 _UA = "Mozilla/5.0 (compatible; SEOHEAD-Tools/3.0; +https://seohead.tech/seotools)"
+
+
+def _request_target(href: str) -> str:
+    """The identity a fragment never changes: /guide#a and /guide#b name the same
+    server resource, so deduping on the literal href string double-checked one
+    page's anchors and could crowd a later, genuinely distinct link out of the
+    bounded ``limit`` (#194)."""
+    parts = urlsplit(href)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 
 def check_links(
@@ -39,8 +50,11 @@ def check_links(
     seen: dict[str, dict] = {}
     for ln in links:
         href = ln.get("href")
-        if href and href.startswith(("http://", "https://")) and href not in seen:
-            seen[href] = ln
+        if not href or not href.startswith(("http://", "https://")):
+            continue
+        target = _request_target(href)
+        if target not in seen:
+            seen[target] = ln
     targets = list(seen.items())[:limit]
 
     broken: list[dict] = []

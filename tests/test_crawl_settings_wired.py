@@ -205,6 +205,27 @@ def test_default_max_query_variants_per_path_allows_more_before_capping():
     assert len(_search_urls(result)) == 4
 
 
+SITE_NOFOLLOW_QUERY_BUDGET = {
+    "https://example.com/robots.txt": ROBOTS_OK,
+    "https://example.com/": FakeResponse(
+        '<a rel="nofollow" href="/catalog?source=ignored">ignored</a><a href="/next">next</a>'
+    ),
+    "https://example.com/next": FakeResponse('<a href="/catalog?source=real">real</a>'),
+    "https://example.com/catalog?source=real": page(),
+}
+
+
+def test_a_rejected_nofollow_query_url_does_not_spend_the_query_budget():
+    """#193: extra_rejection reserves a query-variant slot for a path the instant it
+    runs, whether or not the URL is ever fetched. With the cap at one, a nofollow
+    query link that is never going to be dispatched must not be the one that spends
+    it -- a later, real query URL for the same path is still owed its slot."""
+    result = _crawl(SITE_NOFOLLOW_QUERY_BUDGET, max_query_variants_per_path=1)
+    assert _fetched(result, "https://example.com/catalog?source=real")
+    assert result.excluded.get("query_variants_limit") is None
+    assert result.excluded.get("nofollow") == 1
+
+
 # ── http.retry_on_timeout ────────────────────────────────────────────────────
 
 

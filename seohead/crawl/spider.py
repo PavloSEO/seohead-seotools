@@ -185,6 +185,18 @@ def _canonical_key(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", parts.query, ""))
 
 
+def _strip_fragment(url: str) -> str:
+    """The request target for a frontier entry: a fragment selects nothing on
+    the server, so keeping it on the queued/fetched URL made a fragment-only
+    variant of a page its own PageRecord (#194) even though ``_canonical_key``
+    above already treats the two as one identity for de-duplication. Unlike
+    that helper, the path is left exactly as given — only the fragment is
+    dropped — since this value is what actually gets requested, not merely
+    compared."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+
 def _same_host(url: str, host: str) -> bool:
     return (urlsplit(url).hostname or "").lower() == host
 
@@ -586,7 +598,14 @@ def crawl_site(
         excluded[reason] = excluded.get(reason, 0) + 1
 
     def extra_rejection(candidate: str) -> str:
-        """Checks beyond scope: a URL too long, or a path's query budget spent."""
+        """Checks beyond scope: a URL too long, or a path's query budget spent.
+
+        Mutates ``query_budget`` the moment it runs, reserving a slot for
+        ``candidate``'s query string whether or not it is later fetched — so a
+        caller must run every check that can still reject the URL for a reason
+        unrelated to the budget (nofollow, discovery toggles, scope) first, or
+        that slot is spent on a URL that was never going to be dispatched (#193).
+        """
         if max_url_length and len(candidate) > max_url_length:
             return "url_too_long"
         if max_query_variants_per_path:
@@ -721,7 +740,7 @@ def crawl_site(
             if not crawl_redirects:
                 return
             if record.redirect_url and depth < depth_limit:
-                target = record.redirect_url
+                target = _strip_fragment(record.redirect_url)
                 reason = rules.rejection(target, host) or extra_rejection(target)
                 if reason:
                     exclude("redirect_off_host" if reason == "outside_host" else reason)
@@ -743,9 +762,18 @@ def crawl_site(
                 href = (link.get("href") or "").strip()
                 if not href:
                     continue
+                # The frontier and PageRecord identity never see the fragment — it
+                # selects nothing on the server, so a fragment-only variant of a
+                # page must not become its own queued request (#194). ``href`` on
+                # the stored edge below stays exactly as written, since that is
+                # what the page actually links to.
+                target = _strip_fragment(href)
                 nofollow = bool(link.get("nofollow"))
-                reason = rules.rejection(href, host) or extra_rejection(href)
-                is_external = reason == "outside_host"
+                # Scope alone: no side effect, unlike extra_rejection below, so it is
+                # safe to compute before the nofollow/discovery gates decide whether
+                # this link may reach extra_rejection at all.
+                scope_reason = rules.rejection(target, host)
+                is_external = scope_reason == "outside_host"
                 # "store" and "crawl" are independent questions: an edge that will not be
                 # enqueued below is still real evidence of what the page links to. Both are
                 # on by default; turning a store off makes the report smaller, not different.
@@ -770,14 +798,20 @@ def crawl_site(
                 if nofollow and not follow_nofollow:
                     exclude("nofollow")
                     continue
+                # extra_rejection spends a query-variant slot the instant it runs
+                # (see its own docstring above), so it must be the last check before
+                # enqueueing — a link already rejected, or one that will never be
+                # dispatched because it is nofollow or discovery is off, must never
+                # have paid for that slot (#193).
+                reason = scope_reason or extra_rejection(target)
                 if reason:
                     exclude(reason)
                     continue
-                key = _canonical_key(href)
+                key = _canonical_key(target)
                 if key in seen:
                     continue
                 seen.add(key)
-                queue.append((href, depth + 1))
+                queue.append((target, depth + 1))
 
         def handle_forms(parsed: dict[str, Any] | None, url: str) -> None:
             for form in (parsed or {}).get("forms") or []:
