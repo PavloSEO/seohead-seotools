@@ -27,7 +27,12 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.tools.parser import collapse_whitespace, document_base_url, parse_html
+from seohead.tools.parser import (
+    collapse_whitespace,
+    document_base_url,
+    is_inert_template_content,
+    parse_html,
+)
 from seohead.tools.price import parse_amount, parse_price
 
 # Hosts suitable for an organization's ``sameAs`` references.
@@ -87,7 +92,11 @@ def _breadcrumbs(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
     """
     out: list[dict[str, str]] = []
     # Prefer a JSON-LD BreadcrumbList when available.
-    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+    for tag in soup.find_all("script"):
+        if str(
+            tag.get("type") or ""
+        ).strip().lower() != "application/ld+json" or is_inert_template_content(tag):
+            continue
         raw = (tag.string or tag.get_text() or "").strip()
         if not raw or "BreadcrumbList" not in raw:
             continue

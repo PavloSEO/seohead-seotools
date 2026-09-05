@@ -31,7 +31,10 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 from seohead.recon.net import http_client, normalize_url
+from seohead.tools.parser import is_inert_template_content
 
 # Schema.org types documented by Google as their own rich-result feature.
 # ``required`` fields gate eligibility; ``required_any`` is an "at least one of"
@@ -118,10 +121,6 @@ RICH_RESULTS: dict[str, dict[str, Any]] = {
     "HowTo": {"required": ["name", "step"], "recommended": [], "deprecated_for_rich": True},
 }
 
-_JSONLD_RE = re.compile(
-    r'<script[^>]+type\s*=\s*["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-    re.IGNORECASE | re.DOTALL,
-)
 _MICRODATA_RE = re.compile(r"\bitemscope\b", re.IGNORECASE)
 _RDFA_RE = re.compile(r'\bvocab\s*=\s*["\']https?://schema\.org', re.IGNORECASE)
 
@@ -234,8 +233,16 @@ def _extract_blocks(html: str) -> tuple[list[Any], list[str], int]:
     """
     blocks, errors = [], []
     found = 0
-    for i, raw in enumerate(_JSONLD_RE.findall(html), 1):
+    soup = BeautifulSoup(html, features="lxml")
+    scripts = (
+        tag
+        for tag in soup.find_all("script")
+        if str(tag.get("type") or "").strip().lower() == "application/ld+json"
+        and not is_inert_template_content(tag)
+    )
+    for i, tag in enumerate(scripts, 1):
         found += 1
+        raw = tag.string or tag.get_text() or ""
         text = raw.strip()
         if not text:
             errors.append(f"JSON-LD block #{i} is empty")
