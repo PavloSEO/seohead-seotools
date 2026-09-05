@@ -45,7 +45,7 @@ links is reported whatever its share, since zero has no third.
 
 **3. Escalate the crawl for the templates that differ, not for the site.** The mechanics — probe
 two URLs per detected URL pattern, escalate only the patterns that differ, cap the render budget
-— are [scenario 4](rendering.md). What matters here is that the crawl carries the result forward:
+— are the [rendering scenario](rendering.md). What matters here is that the crawl carries the result forward:
 
 ```bash
 seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./run

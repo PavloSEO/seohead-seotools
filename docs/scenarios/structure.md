@@ -78,7 +78,7 @@ One request per page plus the sitemap. Nothing paid.
 - **Whether a page is indexed.** Reachability is not indexation. That needs Search Console.
 - **Why a page is orphaned.** The tool says nothing links to it; whether that is a broken menu
   or a deliberate unlisting is a person's call.
-- **Anything about links added by JavaScript.** See [scenario 4](rendering.md).
+- **Anything about links added by JavaScript.** See the [rendering scenario](rendering.md).
 - **Orphan status on a partial crawl.** "Nothing links here" is unprovable when the crawl
   stopped early, so those findings are withheld rather than guessed — check
   `run.crawl_partial`.

@@ -82,7 +82,7 @@ URL that template serves has it.
 The meta description is the exception in this group. It is read from the raw response by `parse`
 and carried into every crawled page record, but `render-check`'s snapshot pair does not include
 it, so a description rewritten by a script is caught by comparing a static crawl against a
-rendered one — the same two-crawl diff as [scenario 12](js-directives.md) — rather than by a
+rendered one — the same two-crawl diff as the [js directives scenario](js-directives.md) — rather than by a
 single-page report. Saying so is cheaper than a reader trusting a field that was never compared.
 
 ## What it costs

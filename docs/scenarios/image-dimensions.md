@@ -69,7 +69,7 @@ seohead sf tasks --json ./report/audit.json --out ./report
 ```
 
 **5. Fix the weight half properly.** This chain names the heavy files. It does not make them
-lighter. [Scenario 1](images.md) downloads them, re-encodes them, and ends with an archive and
+lighter. The [images scenario](images.md) downloads them, re-encodes them, and ends with an archive and
 the per-file saving — on one live construction site, 82 files, 69.7 MB down to 27.4 MB.
 
 ## What comes out
@@ -100,4 +100,4 @@ with `parse`. No paid API. The re-encoding half, if you run it, is CPU-bound and
   from the finding by construction rather than by omission.
 - **Whether the deploy keeps the saving.** A CMS that regenerates derivatives on upload can undo
   the whole thing.
-- **Images written by JavaScript.** See [scenario 4](rendering.md).
+- **Images written by JavaScript.** See the [rendering scenario](rendering.md).

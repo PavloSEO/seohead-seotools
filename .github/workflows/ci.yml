@@ -45,14 +45,17 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[mcp,cluster,reports]"
+      # dev brings pytest, which the boundary check below now runs.
+      - run: python -m pip install -e ".[dev,mcp,cluster,reports]"
       - name: Enforce core/interface boundary
         run: |
-          if grep -rnE "^\s*from seohead\.(servers|cli)|^\s*import seohead\.(servers|cli)" \
-               seohead/sf seohead/tools seohead/recon seohead/data_sources seohead/crawl; then
-            echo "::error::core modules must not import the CLI or server layer"
-            exit 1
-          fi
+          # The rule itself lives in tests/test_interface_binding.py, which
+          # discovers the core directories from the filesystem instead of
+          # naming them. This line used to carry a hand-written list of five
+          # of the package's eight directories, and the one it omitted was the
+          # only one that violated the rule (#221). Running the test here keeps
+          # one definition rather than two that drift.
+          pytest tests/test_interface_binding.py -q
       - name: Enforce collector/analyzer boundary
         run: |
           # The collector gathers evidence; the analyzer judges it. They meet

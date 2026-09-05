@@ -368,7 +368,14 @@ CATEGORIES: dict[str, list[Entry]] = {
         _o("Forced Reflow", "needs main-thread instrumentation"),
         _t("Legacy JavaScript", "asset-weight-check"),
         _t("Duplicated JavaScript", "asset-weight-check", note="by content hash across the page"),
-        _c("Avoid Enormous Network Payloads", "LARGE_HTML", "HTML_BLOAT"),
+        _p(
+            "Avoid Enormous Network Payloads",
+            "LARGE_HTML/HTML_BLOAT measure only each HTML document's own size (bytes) and "
+            "word count; nothing sums images, fonts, third-party tags or later requests into "
+            "a total page payload (docs/COVERAGE_GAPS.md 1.7 tracks the gap)",
+            "LARGE_HTML",
+            "HTML_BLOAT",
+        ),
         _t("Minify CSS", "asset-weight-check"),
         _t("Minify JavaScript", "asset-weight-check"),
         _o("Reduce Unused CSS", "needs coverage instrumentation from a real render"),

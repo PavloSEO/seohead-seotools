@@ -97,6 +97,6 @@ separate mistakes.
   should carry one. The count going up is not automatically a defect; the count going up by the
   size of a template is.
 - **Why it changed.** The diff is the fact; the cause is in the deploy.
-- **A directive present only after JavaScript runs.** See [scenario 4](rendering.md).
+- **A directive present only after JavaScript runs.** See the [rendering scenario](rendering.md).
 - **Anything under a path neither crawl reached.** Compare `run.crawl_partial` on both sides
   before reading a disappearance as a fix.

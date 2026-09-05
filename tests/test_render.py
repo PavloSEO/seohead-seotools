@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import pathlib
+import re
+
 from seohead.tools.render import (
     _jsonld_types,
     _links,
@@ -13,6 +17,7 @@ from seohead.tools.render import (
 )
 
 BASE = "https://example.com/"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _snap(**kw):
@@ -337,3 +342,23 @@ def test_a_websocket_with_an_unsupported_scheme_is_closed():
     route = _FakeWebSocketRoute("file:///etc/passwd")
     _guard_websocket_route(route)
     assert route.closed is True
+
+
+# ── Published examples must use real output keys (#271) ─────────────────────
+
+
+def test_rendering_scenario_examples_use_real_snapshot_keys():
+    """docs/scenarios/rendering.md's example output must be reproducible by a reader
+    typing it in: a key the tool never returns (e.g. `internal_links`, when `_snapshot`
+    actually calls it `links`) would silently mislead every future reader."""
+    snapshot_keys = set(_snapshot("<a href='/x'>x</a>", BASE))
+    text = (ROOT / "docs" / "scenarios" / "rendering.md").read_text(encoding="utf-8")
+    checked_a_block = False
+    for block in re.findall(r"```json\n(.*?)\n```", text, re.S):
+        payload = json.loads(block)
+        for side in ("raw", "rendered"):
+            if side in payload:
+                checked_a_block = True
+                bad = set(payload[side]) - snapshot_keys
+                assert not bad, f"{side} example uses keys _snapshot never returns: {bad}"
+    assert checked_a_block, "expected at least one raw/rendered example block to check"

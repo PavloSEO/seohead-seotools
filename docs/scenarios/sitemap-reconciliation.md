@@ -87,6 +87,6 @@ Nothing paid.
 - **Orphan status from a partial crawl.** "Nothing links here" cannot be proven by a crawl that
   stopped early, so those findings are withheld rather than guessed — check `run.crawl_partial`.
 - **Links added by JavaScript.** A menu assembled client-side is invisible to a static crawl,
-  and every orphan below it is a false one. See [scenario 4](rendering.md) first.
+  and every orphan below it is a false one. See the [rendering scenario](rendering.md) first.
 - **Whether the sitemap should contain the missing pages.** Some pages are deliberately not
   declared. The list is a question for the person who owns the site structure.

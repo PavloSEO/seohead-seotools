@@ -112,7 +112,7 @@ paid.
 - **Whether the certificate is any good.** Nothing here inspects the certificate, its chain or
   its expiry date. That is one `openssl s_client` away and is not part of this chain.
 - **Mixed content introduced after load.** A script that injects an `http://` image at runtime
-  is invisible to a static parse — see [scenario 4](rendering.md).
+  is invisible to a static parse — see the [rendering scenario](rendering.md).
 - **Whether HSTS is safe to add.** Committing a domain to HTTPS-only is a decision with a
   rollback cost; see [security headers](security-headers.md) for what is measured and what is
   still a judgement.
@@ -121,4 +121,4 @@ paid.
 - **Whether an insecure subresource is load-bearing.** A blocked tracking pixel and a blocked
   stylesheet look identical in the list and are not the same emergency.
 - **A form or link written by JavaScript.** The edge and form lists are built from served HTML;
-  see [scenario 4](rendering.md).
+  see the [rendering scenario](rendering.md).

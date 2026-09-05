@@ -48,7 +48,7 @@ post-JavaScript document:
 seohead crawl-site --url https://example.com --config ./crawl.json --out-dir ./run
 ```
 
-`crawl.json` sets `rendering.mode` to `js`; [scenario 4](rendering.md) has the escalation block
+`crawl.json` sets `rendering.mode` to `js`; the [rendering scenario](rendering.md) has the escalation block
 that keeps a second crawl affordable.
 
 **5. Diff the two audits.**

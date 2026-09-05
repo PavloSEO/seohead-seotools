@@ -63,7 +63,7 @@ seohead crawl-site --url https://example.com --sitemap https://example.com/sitem
 ```
 
 Depth says a page is far away. Orphan status says nothing links to it at all. They are
-different findings with different fixes, and [scenario 3](structure.md) is where the sitemap
+different findings with different fixes, and the [structure scenario](structure.md) is where the sitemap
 reconciliation that produces the second one is described in full.
 
 **6. Hand it over as a table, since the fix is a template change.**
@@ -101,11 +101,11 @@ missing hub page, not 400 tickets.
   reason in the run's own excluded map, and not attributed back to the pages that linked them.
   That is a stated partial: the census is real, the per-page attribution does not exist.
 - **Whether depth is hurting anything.** Depth correlates with crawl priority; it does not
-  measure it. There is no crawl-log or Search Console data in this loop — [scenario
-  7](infrastructure.md) is about the server, not about what Googlebot did.
+  measure it. There is no crawl-log or Search Console data in this loop — 
+  the [infrastructure scenario](infrastructure.md) is about the server, not about what Googlebot did.
 - **Depth through links added by JavaScript.** A menu that hydrates client-side is invisible to
   a raw crawl, and a page it would have reached in two clicks reads as depth 7. See
-  [scenario 4](rendering.md).
+  the [rendering scenario](rendering.md).
 - **Whether a high-outlink page is wrong.** A sitemap page or a large category index is
   supposed to link to a lot. The threshold is a prompt to look, not a verdict.
 - **Depth on a partial crawl.** The deepest page found is bounded by the budget; check

@@ -48,7 +48,7 @@ Three audiences, one source document:
 
 **4. Hand over the artifacts beside it.** A report that says "optimize your images" is a
 request. A report with the optimized images attached is a delivery — see
-[scenario 1](images.md).
+the [images scenario](images.md).
 
 ## What comes out
 

@@ -7,22 +7,23 @@ product.
 
 ## Canonical product description
 
-> Screaming Frog collects the crawl. SEOHEAD analyzes its exports, adds the bounded live,
-> infrastructure, Schema.org, log, and optional provider evidence the audit needs, and gives a
-> specialist or tool-calling agent one tested CLI/MCP surface for producing traceable findings,
-> prioritized tasks, and reports.
+> Screaming Frog collects the crawl for web-scale sites; SEOHEAD's own bounded `crawl-site`
+> collects it when no SF licence is installed. SEOHEAD analyzes that evidence (SF exports or its
+> own crawl), adds the bounded live, infrastructure, Schema.org, log, and optional provider
+> evidence the audit needs, and gives a specialist or tool-calling agent one tested CLI/MCP
+> surface for producing traceable findings, prioritized tasks, and reports.
 
 This is a division of labour, not a feature-by-feature contest with Screaming Frog:
 
 | Stage | Tool or owner | Result |
 |---|---|---|
-| Collect | Screaming Frog exports, logs, supplied files, or explicit providers | Raw evidence |
+| Collect | Screaming Frog exports, SEOHEAD's own bounded `crawl-site`, logs, supplied files, or explicit providers | Raw evidence |
 | Analyze and organize | SEOHEAD core through CLI or local MCP | Structured results, explicit gaps, audit documents, and task artifacts |
 | Interpret and approve | SEO specialist, optionally supported by an agent | Business-aware priorities and a reviewed deliverable |
 
 The short workflow is: **collect -> analyze -> enrich deliberately -> review -> deliver**.
 
-The built-in 104-check importer targets Screaming Frog CSV/XLSX exports. Another crawler may still
+The built-in 138-check importer targets Screaming Frog CSV/XLSX exports. Another crawler may still
 belong in a team's stack, but its exports are not claimed to be a drop-in input for the SF analyzer.
 
 ## Where it is strong
@@ -35,7 +36,7 @@ interface.
 
 ### Deep analysis of existing crawl data
 
-Export mode evaluates Screaming Frog CSV/XLSX data against a 104-check registry without crawling
+Export mode evaluates Screaming Frog CSV/XLSX data against a 138-check registry without crawling
 again. It is useful when the crawl was taken by another specialist, came from CI, or must remain
 offline. Missing exports become explicit skipped checks rather than silent zeroes.
 
