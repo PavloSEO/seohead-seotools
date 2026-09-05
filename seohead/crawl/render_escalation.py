@@ -27,6 +27,7 @@ not comparable, so every finding must say which one produced it.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, fields
 from typing import Any, Protocol
@@ -149,6 +150,15 @@ class EscalationResult:
     probe_requests: int = 0
     render_requests: int = 0
     render_budget_exhausted: bool = False
+    # Set when rendering.escalation.max_render_seconds ran out during this call, whether
+    # that happened while sampling or while rendering (#198). Kept distinct from
+    # render_budget_exhausted, which means max_render_urls hit zero: a report needs to say
+    # which budget cut the run short, since one is a URL count the operator set and the
+    # other is a clock the operator set, and they run out for unrelated reasons.
+    time_budget_exhausted: bool = False
+    # Patterns the deadline reached before their sample was even probed -- distinct from
+    # patterns_escalated (never got a verdict at all, so they are absent from that list too).
+    patterns_unprobed: list[str] = field(default_factory=list)
     # pattern -> how many of its pages actually reached render_fetch(). A
     # pattern in patterns_escalated with no entry here got zero -- the exact
     # corruption #147 found: an escalated pattern indistinguishable in the
@@ -179,6 +189,7 @@ def escalate(
     probe: Callable[[str], dict[str, Any]],
     render_fetch: Callable[[str], dict[str, Any]],
     representation_label: str,
+    clock: Callable[[], float] = time.monotonic,
 ) -> EscalationResult:
     """Sample, decide, and selectively re-fetch -- see the module docstring.
 
@@ -189,6 +200,13 @@ def escalate(
     with ``ok`` and, when ``ok``, ``html``. Both are entirely the caller's
     business -- this function only counts requests and applies the two
     budgets (patterns sampled, then URLs rendered).
+
+    ``rendering.escalation.max_render_seconds`` (0 = unlimited) is a single wall-clock
+    deadline for the whole call, checked before every ``probe`` and every ``render_fetch`` --
+    documented as covering "the escalation step", not the render phase alone, so probing eats
+    into the same budget a slow site's renders would otherwise exhaust on their own. ``clock``
+    is injectable so a test can advance a fake one from inside a fake ``render_fetch`` instead
+    of sleeping in real time.
     """
     urls = [p.url for p in pages]
     result = EscalationResult(mode=rendering_config.get("mode", "raw"))
@@ -199,10 +217,21 @@ def escalate(
     samples = select_samples(urls, escalation_cfg.get("sample_per_pattern", 1))
     result.patterns_sampled = len(samples)
 
+    max_render_seconds = float(escalation_cfg.get("max_render_seconds", 0) or 0)
+    deadline = clock() + max_render_seconds if max_render_seconds > 0 else None
+
+    def time_left() -> bool:
+        return deadline is None or clock() < deadline
+
     escalated: set[str] = set()
+    probed_patterns: set[str] = set()
     for pattern, sample_urls in samples.items():
+        if not time_left():
+            break
         needs_it = False
         for sample_url in sample_urls:
+            if not time_left():
+                break
             probed = probe(sample_url)
             result.probe_requests += 1
             if not probed.get("ok"):
@@ -211,9 +240,16 @@ def escalate(
                 result.empty_shell_urls.append(sample_url)
             if probed.get("needs_escalation"):
                 needs_it = True
-        if needs_it:
-            escalated.add(pattern)
+        else:
+            probed_patterns.add(pattern)
+            if needs_it:
+                escalated.add(pattern)
+            continue
+        break  # the inner loop above ran out of time before finishing this pattern's sample
     result.patterns_escalated = sorted(escalated)
+    result.patterns_unprobed = sorted(set(samples) - probed_patterns)
+    if not time_left():
+        result.time_budget_exhausted = True
     if not escalated:
         return result
 
@@ -233,10 +269,10 @@ def escalate(
     queues = {pattern: list(by_pattern.get(pattern, [])) for pattern in result.patterns_escalated}
     budget = int(escalation_cfg.get("max_render_urls", 0))
     active = [pattern for pattern in result.patterns_escalated if queues[pattern]]
-    while active and budget > 0:
+    while active and budget > 0 and time_left():
         next_active = []
         for pattern in active:
-            if budget <= 0:
+            if budget <= 0 or not time_left():
                 break
             target_url = queues[pattern].pop(0)
             fetched = render_fetch(target_url)
@@ -253,6 +289,8 @@ def escalate(
         pattern for pattern, remaining in queues.items() if remaining
     )
     result.render_budget_exhausted = bool(result.patterns_partially_rendered)
+    if not time_left():
+        result.time_budget_exhausted = True
     return result
 
 

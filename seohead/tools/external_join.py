@@ -42,6 +42,14 @@ class ExternalJoinError(ValueError):
     """The external data cannot be joined as given."""
 
 
+def _origin(url: str | None) -> str | None:
+    key = normalize_join_key(url)
+    if key is None:
+        return None
+    parts = urlsplit(key)
+    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
 def normalize_join_key(
     url: str | None,
     *,
@@ -110,11 +118,14 @@ def join_external_data(
       normalize to a joinable key at all. Kept separate from a clean
       non-match: "the URL was blank" and "the URL did not match anything"
       are different facts and must not look the same in the report.
+    - ``crawl_origins`` -- normalized origins observed in joinable crawled
+      pages. :func:`orphan_urls` uses these as its default candidate scope.
     """
     pages = list(pages)
     rows = list(rows)
 
     page_by_key: dict[str, list[Mapping[str, Any]]] = {}
+    crawl_origins: set[str] = set()
     unkeyable_pages: list[Any] = []
     for page in pages:
         key = key_fn(page.get(url_field))
@@ -122,6 +133,8 @@ def join_external_data(
             unkeyable_pages.append(page.get(url_field))
             continue
         page_by_key.setdefault(key, []).append(page)
+        if origin := _origin(page.get(url_field)):
+            crawl_origins.add(origin)
 
     row_by_key: dict[str, list[Mapping[str, Any]]] = {}
     unkeyable_rows: list[Mapping[str, Any]] = []
@@ -156,6 +169,7 @@ def join_external_data(
         "joined": joined,
         "crawl_only": crawl_only,
         "external_only": external_only,
+        "crawl_origins": sorted(crawl_origins),
         "unkeyable_pages": unkeyable_pages,
         "unkeyable_rows": unkeyable_rows,
         "summary": {
@@ -170,7 +184,12 @@ def join_external_data(
     }
 
 
-def orphan_urls(join_result: Mapping[str, Any], *, url_column: str = "url") -> list[str]:
+def orphan_urls(
+    join_result: Mapping[str, Any],
+    *,
+    url_column: str = "url",
+    allowed_origins: Iterable[str] | None = None,
+) -> list[str]:
     """URLs the external data knows about but the crawl never reached.
 
     A named view over ``external_only``: that set already answers "what did
@@ -178,7 +197,21 @@ def orphan_urls(join_result: Mapping[str, Any], *, url_column: str = "url") -> l
     orphan detection actionable -- feed the result into
     ``seohead.crawl.collect.collect_urls`` for a follow-up list-mode crawl,
     so these URLs are allowed to enter the audit rather than sit in a side
-    report nobody acts on.
+    report nobody acts on. Candidates default to origins observed in the
+    crawled pages; pass ``allowed_origins`` to deliberately audit more than
+    one origin. Other external rows remain visible under ``external_only``.
     """
-    urls = {row.get(url_column) for row in join_result.get("external_only", ())}
+    if isinstance(allowed_origins, str):
+        allowed_origins = (allowed_origins,)
+    allowed = (
+        {_origin(origin) for origin in allowed_origins}
+        if allowed_origins is not None
+        else set(join_result.get("crawl_origins") or ())
+    )
+    allowed.discard(None)
+    urls = {
+        row.get(url_column)
+        for row in join_result.get("external_only", ())
+        if _origin(row.get(url_column)) in allowed
+    }
     return sorted(url for url in urls if url)

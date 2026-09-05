@@ -299,7 +299,7 @@ def _cluster(
         if auto_k:
             k = elbow_k(normalize(X), max_k=min(100, n_keywords // 5))
         else:
-            k = min(n_clusters, n_keywords - 1)
+            k = min(n_clusters, n_keywords)
         k = max(k, 1)
         km = KMeans(n_clusters=k, random_state=42, n_init=10, max_iter=300)
         return km.fit_predict(X)
@@ -318,7 +318,7 @@ def _cluster(
     if algorithm == "agglomerative":
         # Large datasets: fall back to K-Means (dense agglomerative is O(n^2)).
         if X.shape[0] > 10000:
-            k = max(min(n_clusters, n_keywords - 1), 1)
+            k = max(min(n_clusters, n_keywords), 1)
             km = KMeans(n_clusters=k, random_state=42, n_init=10)
             return km.fit_predict(X)
 
@@ -332,7 +332,7 @@ def _cluster(
                 linkage="average",
             )
         else:
-            k = max(min(n_clusters, n_keywords - 1), 1)
+            k = max(min(n_clusters, n_keywords), 1)
             ag = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average")
         return ag.fit_predict(Xn)
 

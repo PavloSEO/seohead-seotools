@@ -133,6 +133,7 @@ def test_free_form_headers_are_a_leaf_not_a_branch(tmp_path):
         ({"scope.internal": "everything"}, "scope.internal"),
         ({"limits.max_urls": 0}, "max_urls"),
         ({"limits.max_depth": -1}, "max_depth"),
+        ({"limits.max_query_variants_per_path": -1}, "max_query_variants_per_path"),
         ({"speed.min_delay_seconds": -1}, "min_delay_seconds"),
         ({"speed.concurrency": 0}, "concurrency"),
         ({"cache.mode": "always"}, "cache.mode"),

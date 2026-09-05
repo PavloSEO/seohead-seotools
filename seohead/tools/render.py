@@ -31,7 +31,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
-from seohead.recon.net import http_client, normalize_url, validate_url
+from seohead.recon.net import UA, http_client, normalize_url, validate_url
 from seohead.tools import dualcrawl
 
 # Two fixed profiles rather than a free-form width/height: a responsive page
@@ -456,8 +456,17 @@ def render_check(
                 # service_workers="block": a default-configuration service
                 # worker can serve requests the page.route() guard below never
                 # sees, the exact bypass #18's security section names.
+                # user_agent=UA: the raw fetch above used this same identity. Without it,
+                # Chromium's own default UA reaches the origin instead, and a server that
+                # varies its response by User-Agent (legitimate, common, and unrelated to
+                # JavaScript) looks indistinguishable from a page that genuinely needs a
+                # renderer -- issue #199. Matching identity removes that confound rather
+                # than trying to detect it after the fact.
                 context = browser.new_context(
-                    viewport=size, is_mobile=(viewport == "mobile"), service_workers="block"
+                    viewport=size,
+                    is_mobile=(viewport == "mobile"),
+                    service_workers="block",
+                    user_agent=UA,
                 )
                 context.add_init_script(_CLS_INIT_JS)
                 # WebSockets are not HTTP requests and page.route() never sees
@@ -508,6 +517,10 @@ def render_check(
         "final_url": final_url,
         "status": status,
         "viewport": viewport,
+        # Both snapshots were requested under this identity (#199) -- recorded so a report
+        # can show its comparison is not confounded by a server that varies its response by
+        # User-Agent, rather than leaving that an unstated assumption.
+        "user_agent": UA,
         "raw": raw,
         "rendered": rendered,
         "empty_shell": shell,

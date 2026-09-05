@@ -110,6 +110,10 @@ class ParsedPage(_ParsedPageOptional):
     meta_description: str | None
     robots: str | None
     robots_meta: list[str]
+    # Same values as robots_meta, prefixed "<name>: " for every tag but the
+    # generic one -- see parser.robots_meta_scoped. Native-crawl evidence joins
+    # this, not robots_meta, so a Bingbot/Yandex-only directive keeps its scope.
+    robots_meta_scoped: list[str]
     canonical: str | None
     position: DocumentPosition
     # Static Lighthouse audits (issue #59) — see seohead.sf.core.rules and

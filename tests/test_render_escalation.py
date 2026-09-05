@@ -153,12 +153,13 @@ def test_gate_works_with_no_html_at_all():
 # ── escalate() ───────────────────────────────────────────────────────────────
 
 
-def _config(mode="js", sample_per_pattern=1, max_render_urls=100):
+def _config(mode="js", sample_per_pattern=1, max_render_urls=100, max_render_seconds=0):
     resolved = crawl_config.load(
         overrides={
             "rendering.mode": mode,
             "rendering.escalation.sample_per_pattern": sample_per_pattern,
             "rendering.escalation.max_render_urls": max_render_urls,
+            "rendering.escalation.max_render_seconds": max_render_seconds,
         }
     )
     return resolved["rendering"]
@@ -231,6 +232,69 @@ def test_the_render_budget_is_a_separate_ceiling_from_the_sample():
     )
     assert result.render_requests == 3
     assert result.render_budget_exhausted is True
+
+
+def test_max_render_seconds_stops_rendering_once_the_first_render_crosses_the_deadline():
+    """#198: max_render_seconds was accepted and validated but never read by escalate(), so a
+    slow site ran every probe and every render regardless of the wall-clock budget the operator
+    configured. A fake clock makes this deterministic: it only advances when render_fetch is
+    called, so the first render is always allowed (the deadline has not passed yet when it
+    starts) and the second is refused once that first render's simulated duration crosses it."""
+    pages = [_Page(f"https://example.com/blog/{i}") for i in range(3)]
+
+    clock_seconds = [0.0]
+
+    def clock() -> float:
+        return clock_seconds[0]
+
+    def probe(_url):
+        return {"ok": True, "needs_escalation": True}
+
+    def render_fetch(u):
+        clock_seconds[0] += 10.0  # simulates a render that alone blows the budget
+        return {"ok": True, "html": "<html></html>", "final_url": u}
+
+    result = escalate(
+        pages,
+        _config(max_render_urls=3, max_render_seconds=1),
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label="rendered",
+        clock=clock,
+    )
+    assert result.render_requests == 1
+    assert result.time_budget_exhausted is True
+    # render_budget_exhausted is also true here (not every escalated page got rendered), but
+    # max_render_seconds -- not max_render_urls (3, never reached) -- is what cut this short;
+    # time_budget_exhausted is the field that says so.
+    assert result.patterns_partially_rendered == ["https://example.com/blog/*"]
+
+
+def test_max_render_seconds_zero_means_unlimited():
+    pages = [_Page(f"https://example.com/blog/{i}") for i in range(3)]
+
+    clock_seconds = [0.0]
+
+    def clock() -> float:
+        return clock_seconds[0]
+
+    def probe(_url):
+        return {"ok": True, "needs_escalation": True}
+
+    def render_fetch(u):
+        clock_seconds[0] += 1000.0
+        return {"ok": True, "html": "<html></html>", "final_url": u}
+
+    result = escalate(
+        pages,
+        _config(max_render_urls=3, max_render_seconds=0),
+        probe=probe,
+        render_fetch=render_fetch,
+        representation_label="rendered",
+        clock=clock,
+    )
+    assert result.render_requests == 3
+    assert result.time_budget_exhausted is False
 
 
 def test_the_render_budget_is_spent_breadth_first_across_escalated_patterns():

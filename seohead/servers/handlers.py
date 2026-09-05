@@ -94,26 +94,38 @@ def sitemap_crawl(url: str | None = None, concurrency: int = 3) -> dict[str, Any
 
 
 def _seed_urls_from_sitemap(url: str, sitemap: str | None, auto_discover: bool) -> dict[str, Any]:
-    """Resolve and expand the sitemap that should seed a crawl, if any.
+    """Resolve and expand the sitemap(s) that should seed a crawl, if any.
 
-    Returns ``{"sitemap_url": <the sitemap fetched, or None>, "declared": [...]}``.
-    An explicit ``sitemap`` wins; otherwise, with ``auto_discover``, the
-    ``Sitemap:`` directive in robots.txt is used. Neither given means no
-    seeding — the crawl behaves exactly as it did before this feature existed.
+    Returns ``{"sitemap_url": <first source, or None>, "sitemap_urls": [...],
+    "declared": [...]}``. An explicit ``sitemap`` wins and is the sole source;
+    otherwise, with ``auto_discover``, robots.txt can declare more than one
+    ``Sitemap:`` directive and every one of them is independent (RFC-wise there
+    is no "the" sitemap), so all are fetched and their URLs unioned. Neither
+    given means no seeding — the crawl behaves exactly as it did before this
+    feature existed.
     """
     from seohead.tools import sitemap as sitemap_tool
 
-    target = sitemap
-    if not target and auto_discover:
+    if sitemap:
+        targets = [sitemap]
+    elif auto_discover:
         from seohead.tools.robots import check_robots
 
-        discovered = check_robots(url).get("sitemaps") or []
-        target = discovered[0] if discovered else None
-    if not target:
-        return {"sitemap_url": None, "declared": []}
-    expanded = sitemap_tool.crawl(target)
-    declared = [entry["loc"] for entry in expanded.get("urls") or []]
-    return {"sitemap_url": target, "declared": declared}
+        targets = list(check_robots(url).get("sitemaps") or [])
+    else:
+        targets = []
+    if not targets:
+        return {"sitemap_url": None, "sitemap_urls": [], "declared": []}
+    declared: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        expanded = sitemap_tool.crawl(target)
+        for entry in expanded.get("urls") or []:
+            loc = entry.get("loc")
+            if loc and loc not in seen:
+                seen.add(loc)
+                declared.append(loc)
+    return {"sitemap_url": targets[0], "sitemap_urls": targets, "declared": declared}
 
 
 def _run_render_escalation(
@@ -354,7 +366,7 @@ def crawl_site(
         invalidate=settings["cache"]["invalidate"],
     )
 
-    sitemap_seed = {"sitemap_url": None, "declared": []}
+    sitemap_seed = {"sitemap_url": None, "sitemap_urls": [], "declared": []}
     if url and (sitemap or settings["sitemaps"]["auto_discover"]):
         sitemap_seed = _seed_urls_from_sitemap(url, sitemap, settings["sitemaps"]["auto_discover"])
 
@@ -411,6 +423,7 @@ def crawl_site(
             "effective_concurrency": result.effective_concurrency,
             "resume_note": result.resume_note,
             "sitemap_url": sitemap_seed["sitemap_url"],
+            "sitemap_urls": sitemap_seed["sitemap_urls"],
             "sitemap_seeded": len(result.seed_urls),
         }
     else:
@@ -463,11 +476,16 @@ def crawl_site(
                 "probe_requests": escalation.probe_requests,
                 "render_requests": escalation.render_requests,
                 "render_budget_exhausted": escalation.render_budget_exhausted,
+                # Set independently of render_budget_exhausted (#198): max_render_urls and
+                # max_render_seconds are two different operator-set limits that run out for
+                # unrelated reasons, and a report must say which one cut this run short.
+                "time_budget_exhausted": escalation.time_budget_exhausted,
                 # Which escalated patterns the budget actually reached, and
                 # which it ran out on before finishing -- patterns_escalated
                 # alone cannot tell the two apart (#147).
                 "render_counts": escalation.render_counts,
                 "patterns_partially_rendered": escalation.patterns_partially_rendered,
+                "patterns_unprobed": escalation.patterns_unprobed,
             }
 
         # Re-evaluated after escalation so a run that actually renders its
@@ -551,6 +569,7 @@ def crawl_site(
             sitemap_seed["declared"], observed, _sitemap_comparable_pages(result, url)
         )
         reconciled["sitemap_url"] = sitemap_seed["sitemap_url"]
+        reconciled["sitemap_urls"] = sitemap_seed["sitemap_urls"]
         for orphan_url in reconciled["in_sitemap_not_linked"]:
             ctx.add("SITEMAP_ORPHAN", target_url=orphan_url, details={"in_sitemap": True})
         for extra_url in reconciled["linked_not_in_sitemap"]:
@@ -956,10 +975,26 @@ def ai_bots_check(url: str | None = None, robots_text: str | None = None) -> dic
             client, _ = http_client(20.0)
             with client:
                 resp = client.get(robots_url)
-            robots_text = resp.text
-            fetched = {"robots_url": robots_url, "status_code": resp.status_code}
         except Exception as exc:  # Tool boundary: network failures are result data, not crashes.
             return {"ok": False, "url": robots_url, "error": str(exc)}
+        code = resp.status_code
+        if code >= 500:
+            # A server error is "we could not read the rules", not "there are no
+            # rules" — #135 established the same distinction for the native
+            # crawler's own robots fetch. Reporting every AI bot allowed here
+            # would be a false permission grant on evidence that never loaded.
+            return {
+                "ok": False,
+                "url": url,
+                "robots_url": robots_url,
+                "status_code": code,
+                "error": f"robots.txt returned {code}; rules could not be read",
+            }
+        # A 4xx robots.txt means "no restrictions" per RFC 9309, same as
+        # tools.robots.check_robots; the response body (an error page, not
+        # rules) is discarded rather than handed to the parser.
+        robots_text = resp.text if code < 400 else ""
+        fetched = {"robots_url": robots_url, "status_code": code}
     else:
         fetched = {}
     result = ai_bots_core.check_ai_access(robots_text)

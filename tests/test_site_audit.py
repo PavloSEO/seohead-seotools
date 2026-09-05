@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 
 from seohead.audit.site import (
+    PAGE_TOOLS,
     SCHEMA,
     SEVERITY_RULES,
+    SITE_TOOLS,
     _first_h1,
     _page_row,
     _urls_from_sitemap,
@@ -14,6 +16,7 @@ from seohead.audit.site import (
     classify,
 )
 from seohead.reports import FORMATS, build_report
+from seohead.servers import handlers
 
 # ── finding severity ─────────────────────────────────────────────────────────
 
@@ -70,6 +73,48 @@ def test_nested_shapes_are_still_walked():
     """A response-shape change must not silently reduce the audit to zero URLs."""
     weird = {"sitemaps": [{"entries": [{"loc": "https://example.com/deep"}]}]}
     assert _urls_from_sitemap(weird, 5) == ["https://example.com/deep"]
+
+
+# ── multiple declared sitemaps (#200) ────────────────────────────────────────
+
+FIRST_SITEMAP = "https://example.test/sitemap-pages.xml"
+SECOND_SITEMAP = "https://example.test/sitemap-products.xml"
+
+
+def test_every_declared_sitemap_is_sampled_not_just_the_first(monkeypatch):
+    """robots.txt can declare more than one independent Sitemap: directive; a page
+    only that second sitemap lists must still reach page selection, not be
+    silently dropped because ``site.py`` only ever fetched the first."""
+    calls: list[str] = []
+
+    def fake_robots_check(url: str) -> dict:
+        return {"ok": True, "sitemaps": [FIRST_SITEMAP, SECOND_SITEMAP]}
+
+    def fake_sitemap_crawl(url: str | None = None, **_kw: object) -> dict:
+        calls.append(url or "")
+        loc = (
+            "https://example.test/page-a"
+            if url == FIRST_SITEMAP
+            else "https://example.test/product-b"
+        )
+        return {"ok": True, "urls": [{"loc": loc}]}
+
+    # audit_site is handed the tools it composes rather than importing the server
+    # layer to fetch them (#221), so the stub goes in through that seam instead of
+    # being patched onto handlers -- which is the seam existing for exactly this.
+    tools = {
+        **handlers.HANDLERS,
+        "robots_check": fake_robots_check,
+        "sitemap_crawl": fake_sitemap_crawl,
+    }
+
+    skip = [t for t in SITE_TOOLS if t not in {"robots_check", "sitemap_crawl"}] + list(PAGE_TOOLS)
+    result = audit_site("https://example.test/", skip=skip, tools=tools)
+
+    assert calls == [FIRST_SITEMAP, SECOND_SITEMAP]
+    selected = {page["url"] for page in result["pages"]}
+    assert "https://example.test/page-a" in selected
+    assert "https://example.test/product-b" in selected
 
 
 # ── page row ─────────────────────────────────────────────────────────────────
