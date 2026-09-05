@@ -865,7 +865,13 @@ def site_audit(
     from seohead.audit.site import audit_site
 
     return audit_site(
-        url, urls=urls, limit=limit, concurrency=concurrency, render=bool(render), skip=skip
+        url,
+        urls=urls,
+        limit=limit,
+        concurrency=concurrency,
+        render=bool(render),
+        skip=skip,
+        tools=HANDLERS,
     )
 
 

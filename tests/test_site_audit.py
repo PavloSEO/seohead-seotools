@@ -99,11 +99,17 @@ def test_every_declared_sitemap_is_sampled_not_just_the_first(monkeypatch):
         )
         return {"ok": True, "urls": [{"loc": loc}]}
 
-    monkeypatch.setattr(handlers, "robots_check", fake_robots_check)
-    monkeypatch.setitem(handlers.HANDLERS, "sitemap_crawl", fake_sitemap_crawl)
+    # audit_site is handed the tools it composes rather than importing the server
+    # layer to fetch them (#221), so the stub goes in through that seam instead of
+    # being patched onto handlers -- which is the seam existing for exactly this.
+    tools = {
+        **handlers.HANDLERS,
+        "robots_check": fake_robots_check,
+        "sitemap_crawl": fake_sitemap_crawl,
+    }
 
     skip = [t for t in SITE_TOOLS if t not in {"robots_check", "sitemap_crawl"}] + list(PAGE_TOOLS)
-    result = audit_site("https://example.test/", skip=skip)
+    result = audit_site("https://example.test/", skip=skip, tools=tools)
 
     assert calls == [FIRST_SITEMAP, SECOND_SITEMAP]
     selected = {page["url"] for page in result["pages"]}

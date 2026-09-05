@@ -249,3 +249,82 @@ def test_seo_crawl_site_forwards_sitemap_urls_and_config_to_the_handler():
     assert spy.call_args.kwargs["sitemap"] == "https://example.com/sitemap.xml"
     assert spy.call_args.kwargs["urls"] == ["https://example.com/a"]
     assert spy.call_args.kwargs["config"] == "crawl.json"
+
+
+# ── the core/interface boundary, with no hand-written list of directories ────
+
+# The two packages that are allowed to compose everything else. Everything under
+# seohead/ that is not one of these is core, whether or not it existed when this
+# test was written.
+INTERFACE_PACKAGES = {"servers"}
+INTERFACE_MODULES = {"cli.py"}
+
+
+def _core_python_files() -> list[pathlib.Path]:
+    """Every core source file, discovered rather than listed.
+
+    CI enforced this rule with a grep over five directory names typed by hand,
+    and the package has eight -- so ``seohead/audit/``, the one directory that
+    actually crossed the boundary, was the one nobody checked (#221). A gate
+    whose scope is maintained by memory has the same failure mode as the
+    checkpoint in #188 and the export list in #136: it silently stops covering
+    what it claims to, and says nothing.
+    """
+    package = ROOT / "seohead"
+    return [
+        path
+        for path in package.rglob("*.py")
+        if path.parts[path.parts.index("seohead") + 1] not in INTERFACE_PACKAGES
+        and path.name not in INTERFACE_MODULES
+        and "__pycache__" not in path.parts
+    ]
+
+
+def _imports_the_interface(source: str) -> list[str]:
+    """Import statements naming seohead.servers or seohead.cli, at any nesting.
+
+    Deferred imports inside a function body count. They are how the cycle in
+    #221 survived import time, which is exactly why the rule exists -- a cycle
+    that only fails at call time is worse than one that fails on import, not
+    better.
+    """
+    found: list[str] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[:2] in (["seohead", "servers"], ["seohead", "cli"]):
+                found.append(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[:2] in (["seohead", "servers"], ["seohead", "cli"]):
+                    found.append(alias.name)
+    return found
+
+
+def test_no_core_module_imports_the_interface_layer():
+    """Core gathers evidence and judges it; the interface composes core. The
+    dependency runs one way, and a module that reaches back inverts it."""
+    offenders: list[str] = []
+    for path in _core_python_files():
+        for module in _imports_the_interface(path.read_text(encoding="utf-8")):
+            offenders.append(f"{path.relative_to(ROOT)} imports {module}")
+    assert not offenders, "core modules must not import the CLI or server layer:\n" + "\n".join(
+        sorted(offenders)
+    )
+
+
+def test_the_discovery_actually_sees_every_core_directory():
+    """A guard that silently matched nothing would pass this file forever.
+
+    Named directories here are the ones that existed when #221 was fixed; the
+    assertion is that discovery finds at least these, not that the list is
+    complete -- a new directory is covered without editing anything, which is
+    the entire point.
+    """
+    found = {
+        path.parts[path.parts.index("seohead") + 1]
+        for path in _core_python_files()
+        if path.name != "__init__.py"
+    }
+    for expected in ("audit", "crawl", "data_sources", "recon", "reports", "sf", "tools"):
+        assert expected in found, f"boundary check no longer looks at seohead/{expected}/"
