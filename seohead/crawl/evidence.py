@@ -144,6 +144,11 @@ def _row(
         "OG:Image": record.og_image,
         "Size (bytes)": record.size_bytes,
         "Word Count": record.word_count,
+        # Not SF columns: an SF export carries no iframe inventory, so these stay
+        # blank there and CONTENT_IN_IFRAME skips honestly rather than reporting
+        # a false clean (#360).
+        "Content Frames": record.content_frames,
+        "Content Frames Same-Origin": record.content_frames_same_origin,
         "Text Ratio": record.text_ratio if record.text_ratio is not None else "",
         # The collector counts every link it found; this column counts internal
         # links only, and External Outlinks is the disjoint remainder.

@@ -65,6 +65,34 @@ class LinkInfo(_LinkInfoOptional):
     external: bool
 
 
+class FrameInfo(TypedDict):
+    """One `<iframe>` extracted from a page (issue #360).
+
+    A framed document is not part of the parent DOM, so every text-derived
+    measurement -- word count, headings, the content area -- describes the shell
+    around the content rather than the content. Recording what a page frames is
+    what lets a check say "the copy is in an iframe" instead of "this page is
+    thin", which is the same fact read the wrong way round.
+    """
+
+    # Resolved against the document base; "" when the src attribute is absent
+    # (a JavaScript-populated frame, which is still a frame).
+    src: str
+    # The src exactly as written, before resolution -- the only place a
+    # protocol-relative or empty form stays visible.
+    raw_src: str
+    # Same registrable scope as the page, by the same rule links use. A
+    # same-origin frame holds content the site owns; a third-party frame is
+    # usually an embed and is judged differently.
+    same_origin: bool
+    # Whether the frame sits inside the resolved content area. An iframe in a
+    # footer is a widget; an iframe in the content area is the page's content.
+    in_content_area: bool
+    title: str
+    loading: str
+    sandbox: str
+
+
 class FormInfo(TypedDict):
     """One `<form>` extracted from a page (issue #125)."""
 
@@ -135,6 +163,9 @@ class ParsedPage(_ParsedPageOptional):
     content_text: str
     content_area_strategy: str
     word_count: int
+    # Every <iframe> the document declares -- see FrameInfo. Empty when the
+    # text option is off, because in_content_area needs the resolved root.
+    frames: list[FrameInfo]
 
 
 class ParseFetched(ParsedPage):
