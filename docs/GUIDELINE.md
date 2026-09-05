@@ -142,12 +142,16 @@ complete one.
 | `summary.check_coverage` | how many checks *could* run |
 | `summary.health_score_basis` | whether the score compares to anything |
 
-Three words mean three different things and are constantly confused:
+Four words mean four different things and are constantly confused:
 
 - **fired** — the check ran and found something.
 - **skipped** — the check *could not run*, and the reason is named: a missing export column, a
   page property nobody recorded. This is not "zero issues".
-- **silent** — the check ran and found nothing. This is the good one.
+- **disabled** — the operator turned the check off in config (`checks.<ID>.enabled: false`).
+  Named separately from `skipped` so a deliberate switch is never read as missing evidence, and
+  named at all so it is never read as `silent`.
+- **silent** — the check *was invoked* and found nothing. This is the good one. `checks_silent_ids`
+  names the population; a check no code path ever calls is a defect, not a silent one.
 
 A health score computed from 16 of 138 checks is not a health score. The audit says so in
 `health_score_basis`, and where coverage is too low the score is withheld rather than averaged
@@ -175,7 +179,7 @@ that would have caught all three of the defects live crawls found (#94, #95, #96
 seohead log-scan --run ./run
 ```
 
-Eight rules, each written from a defect that shipped past the whole test suite. Exit 2 means
+Nine rules, each written from a defect that shipped past the whole test suite. Exit 2 means
 two numbers in the same run disagree with each other. Beside them, under `review`, sit the
 checks that describe most of the site: not a contradiction, since a uniform site makes them
 true, so they never change the exit code -- only ask for a minute of your attention. Twenty seconds here is cheaper than a

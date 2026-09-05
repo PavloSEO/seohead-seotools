@@ -8,6 +8,7 @@ missing column yields ``None``, never an exception.
 from __future__ import annotations
 
 import math
+import urllib.parse
 from collections.abc import Iterable
 from typing import Any
 
@@ -220,8 +221,21 @@ FLOAT_FIELDS = frozenset(
 
 
 def norm_url(url: str | None) -> str:
-    """Normalize a URL for equality/index lookups (strip, drop trailing /, lower)."""
-    return (url or "").strip().rstrip("/").lower()
+    """Normalize a URL for equality/index lookups (strip, drop trailing /, fold scheme/host).
+
+    Scheme and host are case-insensitive per RFC 3986 and safe to fold; the path, query and
+    fragment are not — a case-sensitive server can serve ``/News`` and ``/news`` as different
+    resources, and lowercasing the whole URL silently merged them into one key, hiding a
+    broken or unreciprocated hreflang target and collapsing distinct link-graph nodes (#202).
+    The trailing-slash fold stays: it is a deliberate many-to-one tolerance for a canonical
+    written without one (see AuditContext._build_pages) and is unrelated to letter case.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    scheme, netloc, path, query, fragment = urllib.parse.urlsplit(url)
+    path = path.rstrip("/")
+    return urllib.parse.urlunsplit((scheme.lower(), netloc.lower(), path, query, fragment))
 
 
 def find_column(df: pd.DataFrame, candidates: Iterable[str]) -> str | None:

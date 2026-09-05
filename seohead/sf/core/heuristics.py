@@ -335,22 +335,35 @@ def check_templated_titles(ctx: AuditContext) -> None:
     if len(titles) < 5:
         ctx.skip("TITLE_TEMPLATED", "too few titles to assess templating")
         return
+    # The registry promises a finding for a shared prefix OR suffix (e.g. "SEOHEAD — page N"
+    # is a prefix template, "page N — SEOHEAD" a suffix one); counting only the text after the
+    # last separator missed every prefix-templated corpus outright (#206).
+    prefixes: Counter = Counter()
     suffixes: Counter = Counter()
     for title in titles:
         for sep in SEPARATORS:
             if sep in title:
+                prefixes[title.split(sep, 1)[0].strip()] += 1
                 suffixes[title.rsplit(sep, 1)[-1].strip()] += 1
                 break
-    if not suffixes:
+    best: tuple[str, str, int] | None = None  # (direction, token, count)
+    for direction, counts in (("prefix", prefixes), ("suffix", suffixes)):
+        if not counts:
+            continue
+        token, count = counts.most_common(1)[0]
+        if best is None or count > best[2]:
+            best = (direction, token, count)
+    if best is None:
         return
-    top_suffix, count = suffixes.most_common(1)[0]
+    direction, token, count = best
     share = count / len(titles)
     if share >= ctx.thresholds["templated_title_share"]:
         ctx.add(
             "TITLE_TEMPLATED",
             target_url=None,
             details={
-                "suffix": top_suffix,
+                "direction": direction,
+                "token": token,
                 "share": round(share, 2),
                 "pages": count,
                 "total": len(titles),

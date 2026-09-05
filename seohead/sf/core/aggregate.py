@@ -7,7 +7,7 @@ from collections import Counter
 from typing import Any
 
 from .context import AuditContext
-from .models import AuditResult, Issue
+from .models import AuditResult, Issue, SkippedCheck
 
 
 def _fingerprint(issue: Issue) -> str:
@@ -278,19 +278,36 @@ def aggregate(
     from seohead.sf.core.registry import CHECKS
 
     checks_total = len(CHECKS)
-    checks_skipped = len({s.id for s in ctx.skipped})
-    checks_available = checks_total - checks_skipped
-    # "Silent" checks neither produced an issue nor declared a skip. Some are
-    # genuinely clean; some had no evidence and said nothing. Today those two are
-    # indistinguishable, and naming the population is how the gap stops being
-    # invisible — every declaration added moves a check out of this bucket.
-    fired_checks = {i.check for i in issues}
-    declared = {s.id for s in ctx.skipped}
+    # Four disjoint buckets partition the registry, all derived here in one place
+    # (issue #177) so the summary counts and the returned records can never
+    # disagree: `ctx.add` already refuses to record an issue for a disabled
+    # check, so fired and disabled cannot overlap by construction; a check that
+    # both fired and separately declared a skip (issue #136 — one source found
+    # evidence, another didn't) counts only as fired, computed once instead of
+    # twice as aggregate.py used to (checks_skipped counted the raw declaration,
+    # the returned list subtracted fired — the two could disagree).
+    fired_ids = {i.check for i in issues}
+    # An operator's own config switch must never read as a clean/silent result
+    # (issue #177): `enabled()` is config-only, so this is knowable independent
+    # of whether any code path actually evaluated the check.
+    disabled_ids = {check_id for check_id in CHECKS if not ctx.enabled(check_id)}
+    declared_ids = {s.id for s in ctx.skipped} - fired_ids - disabled_ids
+    # "Silent" now means only "invoked and found nothing" (issue #177): a check
+    # that was never invoked at all is a defect, caught by
+    # tests/chains/test_crawl_check_coverage.py, not absorbed quietly here.
+    silent_ids = set(CHECKS) - fired_ids - disabled_ids - declared_ids
+
+    checks_skipped = len(declared_ids)
+    checks_disabled = len(disabled_ids)
+    checks_available = checks_total - checks_skipped - checks_disabled
     summary["check_coverage"] = {
         "checks_total": checks_total,
-        "checks_fired": len(fired_checks),
+        "checks_fired": len(fired_ids),
         "checks_skipped": checks_skipped,
-        "checks_silent": len(set(CHECKS) - fired_checks - declared),
+        "checks_disabled": checks_disabled,
+        "checks_disabled_ids": sorted(disabled_ids),
+        "checks_silent": len(silent_ids),
+        "checks_silent_ids": sorted(silent_ids),
         "coverage": round(checks_available / checks_total, 3) if checks_total else None,
     }
     # Below this, the number stops meaning anything: a source serving a fifth of
@@ -307,7 +324,7 @@ def aggregate(
             f"({coverage_ratio:.0%} coverage); too little evidence to score"
         )
 
-    if checks_skipped:
+    if checks_skipped or checks_disabled:
         summary["health_score_basis"] = (
             f"{checks_available} of {checks_total} checks could run; the score is not "
             "comparable to a run with full evidence"
@@ -330,10 +347,11 @@ def aggregate(
     max_pages = ctx.config.get("output", {}).get("max_pages_in_json", 100000)
     pages = ctx.pages[:max_pages]
 
-    # A check that fired from one source isn't "skipped" just because another
-    # source for it was absent (e.g. BROKEN_EXTERNAL_LINK from 4xx but not 5xx).
-    fired = {i.check for i in issues}
-    skipped = [s for s in ctx.skipped if s.id not in fired]
+    # Same partition computed above the fold, reused here rather than
+    # recomputed, so the detail records agree with the summary counts by
+    # construction (issue #177).
+    skipped = [s for s in ctx.skipped if s.id in declared_ids]
+    disabled = [SkippedCheck(id=cid, reason="disabled in config") for cid in sorted(disabled_ids)]
 
     return AuditResult(
         run=run,
@@ -342,4 +360,5 @@ def aggregate(
         pages=pages,
         groups=ctx.groups,
         skipped=skipped,
+        disabled=disabled,
     )

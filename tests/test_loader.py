@@ -31,6 +31,35 @@ def test_required_export_enforced(tmp_path):
         load_exports(str(empty))
 
 
+def test_partial_internal_export_does_not_satisfy_internal_all(tmp_path):
+    """#209: Internal:HTML (missing every non-HTML row) must not pass as the master table."""
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    (partial / "internal_html.csv").write_text(
+        "Address,Content Type,Status Code\nhttps://example.com/,text/html,200\n",
+        encoding="utf-8",
+    )
+    assert "internal_all" not in discover_exports(str(partial))
+    with pytest.raises(FileNotFoundError):
+        load_exports(str(partial))
+
+
+def test_duplicate_internal_all_candidates_raise_instead_of_picking_one(tmp_path):
+    """#210: two files claiming Internal:All must not be resolved by filename order."""
+    dup = tmp_path / "duplicate"
+    dup.mkdir()
+    (dup / "internal_all.csv").write_text(
+        "Address,Content Type,Status Code\nhttps://example.com/stale,text/html,404\n",
+        encoding="utf-8",
+    )
+    (dup / "internal-all.csv").write_text(
+        "Address,Content Type,Status Code\nhttps://example.com/current,text/html,200\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Ambiguous export"):
+        discover_exports(str(dup))
+
+
 def test_load_reports_found_and_missing(exports_dir):
     loaded = load_exports(exports_dir)
     assert "internal_all" in loaded.found

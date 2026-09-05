@@ -13,11 +13,15 @@ from seohead.servers import handlers
 from seohead.tools import logscan
 
 
-def _write_run(tmp_path, pages, audit):
+def _write_run(tmp_path, pages, audit, decisions=None):
     (tmp_path / "pages.jsonl").write_text(
         "\n".join(json.dumps(p) for p in pages) + "\n", encoding="utf-8"
     )
     (tmp_path / "audit.json").write_text(json.dumps(audit), encoding="utf-8")
+    if decisions is not None:
+        (tmp_path / "decisions.jsonl").write_text(
+            "\n".join(json.dumps(d) for d in decisions) + "\n", encoding="utf-8"
+        )
     return str(tmp_path)
 
 
@@ -172,6 +176,48 @@ def test_canonical_reported_as_a_redirect_while_that_url_answered_200(tmp_path):
     result = logscan.scan(logscan.load_run(run))
     rules = {a["rule"] for a in result["anomalies"]}
     assert "canonical_to_redirect_has_no_answering_twin" in rules
+
+
+# ── #134: decisions.jsonl tells the truth about a run's own scope check ──────
+
+
+def test_a_url_excluded_as_outside_host_whose_host_is_the_crawl_host(tmp_path):
+    """The contradiction issue #134 asks for by name: invisible in audit.json — which only
+    ever records the ``outside_host`` *count* in ``run.excluded`` — because the URL and the
+    host it was compared against exist only in the decision log."""
+    pages = [_page("https://example.com/")]
+    decisions = [
+        {
+            "type": "exclude",
+            "url": "https://example.com/off-by-mistake",
+            "reason": "outside_host",
+            "host": "example.com",
+        }
+    ]
+    run = _write_run(tmp_path, pages, {"summary": {"by_check": {}}, "issues": []}, decisions)
+    result = logscan.scan(logscan.load_run(run))
+    found = [
+        a for a in result["anomalies"] if a["rule"] == "outside_host_exclusion_matches_its_own_host"
+    ]
+    assert len(found) == 1
+    assert found[0]["target"] == "https://example.com/off-by-mistake"
+    assert found[0]["observed"] == "example.com"
+
+
+def test_a_genuine_cross_host_exclusion_is_not_flagged(tmp_path):
+    pages = [_page("https://example.com/")]
+    decisions = [
+        {
+            "type": "exclude",
+            "url": "https://other.example/x",
+            "reason": "outside_host",
+            "host": "example.com",
+        }
+    ]
+    run = _write_run(tmp_path, pages, {"summary": {"by_check": {}}, "issues": []}, decisions)
+    result = logscan.scan(logscan.load_run(run))
+    assert result["anomaly_count"] == 0
+    assert result["read"]["decisions"] == 1
 
 
 # ── bookkeeping contradictions ───────────────────────────────────────────────

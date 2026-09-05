@@ -156,6 +156,50 @@ def test_a_robots_disallowed_path_is_excluded_and_counted(site, crawled):
     assert result["discovery"]["robots_blocked"] >= 1
 
 
+# ── decision log: the aggregate above, named per URL (issue #134) ────────────
+
+
+def _decisions(out_dir: Path) -> list[dict]:
+    path = out_dir / "decisions.jsonl"
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def test_decision_log_names_the_two_urls_the_counts_only_tally(site, crawled):
+    """``result.excluded`` (and ``run.checks_skipped``'s sibling in the summary) has held these
+    two counts since #128; the URL and the rule that rejected it exist only here."""
+    _result, out, _pages = crawled
+    by_reason = {d["reason"]: d["url"] for d in _decisions(out) if d.get("url")}
+    assert by_reason["outside_host"] == "https://other.example/x"
+    assert by_reason["blocked_by_robots"] == f"{site}/private/"
+
+
+def test_exclusion_lines_account_for_exactly_the_urls_missing_from_pages_jsonl(site, crawled):
+    """The acceptance test issue #134 asks for by name: every URL this crawl discovered is
+    either in ``pages.jsonl`` or named, with a reason, in ``decisions.jsonl`` — never silently
+    neither. This fixture never reaches ``max_depth``, the one exclusion kind the log cannot
+    name a single URL for (see ``spider.exclude``'s own comment on why)."""
+    result, out, pages = crawled
+    fetched = {p["url"] for p in pages}
+    excluded_urls = {d["url"] for d in _decisions(out) if d.get("url")}
+    assert not (fetched & excluded_urls), "a URL cannot be both fetched and excluded"
+    assert excluded_urls == {"https://other.example/x", f"{site}/private/"}
+    assert sum(result["discovery"]["excluded"].values()) == len(excluded_urls)
+
+
+def test_decision_log_size_per_url_is_measured(site, crawled):
+    """Not a threshold — a measurement, stated so the on-by-default decision (issue #134) is
+    made from a number rather than a guess. On this fixture: one line per exclusion, small
+    enough that a 3,387-URL crawl (the issue's own example) stays well under a megabyte."""
+    _result, out, pages = crawled
+    decisions_bytes = (out / "decisions.jsonl").stat().st_size
+    per_fetched_url = decisions_bytes / len(pages)
+    assert per_fetched_url < 200, (
+        f"{decisions_bytes} bytes / {len(pages)} pages = {per_fetched_url}"
+    )
+
+
 # ── 3. Determinism: the same site, twice, is the same answer ─────────────────
 
 

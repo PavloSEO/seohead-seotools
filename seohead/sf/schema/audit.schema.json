@@ -47,6 +47,17 @@
               "reason": {"type": "string"}
             }
           }
+        },
+        "checks_disabled": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "reason"],
+            "properties": {
+              "id": {"type": "string"},
+              "reason": {"type": "string"}
+            }
+          }
         }
       }
     },

@@ -72,6 +72,19 @@ def test_a_target_outside_the_crawl_is_not_faulted(tmp_path):
     assert _fired(res, "HREFLANG_MISSING_RETURN_LINK") == {}
 
 
+def test_a_one_way_pair_that_differs_only_by_path_case_still_fires(tmp_path):
+    """#202: norm_url must not fold /en and /EN into one node and hide the missing return."""
+    rows = [
+        ["https://example.test/en", "text/html", "200", "OK", "Indexable"],
+        ["https://example.test/EN", "text/html", "200", "OK", "Indexable"],
+    ]
+    hreflang_rows = [["https://example.test/en", "https://example.test/EN", "en"]]
+    exports_dir = _write(tmp_path, rows, hreflang_rows)
+    res = run_audit(input_mode="parse-exports", exports_dir=exports_dir, log=lambda m: None)
+    fired = _fired(res, "HREFLANG_MISSING_RETURN_LINK")
+    assert set(fired) == {"https://example.test/EN"}
+
+
 def test_skips_without_the_all_hreflang_export(tmp_path):
     d = tmp_path / "exports"
     d.mkdir()
