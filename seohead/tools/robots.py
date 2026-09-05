@@ -67,28 +67,50 @@ EMPTY_GROUP: RobotsGroup = {"user_agents": [], "allow": [], "disallow": [], "cra
 
 
 def _rules_for(parsed: ParsedRobots, user_agent: str) -> RobotsGroup:
-    """The single group that applies, by longest matching product token.
+    """The combined rules of every group at the longest matching product token.
 
-    RFC 9309 selects the most specific match, and exactly one group applies.
+    RFC 9309 selects the most specific match, but a robots.txt file can address the
+    same agent from more than one group (a site adding a second ``Disallow`` block
+    for a crawler it already named earlier), and every group tied at that
+    specificity applies together -- see RFC 9309 section 2.2.1's "combine". Keeping
+    only the first such group silently dropped every later rule for that crawler.
     Taking the *last* match instead meant file order decided the outcome, and
     matching by substring meant a group naming a browser engine captured any
     agent whose string happened to contain it.
     """
     ua = user_agent.lower()
-    best: RobotsGroup | None = None
     best_length = -1
-    star: RobotsGroup | None = None
+    matches: list[RobotsGroup] = []
+    star_matches: list[RobotsGroup] = []
     for group in parsed["groups"]:
+        group_best = -1
+        has_star = False
         for token in (u.lower().strip() for u in group["user_agents"]):
             if token == "*":
-                if star is None:
-                    star = group
+                has_star = True
                 continue
             # A token matches when the agent name starts with it; "Googlebot"
             # applies to "Googlebot-Image", but not the other way round.
-            if (ua == token or ua.startswith(token)) and len(token) > best_length:
-                best, best_length = group, len(token)
-    return best or star or cast(RobotsGroup, dict(EMPTY_GROUP))
+            if (ua == token or ua.startswith(token)) and len(token) > group_best:
+                group_best = len(token)
+        if group_best > best_length:
+            best_length, matches = group_best, [group]
+        elif group_best >= 0 and group_best == best_length:
+            matches.append(group)
+        if has_star:
+            star_matches.append(group)
+    # A wildcard group only applies when nothing named this agent specifically.
+    selected = matches if best_length >= 0 else star_matches
+    if not selected:
+        return cast(RobotsGroup, dict(EMPTY_GROUP))
+    return {
+        "user_agents": [ua for g in selected for ua in g["user_agents"]],
+        "allow": [pattern for g in selected for pattern in g["allow"]],
+        "disallow": [pattern for g in selected for pattern in g["disallow"]],
+        "crawl_delay": next(
+            (g["crawl_delay"] for g in selected if g["crawl_delay"] is not None), None
+        ),
+    }
 
 
 def crawl_delay(parsed: ParsedRobots, user_agent: str = "*") -> float | None:

@@ -309,6 +309,11 @@ ROBOTS_META_NAMES = (
     "slurp",
 )
 
+# The crawlers Google actually runs. A directive named for any other crawler in
+# ROBOTS_META_NAMES is scoped to that crawler alone and must never feed a
+# Google-effective indexability verdict, however its content reads.
+GOOGLE_ROBOTS_AGENTS = frozenset({"googlebot", "googlebot-news"})
+
 # Directives that carry a value after a colon, so the colon is not a
 # user-agent prefix.
 _VALUED_DIRECTIVES = (
@@ -338,9 +343,38 @@ def _robots_directive_tags(soup: BeautifulSoup) -> list[Any]:
     return out
 
 
+def robots_meta_entries(soup: BeautifulSoup) -> list[tuple[str, str]]:
+    """Return ``(name, content)`` for every robots-directive meta, in document order.
+
+    The name is what scopes the directive. Once ``robots_meta_values`` below
+    joins the content strings together, that scope is unrecoverable — this is
+    the entry point every caller that needs to honour it (see
+    ``robots_meta_scoped``) must read from instead.
+    """
+    return [
+        (cast(str, tag.get("name")).strip().lower(), collapse_whitespace(tag.get("content")))
+        for tag in _robots_directive_tags(soup)
+    ]
+
+
 def robots_meta_values(soup: BeautifulSoup) -> list[str]:
     """Return the ``content`` of every robots-directive meta, in document order."""
-    return [collapse_whitespace(tag.get("content")) for tag in _robots_directive_tags(soup)]
+    return [content for _, content in robots_meta_entries(soup)]
+
+
+def robots_meta_scoped(soup: BeautifulSoup) -> list[str]:
+    """Return every robots-directive meta's content, agent scope preserved.
+
+    The generic ``robots`` name is left bare (it already addresses everyone);
+    any other name is prefixed ``"<name>: "``, the same convention an
+    ``X-Robots-Tag`` header uses to address one crawler. ``robots_directives``
+    reads that convention on both, so a Bingbot- or Yandex-only tag survives
+    as evidence without being mistaken for a global directive downstream.
+    """
+    return [
+        content if name == "robots" else f"{name}: {content}"
+        for name, content in robots_meta_entries(soup)
+    ]
 
 
 def _hreflang_tags(soup: BeautifulSoup) -> list[Any]:
@@ -358,18 +392,24 @@ def _hreflang_tags(soup: BeautifulSoup) -> list[Any]:
 
 
 def robots_directives(*values: str | None) -> set[str]:
-    """Split robots directive strings into lowercase tokens.
+    """Split robots directive strings into lowercase tokens, Google-effective only.
 
     Handles the two forms that defeat a substring search: ``none``, which is
     shorthand for ``noindex, nofollow``, and the ``<user-agent>: <directive>``
-    prefix that an ``X-Robots-Tag`` header may carry.
+    prefix that an ``X-Robots-Tag`` header (or ``robots_meta_scoped``) may
+    carry. A directive prefixed for a crawler other than Google is scoped to
+    that crawler alone and is dropped here rather than folded into the result
+    — a Bingbot- or Yandex-only ``noindex`` must never read as a global one.
     """
     tokens: set[str] = set()
     for value in values:
         for raw in str(value or "").replace(";", ",").split(","):
             token = raw.strip().lower()
             if ":" in token and not token.startswith(_VALUED_DIRECTIVES):
-                token = token.split(":", 1)[1].strip()
+                agent, _, rest = token.partition(":")
+                if agent.strip() not in GOOGLE_ROBOTS_AGENTS:
+                    continue
+                token = rest.strip()
             if not token:
                 continue
             tokens.add(token)
@@ -885,6 +925,9 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         # Separate from "robots": that key keeps its literal meaning, this one
         # carries every crawler-addressed tag, which is what indexability needs.
         result["robots_meta"] = robots_meta_values(soup)
+        # Same tags, agent scope preserved (see robots_meta_scoped) -- this is
+        # what native-crawl evidence joins into "meta_robots", not the line above.
+        result["robots_meta_scoped"] = robots_meta_scoped(soup)
         # Static Lighthouse audits (see seohead.sf.core.rules): charset/doctype
         # read the raw markup directly (their rule is positional), viewport
         # reuses the existing meta-content helper.
@@ -896,6 +939,7 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["meta_description"] = None
         result["robots"] = None
         result["robots_meta"] = []
+        result["robots_meta_scoped"] = []
         result["charset"] = None
         result["doctype"] = None
         result["viewport"] = None

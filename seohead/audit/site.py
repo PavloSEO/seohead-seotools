@@ -242,17 +242,36 @@ def audit_site(
 
     site: dict[str, Any] = {}
 
-    # Run robots first and separately because it declares the sitemap URL. Without
+    # Run robots first and separately because it declares the sitemap URL(s). Without
     # this step, sitemap-crawl receives the homepage, returns "Unknown sitemap
     # format", and the audit silently falls back to a single page.
     sitemap_url = ""
+    sitemap_urls: list[str] = []
     if "robots_check" in site_tools:
         site["robots_check"] = _run(handlers.robots_check, url=start)
-        declared = site["robots_check"].get("sitemaps") or []
-        sitemap_url = declared[0] if declared else ""
+        sitemap_urls = list(site["robots_check"].get("sitemaps") or [])
+        sitemap_url = sitemap_urls[0] if sitemap_urls else ""
         site_tools = [t for t in site_tools if t != "robots_check"]
     if not sitemap_url:
         sitemap_url = start.rstrip("/") + "/sitemap.xml"
+        sitemap_urls = [sitemap_url]
+
+    if "sitemap_crawl" in site_tools and len(sitemap_urls) > 1:
+        # robots.txt can declare several independent Sitemap: directives (e.g. one
+        # per content type); each is its own document, so each needs its own fetch.
+        # Page selection below then samples from their combined url set instead of
+        # only ever seeing whichever source happened to be declared first.
+        seen: set[str] = set()
+        merged_urls: list[dict[str, Any]] = []
+        for one in sitemap_urls:
+            fetched = _run(handlers.HANDLERS["sitemap_crawl"], url=one)
+            for entry in fetched.get("urls") or []:
+                loc = entry.get("loc") if isinstance(entry, dict) else entry
+                if loc and loc not in seen:
+                    seen.add(loc)
+                    merged_urls.append(entry)
+        site["sitemap_crawl"] = {"ok": True, "urls": merged_urls, "sources": sitemap_urls}
+        site_tools = [t for t in site_tools if t != "sitemap_crawl"]
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = {
