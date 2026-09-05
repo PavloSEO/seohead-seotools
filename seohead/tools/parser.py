@@ -686,6 +686,39 @@ def document_position(soup: BeautifulSoup, html: str) -> DocumentPosition:
     }
 
 
+def extract_hreflang(soup: BeautifulSoup, base_url: str) -> list[dict[str, str]]:
+    """Every hreflang alternate the document declares, in document order (#357).
+
+    ``_hreflang_tags`` has always found these; ``parse_html`` used them for one
+    boolean about *where the tags sat* and discarded *what they said*, so a
+    crawl could not answer whether a page was localised -- the only
+    authoritative statement about that being the one the site makes here.
+
+    ``lang`` and ``raw_href`` are kept exactly as written. A code with the wrong
+    case or a malformed region is itself a finding, and normalising on capture
+    would hide it. ``url`` is the same href resolved against the document base,
+    which is what a browser does, not a normalisation of the declaration -- both
+    forms are kept so a check can compare targets without losing the original.
+    """
+    alternates: list[dict[str, str]] = []
+    for tag in _hreflang_tags(soup):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue  # a <template>'s alternate is never in the rendered document
+        lang = cast("str | None", tag.get("hreflang")) or ""
+        raw_href = (cast("str | None", tag.get("href")) or "").strip()
+        alternates.append(
+            {
+                "lang": lang.strip(),
+                "raw_href": raw_href,
+                # An alternate with no href declares a language and points
+                # nowhere. Recorded as such rather than dropped: it is the
+                # malformed declaration a reciprocity check needs to see.
+                "url": urljoin(base_url, raw_href) if raw_href else "",
+            }
+        )
+    return alternates
+
+
 def _extract_links(
     soup: BeautifulSoup,
     base_url: str,
@@ -1132,6 +1165,10 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
     # option that turns off title/canonical/etc. text still leaves the tree to
     # read positions from. See document_position (issue #123).
     result["position"] = document_position(soup, html)
+    # Same reasoning as position above: a handful of link lookups on a tree
+    # that is already built, and the one authoritative statement a site makes
+    # about which pages are the same page in another language (#357).
+    result["hreflang"] = extract_hreflang(soup, base_url)
 
     # Built imperatively above (one assignment per option branch) rather than as
     # one literal, so a plain dict is the natural builder; cast once at the

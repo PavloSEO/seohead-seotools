@@ -90,6 +90,18 @@ class PageRecord:
     canonical_outside_head: bool | None = None
     directives_outside_head: bool | None = None
     hreflang_outside_head: bool | None = None
+    # The alternates themselves, as the document wrote them (#357). The boolean
+    # above answers where the tags sat; this answers what they said, which is the
+    # only authoritative statement a site makes about which of its pages are the
+    # same page in another language.
+    #
+    # Measured in a dedicated 8 000-record hreflang fixture: a page carrying
+    # twelve alternates costs 6 392 bytes against 2 456 with none, so 3 936
+    # bytes for the declaration set. Absolute totals vary with retained field
+    # lengths; across a 50 000-page twelve-language crawl that fixture adds
+    # 188 MiB. The scope-narrowing advice above MAX_URLS_CEILING applies here
+    # too; this is not the field that decides the ceiling.
+    hreflang: list[dict[str, str]] = field(default_factory=list)
     head_count: int = 0
     body_count: int = 0
     head_not_first: bool = False
@@ -210,6 +222,7 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "canonical_outside_head": position.get("canonical_outside_head"),
         "directives_outside_head": position.get("directives_outside_head"),
         "hreflang_outside_head": position.get("hreflang_outside_head"),
+        "hreflang": list(parsed.get("hreflang") or []),
         "head_count": int(position.get("head_count") or 0),
         "body_count": int(position.get("body_count") or 0),
         "head_not_first": bool(position.get("head_not_first")),
