@@ -37,8 +37,21 @@ _MISSING = object()  # Sentinel: the key is absent from the response, not set to
 
 @pytest.mark.parametrize(
     "raw_task_id",
-    [_MISSING, None, "abc", True, False, 0, -5, [], {}],
-    ids=["missing", "null", "non_numeric", "true", "false", "zero", "negative", "list", "dict"],
+    [_MISSING, None, "abc", "--1", "²", "9" * 5_000, True, False, 0, -5, [], {}],
+    ids=[
+        "missing",
+        "null",
+        "non_numeric",
+        "double_negative",
+        "non_ascii_digit",
+        "overlong_integer",
+        "true",
+        "false",
+        "zero",
+        "negative",
+        "list",
+        "dict",
+    ],
 )
 def test_set_task_rejects_unusable_task_ids(journal, raw_task_id):
     response = {"code": "SET_TASK_OK", "cost": 7}
@@ -102,9 +115,15 @@ def test_set_task_accepts_a_numeric_string_id_because_check_coerces_it(journal):
 
 
 @pytest.mark.parametrize("wait", [False, True])
-def test_keywords_exact_returns_structured_error_for_both_wait_modes(monkeypatch, journal, wait):
+@pytest.mark.parametrize("task_id", [None, "--1", "²", "9" * 5_000])
+def test_keywords_exact_returns_structured_error_for_both_wait_modes(
+    monkeypatch, journal, wait, task_id
+):
     """Both wait=False and wait=True must fail structurally, never leak a raw TypeError."""
-    client = _StubClient({"code": "SET_TASK_OK", "cost": 7})
+    response = {"code": "SET_TASK_OK", "cost": 7}
+    if task_id is not None:
+        response["task_id"] = task_id
+    client = _StubClient(response)
     monkeypatch.setattr(arsenkin, "ArsenkinClient", lambda: client)
 
     result = handlers.keywords_exact(keywords=["synthetic phrase"], wait=wait)

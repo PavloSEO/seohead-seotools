@@ -244,9 +244,13 @@ def _valid_task_id(value: Any) -> int | None:
         return value if value > 0 else None
     if isinstance(value, str):
         text = value.strip()
-        if text.lstrip("-").isdigit():
-            parsed = int(text)
-            return parsed if parsed > 0 else None
+        if not text or not text.isascii() or not text.isdigit():
+            return None
+        try:
+            parsed = int(text.lstrip("0") or "0")
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
     return None
 
 
