@@ -41,7 +41,7 @@ def boilerplate_hash(html: str) -> str:
     hash even when the remaining text reads the same.
     """
     soup = BeautifulSoup(html, features="lxml")
-    pieces = [str(el) for tag in BOILERPLATE_TAGS for el in soup.find_all(tag)]
+    pieces = [str(el) for el in soup.find_all(BOILERPLATE_TAGS)]
     basis = "".join(" ".join(piece.split()) for piece in pieces)
     return hashlib.sha1(basis.encode("utf-8"), usedforsecurity=False).hexdigest()
 
