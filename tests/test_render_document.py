@@ -323,3 +323,82 @@ def test_a_private_target_is_refused_before_launching_a_browser(fake_stack):
     result = render_document("http://127.0.0.1:9222/", _rendering_config())
     assert result["ok"] is False
     assert fake_stack["chromium"].launched is False
+
+
+# ── the rendered page must be fetched as the same client as the raw crawl ────
+
+
+class _VaryingPage(_FakePage):
+    """A page whose body depends on who asked for it.
+
+    Stands in for a server sending ``Vary: User-Agent`` — legal, common, and
+    nothing to do with JavaScript. The context's options are read at
+    ``content()`` time because that is when render_document has finished
+    configuring the browser identity.
+    """
+
+    def __init__(self, context_options: dict, bodies: dict[str, str]):
+        super().__init__()
+        self._options = context_options
+        self._bodies = bodies
+
+    def content(self):
+        seen = self._options.get("user_agent")
+        return self._bodies.get(seen, self._bodies["__other__"])
+
+
+def test_the_browser_identifies_as_the_crawl_did(fake_stack):
+    """The fuller fetch replaces a page's body-derived evidence — title, word count,
+    links — so it must ask the origin as the same client the static crawl used. Without
+    an explicit User-Agent the context gets Chromium's own, which in headless mode
+    advertises HeadlessChrome, and a report then mixes two populations: escalated pages
+    described from what the server serves a headless browser, every other page from what
+    it serves the toolkit. #199 fixed this for the single-page render_check() probe; this
+    is the same confound at the crawl-wide call site.
+    """
+    from seohead.recon.net import UA
+
+    render_document("https://example.com/", _rendering_config(), user_agent=UA)
+
+    assert fake_stack["context"].options["user_agent"] == UA
+
+
+def test_an_explicit_crawl_user_agent_reaches_the_browser(fake_stack):
+    """``http.user_agent`` is a setting an operator sets deliberately — often because a
+    site is allow-listed by it. A rendered fetch that ignores it is refused entry, or
+    served something different, on exactly the sites where the setting was needed."""
+    render_document("https://example.com/", _rendering_config(), user_agent="AcmeAudit/2.0")
+
+    assert fake_stack["context"].options["user_agent"] == "AcmeAudit/2.0"
+
+
+def test_a_varying_server_returns_the_crawls_own_body(monkeypatch):
+    """End to end through the stub: the body render_document brings back is the one the
+    origin serves the crawl's identity, not the one it serves an unrecognised client."""
+    from seohead.recon.net import UA
+
+    context_options: dict = {}
+    page = _VaryingPage(
+        context_options,
+        {
+            UA: "<html><body>the real page</body></html>",
+            "__other__": "<html><body>are you a robot?</body></html>",
+        },
+    )
+    context = _FakeContext(page)
+    context.options = context_options
+    browser = _FakeBrowser(context)
+    chromium = _FakeChromium(browser, context)
+    pw = _FakePlaywright(chromium)
+
+    fake_playwright = types.ModuleType("playwright")
+    fake_sync_api = types.ModuleType("playwright.sync_api")
+    fake_sync_api.sync_playwright = lambda: pw
+    fake_playwright.sync_api = fake_sync_api
+    monkeypatch.setitem(sys.modules, "playwright", fake_playwright)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_sync_api)
+
+    result = render_document("https://example.com/", _rendering_config(), user_agent=UA)
+
+    assert result["ok"] is True
+    assert "the real page" in result["html"]

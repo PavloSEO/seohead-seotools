@@ -31,7 +31,7 @@ import re
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
 
-from seohead.recon.net import http_client, normalize_url, validate_url
+from seohead.recon.net import UA, http_client, normalize_url, validate_url
 from seohead.tools import dualcrawl
 
 # Two fixed profiles rather than a free-form width/height: a responsive page
@@ -607,6 +607,7 @@ def render_document(
     *,
     nav_timeout: float = 30.0,
     artifacts_dir: str | None = None,
+    user_agent: str = "",
 ) -> dict[str, Any]:
     """Render one URL under the full crawler rendering configuration.
 
@@ -662,6 +663,16 @@ def render_document(
         with sync_playwright() as pw:
             context_options = {
                 "viewport": viewport,
+                # The same identity the static crawl presented, for the same
+                # reason #199 pinned it on the single-page probe: this fetch
+                # replaces a page's body-derived evidence, so it must ask the
+                # origin as the client the rest of the crawl was. Left to
+                # Chromium's own default it advertises HeadlessChrome, which
+                # bot protection commonly challenges, and a report then mixes
+                # two populations -- escalated pages described from what the
+                # site serves a headless browser, every other page from what
+                # it serves the toolkit.
+                "user_agent": user_agent or UA,
                 "device_scale_factor": float(browser_cfg.get("device_pixel_ratio", 1.0) or 1.0),
                 "is_mobile": bool(browser_cfg.get("mobile_emulation")),
                 "has_touch": bool(browser_cfg.get("touch_emulation")),

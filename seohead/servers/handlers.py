@@ -159,8 +159,16 @@ def _run_render_escalation(
             return probed
 
         def render_fetch(target: str) -> dict[str, Any]:
+            # settings["http"]["user_agent"] is what the static crawl fetched
+            # every other page with, and render_document falls back to the
+            # toolkit's own default when it is empty -- the same resolution
+            # collect.py applies, so both halves of one crawl present one
+            # identity to the origin.
             return render_tool.render_document(
-                target, rendering_config, artifacts_dir=artifacts_dir
+                target,
+                rendering_config,
+                artifacts_dir=artifacts_dir,
+                user_agent=settings["http"]["user_agent"],
             )
 
         label = "rendered"
