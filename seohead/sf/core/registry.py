@@ -941,6 +941,15 @@ CHECK_REQUIRES: dict[str, tuple[str, ...]] = {
     "STRUCTURED_DATA_MISSING": ("structured_data_missing",),
     "HREFLANG_ERROR": ("hreflang",),
     "HREFLANG_BROKEN_TARGET": ("all_hreflang",),
+    # These three read an SF-native Sitemaps:* comparison export directly
+    # (seohead.sf.core.sitemap_coverage._emit_from_export) and have no other
+    # evidence source -- unlike SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP, which a
+    # native crawl answers itself from its own link graph and must stay off
+    # this list so crawl_site's own evidence is never overridden by an absent
+    # export (issue #165).
+    "SITEMAP_URL_4XX_5XX": ("sitemap_non_200",),
+    "SITEMAP_URL_3XX": ("sitemap_redirects",),
+    "SITEMAP_URL_NON_INDEXABLE": ("sitemap_non_indexable",),
 }
 
 

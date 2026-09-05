@@ -73,11 +73,14 @@ def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
     # (issue #124): they need a live sitemap parse rather than an export
     # frame, so on an export-only fixture they run clean, exactly as
     # SITEMAP_ORPHAN and URL_NOT_IN_SITEMAP already do.
-    # Raised from 62 to 68 when the six link-security/forms checks were added
-    # (issue #125): like INLINK_BOILERPLATE_ONLY, they read a native crawl's
-    # own LinkEdge/FormEdge evidence (crawl/link_findings.py), which this
-    # SF-export fixture never produces, so all six are silent here too.
-    assert coverage["checks_silent"] <= 68
+    # 62 -> 58, and the number is measured after the merge rather than
+    # reconciled by hand: two changes moved it in opposite directions.
+    # run_sitemap gained explicit skips for its network-only checks (#165),
+    # which moves ids out of the silent bucket, while the six
+    # link-security/forms checks (#125) read a native crawl's own
+    # LinkEdge/FormEdge evidence this SF-export fixture never produces, which
+    # moves ids into it.
+    assert coverage["checks_silent"] <= 58
 
 
 def test_removing_evidence_only_ever_grows_the_skip_set(tmp_path):
