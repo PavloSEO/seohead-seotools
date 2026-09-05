@@ -64,6 +64,31 @@ def neutralize_formula(value: Any) -> Any:
     return value
 
 
+def format_locations(locations: Any) -> str:
+    """Flatten a finding's ``locations`` list into one reviewable cell.
+
+    xlsx and csv are the tabular "working output" the broken-pages scenario
+    hands to a developer (docs/scenarios/broken-pages.md), so each source
+    page, its anchor, its position on the page and its XPath must survive
+    into one column rather than requiring the reader to open the raw
+    audit.json (#220).
+    """
+    if not isinstance(locations, list):
+        return ""
+    rows = []
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        bits = [
+            str(loc[key])
+            for key in ("source_url", "anchor", "link_position", "link_path")
+            if loc.get(key)
+        ]
+        if bits:
+            rows.append(" · ".join(bits))
+    return "; ".join(rows)
+
+
 def _load(data: Any) -> dict[str, Any]:
     """Load an audit document from a mapping or a JSON file path."""
     if isinstance(data, dict):
@@ -103,12 +128,25 @@ def _normalize_sf_audit(document: dict[str, Any]) -> dict[str, Any]:
     totals = summary.get("totals") or {}
     by_severity = summary.get("by_severity") or {}
 
+    # The four human-facing writers key their narrow ("severity", "source",
+    # "url", "text") table columns off these exact names, but a
+    # BROKEN_INTERNAL_LINK finding is not actionable without status_code,
+    # occurrences_count, locations and fix_hint too: docs/scenarios/broken-pages.md
+    # promises the developer handoff carries all of it, so every field the SF
+    # issue actually has is preserved here even where a given writer does not
+    # yet render it (#220).
     findings = [
         {
             "severity": issue.get("severity"),
             "source": issue.get("source", ""),
             "url": issue.get("target_url") or "",
             "text": issue.get("message", ""),
+            "check": issue.get("check", ""),
+            "status_code": issue.get("status_code"),
+            "occurrences_count": issue.get("occurrences_count"),
+            "fix_hint": issue.get("fix_hint") or "",
+            "locations": issue.get("locations") or [],
+            "details": issue.get("details") or {},
         }
         for issue in document.get("issues") or []
     ]

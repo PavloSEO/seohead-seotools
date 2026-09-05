@@ -62,7 +62,10 @@ EXPORT_MATCHERS: dict[str, dict[str, list[str]]] = {
     "all_hreflang": {"all": ["all_hreflang"]},
     "desc_duplicate": {"all": ["description", "duplicate"]},
     "redirect_chains": {"all": ["redirect_chains"]},
-    "crawl_overview": {"all": ["crawl_overview"]},
+    # Crawl Overview is intentionally unregistered (#286): SF writes it as a
+    # two-column metadata header followed by a five-column table in one CSV,
+    # a shape no consumer here parses, and registering the key only turned a
+    # correctly-written export into a false "read error" in every audit run.
     # Native filter exports (activate matching checks when present; else skipped).
     "security_mixed": {"all": ["mixed_content"]},
     "security_hsts": {"all": ["hsts"]},

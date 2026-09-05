@@ -54,7 +54,7 @@ def build_tasks(audit: dict[str, Any], config: dict[str, Any] | None = None) -> 
     tasks: list[dict[str, Any]] = (
         _group_by_check(issues, prio, effort, cap, min_occ)
         if group_by == "check"
-        else _per_issue(issues, prio, effort, cap)
+        else _per_issue(issues, prio, effort, cap, min_occ)
     )
     tasks.sort(key=lambda t: (_PRIORITY_ORDER.get(t["priority"], 9), -t["affected_count"]))
 
@@ -87,7 +87,11 @@ def _group_by_check(issues, prio, effort, cap, min_occ) -> list[dict[str, Any]]:
         urls = [i["target_url"] for i in group if i.get("target_url")]
         unique_urls = list(dict.fromkeys(urls))  # stable de-dupe
         occurrences = sum(i.get("occurrences_count", 1) for i in group)
-        if len(group) < min_occ:
+        # Threshold on the summed occurrence count, not the number of issue
+        # records: one BROKEN_INTERNAL_LINK record can itself represent many
+        # link occurrences (#224), so counting records undercounts and drops
+        # findings min_occurrences was meant to keep.
+        if occurrences < min_occ:
             continue
         meta = check_meta(check)
         severity = group[0]["severity"]
@@ -116,9 +120,13 @@ def _group_by_check(issues, prio, effort, cap, min_occ) -> list[dict[str, Any]]:
     return tasks
 
 
-def _per_issue(issues, prio, effort, cap) -> list[dict[str, Any]]:
+def _per_issue(issues, prio, effort, cap, min_occ) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     for issue in issues:
+        # Same threshold semantics as _group_by_check (#224): min_occurrences
+        # was previously never enforced on this branch at all.
+        if issue.get("occurrences_count", 1) < min_occ:
+            continue
         severity = issue["severity"]
         meta = check_meta(issue["check"])
         task = {

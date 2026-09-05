@@ -41,3 +41,65 @@ def test_markdown_renders(result):
     assert "# Audit Tasks" in md
     assert "P1" in md
     assert "/html/body/footer/nav/a[2]" in md  # tasks.md preserves XPath location evidence.
+
+
+def _audit_with_occurrences(occurrences_count: int) -> dict:
+    return {
+        "run": {"project": "example.test", "generated_at": "2026-09-05T00:00:00Z"},
+        "summary": {"health_score": 80},
+        "issues": [
+            {
+                "id": "ISSUE-000001",
+                "check": "BROKEN_INTERNAL_LINK",
+                "severity": "critical",
+                "source": "inlinks:Client Error (4xx) Inlinks",
+                "message": "Internal link points to a 4xx URL",
+                "target_url": "https://example.test/dead",
+                "status_code": 404,
+                "occurrences_count": occurrences_count,
+                "fix_hint": "Replace the shared footer link.",
+                "locations": [
+                    {
+                        "source_url": "https://example.test/source-a",
+                        "anchor": "Old page",
+                        "link_position": "Footer",
+                        "link_path": "/html/body/footer/a[1]",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_min_occurrences_drops_low_frequency_issue_grouping():
+    """#224: min_occurrences was never enforced when group_by == "issue"."""
+    cfg = load_config(None)
+    cfg["tasks_pipeline"]["group_by"] = "issue"
+    cfg["tasks_pipeline"]["min_occurrences"] = 2
+    backlog = build_tasks(_audit_with_occurrences(1), cfg)
+    assert backlog["summary"]["tasks_total"] == 0
+
+
+def test_min_occurrences_keeps_high_frequency_check_grouping():
+    """#224: check grouping compared the issue-record count, not occurrences_count.
+
+    One record with occurrences_count=100 must clear a min_occurrences=2
+    threshold even though it is the only record in its group.
+    """
+    cfg = load_config(None)
+    cfg["tasks_pipeline"]["group_by"] = "check"
+    cfg["tasks_pipeline"]["min_occurrences"] = 2
+    backlog = build_tasks(_audit_with_occurrences(100), cfg)
+    assert backlog["summary"]["tasks_total"] == 1
+
+
+def test_min_occurrences_same_meaning_both_grouping_modes():
+    """#224: min_occurrences must exclude/retain identically regardless of group_by."""
+    for group_by in ("check", "issue"):
+        cfg = load_config(None)
+        cfg["tasks_pipeline"]["group_by"] = group_by
+        cfg["tasks_pipeline"]["min_occurrences"] = 5
+        dropped = build_tasks(_audit_with_occurrences(4), cfg)
+        assert dropped["summary"]["tasks_total"] == 0, group_by
+        kept = build_tasks(_audit_with_occurrences(5), cfg)
+        assert kept["summary"]["tasks_total"] == 1, group_by

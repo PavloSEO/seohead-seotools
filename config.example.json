@@ -29,7 +29,6 @@
       "Response Codes:Redirection (3xx) Inlinks"
     ],
     "reports": [
-      "Crawl Overview",
       "Redirects:Redirect Chains"
     ],
     "fetch_all_inlinks": false

@@ -100,10 +100,27 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
     _autofit(ws, {2: 40})
 
     # -- Findings ------------------------------------------------------------
+    # This sheet is the documented developer handoff for a Screaming Frog
+    # audit (docs/scenarios/broken-pages.md): Check/Status/Occurrences/
+    # Locations/Fix Hint are the evidence a BROKEN_INTERNAL_LINK finding
+    # carries beyond its message, and dropping them here forced the reader
+    # back to raw audit.json (#220).
     ws = wb.create_sheet("Findings")
-    ws.append(["Severity", "Source", "URL", "Finding"])
+    ws.append(
+        [
+            "Severity",
+            "Source",
+            "URL",
+            "Finding",
+            "Check",
+            "Status",
+            "Occurrences",
+            "Locations",
+            "Fix Hint",
+        ]
+    )
     _style_header(ws)
-    from seohead.reports import SEVERITY_TITLES, neutralize_formula
+    from seohead.reports import SEVERITY_TITLES, format_locations, neutralize_formula
 
     for finding in document.get("findings") or []:
         ws.append(
@@ -112,23 +129,33 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
                 neutralize_formula(finding.get("source", "")),
                 neutralize_formula(finding.get("url", "")),
                 neutralize_formula(finding.get("text", "")),
+                finding.get("check", ""),
+                finding.get("status_code", ""),
+                finding.get("occurrences_count", ""),
+                neutralize_formula(format_locations(finding.get("locations"))),
+                neutralize_formula(finding.get("fix_hint", "")),
             ]
         )
         colour = _HEAD.get(finding.get("severity"))
         if colour:
             ws.cell(row=ws.max_row, column=1).font = Font(bold=True, color=colour)
     if ws.max_row > 1:
-        ws.auto_filter.ref = f"A1:D{ws.max_row}"
-    _autofit(ws, {4: 100})
+        ws.auto_filter.ref = f"A1:I{ws.max_row}"
+    _autofit(ws, {4: 100, 8: 100, 9: 60})
 
     # -- Pages ---------------------------------------------------------------
     pages = document.get("pages") or []
     ws = wb.create_sheet("Pages")
+    # description_length is part of the site-audit page contract (audit.site
+    # emits it, csvfile.py already writes it) -- this sheet was the one place
+    # it was silently dropped, making the XLSX working file unusable for the
+    # meta-description-length scenario it is supposed to cover (#225).
     columns = [
         "url",
         "status",
         "title",
         "title_length",
+        "description_length",
         "h1",
         "canonical",
         "words",
@@ -141,6 +168,7 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
         "Status",
         "Title",
         "Title Length",
+        "Description Length",
         "H1",
         "Canonical",
         "Words",
@@ -154,7 +182,7 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
         ws.append([neutralize_formula(page.get(c, "")) for c in columns])
     if ws.max_row > 1:
         ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{ws.max_row}"
-    _autofit(ws, {1: 70, 3: 60, 5: 40})
+    _autofit(ws, {1: 70, 3: 60, 6: 40})  # URL, Title, H1 -- H1 shifted by the new column
 
     # -- Technologies and infrastructure ------------------------------------
     ws = wb.create_sheet("Technologies")

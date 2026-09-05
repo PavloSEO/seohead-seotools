@@ -47,7 +47,6 @@ UNAVAILABLE_FRAMES: tuple[str, ...] = (
     "all_hreflang",
     "desc_duplicate",
     "redirect_chains",
-    "crawl_overview",
     "security_mixed",
     "security_hsts",
     "structured_data_missing",
