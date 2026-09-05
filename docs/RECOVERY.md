@@ -63,13 +63,10 @@ run. Use `seohead log-scan --run ./run` to find contradictions among the run's r
 
 ## What resuming does and does not promise
 
-An identical retry after a clean interruption (Ctrl-C, a crash, the process killed) does not
-refetch URLs the checkpoint already recorded as seen — only the URLs still on the queued
-frontier. **This does not extend to a run the concurrent circuit breaker stopped.** The breaker
-can currently discard futures that were already in flight and requeue their URLs, so a resume
-after a breaker trip may refetch a handful of URLs that had, in fact, completed — tracked
-separately as #304, still open. Treat a breaker-stopped crawl's resume as "no full restart", not
-as "zero refetch", until that issue closes.
+An identical retry reuses recorded completed page results and continues with the queued frontier.
+`crawl_state.json`'s `seen` set is discovery state, not proof that each URL was persisted as a
+completed page result. A request still in flight when an interruption or circuit breaker stops
+the crawl, and whose result was not recorded, may be repeated on the retry.
 
 ## What it cannot answer
 
@@ -78,4 +75,5 @@ as "zero refetch", until that issue closes.
   to detect malicious files or a different security context.
 - **Resuming across a code upgrade that bumps the checkpoint schema.** A schema mismatch is
   treated the same as no checkpoint: a fresh start, never a partial or best-effort read.
-- **Zero refetch after a circuit-breaker stop.** See #304, above.
+- **Zero refetch after an interruption or circuit-breaker stop.** Recorded completed page results
+  are reused, but unfinished or unrecorded in-flight requests may be repeated.
