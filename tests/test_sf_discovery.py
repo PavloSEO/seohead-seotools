@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 
+import pytest
+
 from seohead.sf.config import load_config
 from seohead.sf.core.audit import run_audit
 from seohead.sf.core.runner import find_sf_cli
@@ -97,6 +99,34 @@ def test_build_command_config_only_if_exists(tmp_path):
         config=cfg,
     )
     assert "--config" in cmd and str(real) in " ".join(cmd)
+
+
+def test_build_command_rejects_a_missing_explicit_auth_config(tmp_path):
+    """#216: an explicitly requested auth profile must stop the crawl, never be dropped."""
+    from seohead.sf.core.runner import build_command
+
+    cfg = load_config(None)
+    cfg["sf_cli"]["auth_config"] = str(tmp_path / "missing.seospiderauthconfig")
+    with pytest.raises(FileNotFoundError, match="auth_config"):
+        build_command(
+            "sf.exe",
+            source_arg="--crawl",
+            source_value="https://example.com",
+            output_folder="out",
+            config=cfg,
+        )
+
+    real = tmp_path / "profile.seospiderauthconfig"
+    real.write_text("", encoding="utf-8")
+    cfg["sf_cli"]["auth_config"] = str(real)
+    cmd = build_command(
+        "sf.exe",
+        source_arg="--crawl",
+        source_value="https://example.com",
+        output_folder="out",
+        config=cfg,
+    )
+    assert "--auth-config" in cmd and str(real) in " ".join(cmd)
 
 
 def test_native_export_titles_multiple_and_hreflang(tmp_path):
