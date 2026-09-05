@@ -937,6 +937,54 @@ def image_url_sources(url_sources: list[dict[str, str]]) -> list[dict[str, str]]
     ]
 
 
+# Written onto each <iframe> just long enough to survive the copy that
+# resolve_content_area makes, then removed. The alternative -- re-running the
+# resolver and comparing by identity -- cannot work: the resolved root is a
+# detached copy with its excluded elements decomposed, so an iframe that the
+# content area drops would still look present in the live tree.
+_FRAME_MARKER = "data-seohead-frame"
+
+
+def extract_frames(
+    soup: Any, base_url: str, final_url: str, in_content_area: set[str]
+) -> list[dict[str, Any]]:
+    """Every ``<iframe>`` the document declares, and where it sits (issue #360).
+
+    A framed document is not part of the parent DOM. The parser sees
+    ``<iframe src="...">`` and no text, so ``word_count`` measures the shell
+    around the content and the page is reported as thin -- naming the wrong
+    cause and prescribing the wrong fix. This records what is needed to say the
+    true thing instead: what is framed, whether the site owns it, and whether it
+    sits where the content is supposed to be.
+
+    ``in_content_area`` holds the markers of the frames that survived into the
+    resolved content root, so the answer is the one the ``word_count`` beside it
+    was computed from rather than a second, possibly disagreeing, resolution.
+    """
+    frames: list[dict[str, Any]] = []
+    for tag in soup.find_all("iframe"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue  # a <template>'s iframe is never instantiated, see _INERT_LINK_CONTAINERS
+        raw_src = (cast("str | None", tag.get("src")) or "").strip()
+        # An empty src is not the absence of a frame: a JavaScript-populated
+        # iframe hides text from a parser exactly as a src'd one does.
+        src = urljoin(base_url, raw_src) if raw_src else ""
+        frames.append(
+            {
+                "src": src,
+                "raw_src": raw_src,
+                # No src resolves to the page itself, which is same-origin by
+                # definition -- not a third party to be excused as an embed.
+                "same_origin": not src or not is_external(src, final_url),
+                "in_content_area": str(tag.get(_FRAME_MARKER)) in in_content_area,
+                "title": collapse_whitespace(cast("str | None", tag.get("title")) or ""),
+                "loading": (cast("str | None", tag.get("loading")) or "").strip().lower(),
+                "sandbox": collapse_whitespace(cast("str | None", tag.get("sandbox")) or ""),
+            }
+        )
+    return frames
+
+
 def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None) -> ParsedPage:
     """Extract SEO data from an HTML string (pure — no network).
 
@@ -1051,16 +1099,27 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         # heading breaks for the scorer to find. Link discovery never sees the
         # resolved root, so restricting text never restricts the crawl.
         content_config = options.get("content_area") if isinstance(options, dict) else None
+        for index, frame_tag in enumerate(soup.find_all("iframe")):
+            frame_tag[_FRAME_MARKER] = str(index)
         content_root, strategy = resolve_content_area(soup, content_config)
         content_text = extract_area_text(content_root)
         result["content_text"] = content_text
         result["content_area_strategy"] = strategy
         result["word_count"] = len(content_text.split())
+        result["frames"] = extract_frames(
+            soup,
+            base_url,
+            final_url,
+            {str(el.get(_FRAME_MARKER)) for el in content_root.find_all("iframe")},
+        )
+        for frame_tag in soup.find_all("iframe"):
+            del frame_tag[_FRAME_MARKER]
     else:
         result["text"] = ""
         result["content_text"] = ""
         result["content_area_strategy"] = None
         result["word_count"] = 0
+        result["frames"] = []
 
     # Always computed, regardless of the option flags above: it is a handful of
     # already-parsed-tree lookups, not a separate extraction pass, and every
