@@ -5,6 +5,14 @@ only proves the decorator ran; it says nothing about whether the body can call
 what it calls. seo_crawl_site forwarded a keyword its handler never accepted and
 raised TypeError on every invocation for as long as it existed, invisibly,
 because nothing ever called it.
+
+Issue #152 found the opposite gap in the same pair of surfaces: the CLI could
+name ``--sitemap`` and ``--config`` for ``crawl-site``, but the MCP tool had no
+parameter for either, so a client driving this toolkit only through MCP could
+never reach the sitemap-reconciliation crawl mode at all. Nothing above caught
+it because every existing test here starts from what MCP forwards and asks
+whether the handler accepts it -- never the reverse question, "can the CLI
+name something MCP can't."
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ from seohead.servers import handlers
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MCP_SERVER = ROOT / "seohead" / "servers" / "mcp_server.py"
+CLI = ROOT / "seohead" / "cli.py"
 
 
 def _forwarding_calls() -> list[tuple[str, str, set[str]]]:
@@ -52,6 +61,124 @@ def _forwarding_calls() -> list[tuple[str, str, set[str]]]:
 FORWARDS = _forwarding_calls()
 
 
+def _literal_str(node: ast.AST) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _cmd_names_from_test(test: ast.AST) -> list[str]:
+    """``cmd == "x"`` or ``cmd in ("a", "b")`` -> the literal command name(s), else []."""
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        op, right = test.ops[0], test.comparators[0]
+        if isinstance(op, ast.Eq):
+            name = _literal_str(right)
+            return [name] if name else []
+        if isinstance(op, ast.In) and isinstance(right, ast.Tuple | ast.List):
+            return [s for s in (_literal_str(e) for e in right.elts) if s]
+    return []
+
+
+def _cli_explicit_flags() -> dict[str, set[str]]:
+    """cmd -> the handler kwargs ``_build_kwargs`` can set from a named flag.
+
+    Everything ``_build_kwargs`` does is one of two shapes: ``kw["x"] = ...``
+    (a literal key), or ``for flag in ("a", "b"): ... kw[flag] = ...`` (a
+    variable key drawn from a literal tuple, the shape ``crawl-site`` uses).
+    Both are walked here so a future flag added either way is still counted.
+    ``--input`` is deliberately invisible to this: it is the escape hatch that
+    already exists for the CLI, not a named flag a user has to know exists.
+    """
+    tree = ast.parse(CLI.read_text(encoding="utf-8"))
+    build_kwargs = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_kwargs"
+    )
+    result: dict[str, set[str]] = {}
+
+    def record(cmds: list[str], key: str) -> None:
+        if key.startswith("_"):  # a CLI-only sentinel popped before the handler call
+            return
+        for cmd in cmds:
+            result.setdefault(cmd, set()).add(key)
+
+    def walk(body: list[ast.stmt], cmds: list[str], loop_var: str | None, loop_keys: set[str]):
+        for stmt in body:
+            if isinstance(stmt, ast.If):
+                sub_cmds = _cmd_names_from_test(stmt.test) or cmds
+                walk(stmt.body, sub_cmds, loop_var, loop_keys)
+                walk(stmt.orelse, cmds, loop_var, loop_keys)  # elif is nested here
+                continue
+            if isinstance(stmt, ast.For):
+                keys = set()
+                if isinstance(stmt.iter, ast.Tuple | ast.List):
+                    keys = {s for s in (_literal_str(e) for e in stmt.iter.elts) if s}
+                target = stmt.target.id if isinstance(stmt.target, ast.Name) else None
+                walk(stmt.body, cmds, target, keys)
+                continue
+            for node in ast.walk(stmt):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if not (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "kw"
+                    ):
+                        continue
+                    key = _literal_str(target.slice)
+                    if key:
+                        record(cmds, key)
+                    elif (
+                        loop_var
+                        and isinstance(target.slice, ast.Name)
+                        and target.slice.id == loop_var
+                    ):
+                        for k in loop_keys:
+                            record(cmds, k)
+
+    walk(build_kwargs.body, [], None, set())
+    return result
+
+
+CLI_EXPLICIT_FLAGS = _cli_explicit_flags()
+MCP_FORWARDED_BY_HANDLER: dict[str, set[str]] = {}
+for _tool, _handler, _kws in FORWARDS:
+    MCP_FORWARDED_BY_HANDLER.setdefault(_handler, set()).update(_kws)
+
+# (cmd, handler_name) for every command reachable from both interfaces, so a handler
+# added to one surface's explicit-flag set and not the other's is exactly what fails below.
+_SHARED_HANDLERS = sorted(
+    (cmd, cmd.replace("-", "_"))
+    for cmd in CLI_EXPLICIT_FLAGS
+    if cmd.replace("-", "_") in MCP_FORWARDED_BY_HANDLER
+)
+
+
+def test_the_ast_walk_found_crawl_site_and_its_tuple_loop():
+    # Pins the one non-obvious shape (for flag in (...): kw[flag] = ...) this walker exists
+    # to handle -- a refactor of _build_kwargs that changes that shape should fail loudly here.
+    assert {"config", "max_urls", "max_depth", "min_delay", "out_dir", "robots", "sitemap"} <= (
+        CLI_EXPLICIT_FLAGS.get("crawl-site") or set()
+    )
+
+
+@pytest.mark.parametrize(
+    ("cmd", "handler_name"), _SHARED_HANDLERS, ids=[c for c, _ in _SHARED_HANDLERS]
+)
+def test_mcp_exposes_everything_the_cli_can_name_explicitly(cmd, handler_name):
+    """The reverse direction from the rest of this module (#152): a kwarg the CLI
+    can set from a named flag must also be reachable from MCP, since MCP has no
+    ``--input``-style escape hatch for a parameter nobody thought to add.
+    """
+    cli_flags = CLI_EXPLICIT_FLAGS[cmd]
+    mcp_flags = MCP_FORWARDED_BY_HANDLER[handler_name]
+    missing = cli_flags - mcp_flags
+    assert not missing, (
+        f"'{cmd}' can set {sorted(missing)} from a named CLI flag, but no MCP tool "
+        f"forwarding to handlers.{handler_name} accepts them: {sorted(mcp_flags)}"
+    )
+
+
 def test_the_scan_found_the_tools():
     # A refactor that moves the calls must fail loudly here rather than make
     # every assertion below vacuously true.
@@ -80,3 +207,45 @@ def test_crawl_site_accepts_every_robots_policy():
     accepted = inspect.signature(handlers.crawl_site).parameters
     assert "robots" in accepted
     assert set(ROBOTS_POLICIES) == {"respect", "report_only", "ignore"}
+
+
+def test_seo_crawl_site_declares_sitemap_urls_and_config():
+    """Declared, not just forwarded (#152): the JSON schema an MCP client actually sees
+    is what ``list_tools`` publishes, built from the tool's own parameter defaults --
+    a client can only send what shows up here."""
+    import asyncio
+
+    from seohead.servers.mcp_server import build_server
+
+    tools = asyncio.run(build_server().list_tools())
+    schema = next(t for t in tools if t.name == "seo_crawl_site").inputSchema
+    assert {"sitemap", "urls", "config"} <= set(schema["properties"])
+    # url must not be required any more: urls-only (no start URL to follow links from)
+    # is the handler's second entry mode, and it has to be reachable without a dummy url.
+    assert "url" not in (schema.get("required") or [])
+
+
+def test_seo_crawl_site_forwards_sitemap_urls_and_config_to_the_handler():
+    """End to end, not just present on the signature: an MCP client's call must
+    actually reach ``handlers.crawl_site`` with these arguments (#152)."""
+    import asyncio
+    from unittest.mock import patch
+
+    from seohead.servers.mcp_server import build_server
+
+    server = build_server()
+    with patch.object(handlers, "crawl_site", return_value={"urls_collected": 0}) as spy:
+        asyncio.run(
+            server.call_tool(
+                "seo_crawl_site",
+                {
+                    "url": "https://example.com/",
+                    "sitemap": "https://example.com/sitemap.xml",
+                    "urls": ["https://example.com/a"],
+                    "config": "crawl.json",
+                },
+            )
+        )
+    assert spy.call_args.kwargs["sitemap"] == "https://example.com/sitemap.xml"
+    assert spy.call_args.kwargs["urls"] == ["https://example.com/a"]
+    assert spy.call_args.kwargs["config"] == "crawl.json"
