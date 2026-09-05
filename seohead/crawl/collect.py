@@ -65,6 +65,12 @@ class PageRecord:
     og_image: str = ""
     word_count: int = 0
     text_ratio: float | None = None
+    # <iframe> elements sitting inside the resolved content area, and how many
+    # of those the site itself serves (#360). A framed document is not part of
+    # this one's DOM, so word_count above measures the shell around the content;
+    # these two say so instead of leaving the page to be reported as thin.
+    content_frames: int = 0
+    content_frames_same_origin: int = 0
     crawl_depth: int = 0
     # Response-header/markup evidence for the static Lighthouse checks in
     # seohead.sf.core.rules (charset/doctype/viewport/uses-text-compression) —
@@ -174,6 +180,9 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
     og = parsed.get("og") or {}
     links = parsed.get("links") or []
     position = parsed.get("position") or {}
+    # Only the frames inside the content area: an iframe in a footer is a widget,
+    # an iframe where the copy should be is the page's content (#360).
+    framed = [f for f in (parsed.get("frames") or []) if f.get("in_content_area")]
     return {
         "title": _text_of(parsed.get("title")),
         "meta_description": _text_of(parsed.get("meta_description")),
@@ -189,6 +198,8 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "og_description": _text_of(og.get("description")),
         "og_image": _text_of(og.get("image")),
         "word_count": int(parsed.get("word_count") or 0),
+        "content_frames": len(framed),
+        "content_frames_same_origin": len([f for f in framed if f.get("same_origin")]),
         "outlinks": len(links),
         "external_outlinks": len([link for link in links if link.get("external")]),
         "charset": _text_of(parsed.get("charset")),
