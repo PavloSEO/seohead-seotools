@@ -952,6 +952,55 @@ def test_wayback_history_non_json_response_is_reported_not_raised():
     assert "not JSON" in result["error"]
 
 
+def test_wayback_history_empty_array_is_not_an_error():
+    """The documented empty-result shape: a JSON array with nothing in it."""
+    result = wayback.history("https://example.com/never-archived", fetcher=lambda url: "[]")
+    assert result == {
+        "ok": True,
+        "url": "https://example.com/never-archived",
+        "count": 0,
+        "snapshots": [],
+    }
+
+
+def test_wayback_history_recognized_header_without_rows_is_not_an_error():
+    """A valid CDX header can legitimately be the whole non-empty response."""
+    result = wayback.history(
+        "https://example.com/never-archived", fetcher=lambda url: json.dumps([_CDX_HEADER])
+    )
+    assert result == {
+        "ok": True,
+        "url": "https://example.com/never-archived",
+        "count": 0,
+        "snapshots": [],
+    }
+
+
+def test_wayback_history_json_object_error_payload_is_reported_not_silent():
+    """A synthetically injected object error payload must not read as zero snapshots."""
+    body = json.dumps({"error": "synthetic provider failure"})
+    result = wayback.history("https://example.com/", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "url" in result and result["url"] == "https://example.com/"
+    assert "count" not in result
+
+
+def test_wayback_history_malformed_non_empty_array_is_reported_not_silent():
+    """A one-element array whose entry is not a header row must not read as zero snapshots."""
+    body = json.dumps([{"error": "synthetic provider failure"}])
+    result = wayback.history("https://example.com/", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "count" not in result
+
+
+def test_wayback_history_error_shaped_string_array_is_reported_not_silent():
+    """A list of strings is only a header when it names the required CDX fields."""
+    body = json.dumps([["error", "synthetic provider failure"]])
+    result = wayback.history("https://example.com/", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "count" not in result
+
+
 def test_wayback_history_network_error_is_reported_not_raised():
     def fetcher(url):
         raise urllib.error.URLError("simulated network failure")
@@ -994,6 +1043,28 @@ def test_crtsh_subdomains_non_json_response_is_reported_not_raised():
     result = crtsh.subdomains("example.com", fetcher=lambda url: "<html>overloaded</html>")
     assert result["ok"] is False
     assert "overloaded" in result["error"] or "not JSON" in result["error"]
+
+
+def test_crtsh_subdomains_empty_array_is_not_an_error():
+    """The documented empty-result shape: a JSON array with nothing in it."""
+    result = crtsh.subdomains("example.com", fetcher=lambda url: "[]")
+    assert result == {"ok": True, "domain": "example.com", "count": 0, "subdomains": []}
+
+
+def test_crtsh_subdomains_json_object_error_payload_is_reported_not_silent():
+    """A synthetically injected object error payload must not read as zero subdomains."""
+    body = json.dumps({"error": "synthetic provider failure"})
+    result = crtsh.subdomains("example.com", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "count" not in result
+
+
+def test_crtsh_subdomains_malformed_non_empty_array_is_reported_not_silent():
+    """An array entry with neither expected field must not read as zero subdomains."""
+    body = json.dumps([{"error": "synthetic provider failure"}])
+    result = crtsh.subdomains("example.com", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "count" not in result
 
 
 def test_crtsh_subdomains_network_error_is_reported_not_raised():
