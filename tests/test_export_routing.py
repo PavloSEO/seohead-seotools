@@ -38,7 +38,11 @@ EXPORTS = {
     "page_titles_multiple.csv": "titles_multiple",
     "meta_description_duplicate.csv": "desc_duplicate",
     "redirect_chains.csv": "redirect_chains",
-    "crawl_overview.csv": "crawl_overview",
+    # Deliberately unregistered (#286): SF writes it as a two-column metadata
+    # header followed by a five-column table in one CSV, a shape no consumer
+    # here parses, and claiming the key only turned a correctly-written
+    # export into a false "read error".
+    "crawl_overview.csv": None,
     "security_mixed_content.csv": "security_mixed",
     "security_missing_hsts_header.csv": "security_hsts",
     "structured_data_missing.csv": "structured_data_missing",
@@ -64,3 +68,55 @@ EXPORTS = {
 def test_export_routes_to_one_key(filename, expected):
     keys = [key for key, matcher in EXPORT_MATCHERS.items() if _matches(filename, matcher)]
     assert keys == ([expected] if expected else [])
+
+
+# Screaming Frog's own report shape: a two-column metadata header, a blank
+# line, then a five-column table -- the reason pandas' single read_csv call
+# rejects it and the runner used to record a correctly-written export as a
+# read error (#286).
+_CRAWL_OVERVIEW_CSV = (
+    '"Site Crawled","https://example.test/"\n'
+    '"Date","2026-01-01"\n'
+    '"Time","00:00:00"\n'
+    '""\n'
+    '"Summary","URLs","% of Total","Total URLs","Total URLs Description"\n'
+    '"Total URLs Encountered","3","100,00%","3","URLs Encountered"\n'
+)
+
+
+def test_crawl_overview_is_not_registered():
+    """#286: nothing here consumes crawl_overview, so it must not be a matcher key.
+
+    Registering an export key that is never read commits to a shape no writer
+    validates; a manually supplied Crawl Overview file must be left alone
+    rather than misreported as broken.
+    """
+    assert "crawl_overview" not in EXPORT_MATCHERS
+
+
+def test_crawl_overview_is_not_requested_by_default():
+    """#286: the runner must not ask Screaming Frog to write a report nothing reads."""
+    from seohead.sf.config import DEFAULT_CONFIG, LITE_EXPORTS
+
+    assert "Crawl Overview" not in DEFAULT_CONFIG["exports"]["reports"]
+    assert "Crawl Overview" not in LITE_EXPORTS["reports"]
+
+
+def test_crawl_overview_export_is_never_flagged_as_a_read_error(tmp_path):
+    """#286: a written-but-unregistered Crawl Overview must not surface as a read error.
+
+    Placing the file next to a real ``Internal:All`` export reproduces a normal
+    Mode A run: before the fix, ``load_exports`` still discovered and tried to
+    parse ``crawl_overview.csv`` and recorded the resulting ``ValueError`` as
+    ``"crawl_overview (read error: ...)"`` even though Screaming Frog wrote the
+    file correctly.
+    """
+    from seohead.sf.core.loader import load_exports
+
+    (tmp_path / "crawl_overview.csv").write_text(_CRAWL_OVERVIEW_CSV, encoding="utf-8-sig")
+    (tmp_path / "internal_all.csv").write_text("Address,Status Code\n", encoding="utf-8-sig")
+
+    result = load_exports(str(tmp_path))
+
+    assert not any("crawl_overview" in entry for entry in result.missing)
+    assert "crawl_overview" not in result.frames

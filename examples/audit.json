@@ -38,7 +38,6 @@
       "titles_duplicate",
       "desc_duplicate",
       "redirect_chains",
-      "crawl_overview",
       "security_mixed",
       "security_hsts",
       "structured_data_missing"

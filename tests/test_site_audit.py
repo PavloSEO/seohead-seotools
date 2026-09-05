@@ -369,4 +369,123 @@ def test_missing_key_security_headers_are_warnings_not_notices():
     """Missing HSTS and CSP must remain actionable warnings, not generic notices."""
     assert classify("missing strict-transport-security — enforce HTTPS") == "warning"
     assert classify("missing content-security-policy — restrict script sources") == "warning"
+
+
+# ── SF Analyzer audit.json -> report contract (#220, #225) ──────────────────
+
+SF_AUDIT = {
+    "schema_version": "2.0",
+    "tool": {"name": "SF Analyzer", "version": "3.0"},
+    "run": {"project": "example.test", "generated_at": "2026-09-05T00:00:00Z"},
+    "summary": {
+        "totals": {"urls_crawled": 1, "issues_total": 1},
+        "by_severity": {"critical": 1, "warning": 0, "notice": 0},
+        "by_check": {"BROKEN_INTERNAL_LINK": 1},
+        "health_score": 80,
+    },
+    "issues": [
+        {
+            "id": "ISSUE-000001",
+            "check": "BROKEN_INTERNAL_LINK",
+            "severity": "critical",
+            "source": "inlinks:Client Error (4xx) Inlinks",
+            "message": "Internal link points to a 4xx URL",
+            "target_url": "https://example.test/dead",
+            "status_code": 404,
+            "occurrences_count": 2,
+            "fix_hint": "Replace the shared footer link.",
+            "details": {"marker": "DETAIL-MUST-SURVIVE"},
+            "locations": [
+                {
+                    "source_url": "https://example.test/source-a",
+                    "anchor": "Old page",
+                    "link_position": "Footer",
+                    "link_path": "/html/body/footer/a[1]",
+                }
+            ],
+        }
+    ],
+    "pages": [
+        {
+            "url": "https://example.test/",
+            "status_code": 200,
+            "metrics": {
+                "title": "Example",
+                "title_length": 7,
+                "desc_length": 159,
+                "h1": ["Example"],
+                "canonical": "https://example.test/",
+                "word_count": 500,
+            },
+        }
+    ],
+    "groups": [],
+}
+
+
+def test_sf_audit_normalization_preserves_issue_evidence():
+    """#220: check/status_code/occurrences_count/locations/fix_hint/details must survive.
+
+    The SF adapter used to keep only severity/source/url/text, which discarded
+    every field a BROKEN_INTERNAL_LINK finding needs for the developer handoff
+    docs/scenarios/broken-pages.md promises.
+    """
+    from seohead.reports import _normalize_sf_audit
+
+    finding = _normalize_sf_audit(SF_AUDIT)["findings"][0]
+    assert finding["check"] == "BROKEN_INTERNAL_LINK"
+    assert finding["status_code"] == 404
+    assert finding["occurrences_count"] == 2
+    assert finding["fix_hint"] == "Replace the shared footer link."
+    assert finding["details"] == {"marker": "DETAIL-MUST-SURVIVE"}
+    assert finding["locations"] == SF_AUDIT["issues"][0]["locations"]
+
+
+def test_xlsx_findings_sheet_carries_located_evidence(tmp_path):
+    """#220: the documented developer handoff (xlsx) must show where a broken link lives."""
+    from openpyxl import load_workbook
+
+    target = tmp_path / "sf.xlsx"
+    result = build_report(SF_AUDIT, fmt="xlsx", path=str(target))
+    assert result["ok"], result
+    ws = load_workbook(target)["Findings"]
+    headers = [cell.value for cell in ws[1]]
+    row = dict(zip(headers, [cell.value for cell in ws[2]], strict=True))
+    assert row["Check"] == "BROKEN_INTERNAL_LINK"
+    assert row["Status"] == 404
+    assert row["Occurrences"] == 2
+    assert row["Fix Hint"] == "Replace the shared footer link."
+    assert "https://example.test/source-a" in row["Locations"]
+    assert "Old page" in row["Locations"]
+    assert "Footer" in row["Locations"]
+    assert "/html/body/footer/a[1]" in row["Locations"]
+
+
+def test_csv_findings_carries_located_evidence(tmp_path):
+    """#220: the tracker-import CSV must carry the same evidence as the xlsx handoff."""
+    import csv
+
+    target = tmp_path / "sf.csv"
+    build_report(SF_AUDIT, fmt="csv", path=str(target))
+    with target.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.reader(fh, delimiter=";"))
+    header, row = rows[0], dict(zip(rows[0], rows[1], strict=True))
+    assert "Locations" in header and "Fix Hint" in header
+    assert row["Check"] == "BROKEN_INTERNAL_LINK"
+    assert row["Status"] == "404"
+    assert row["Occurrences"] == "2"
+    assert "https://example.test/source-a" in row["Locations"]
+
+
+def test_xlsx_pages_sheet_has_description_length(tmp_path):
+    """#225: the XLSX Pages worksheet must not drop description_length."""
+    from openpyxl import load_workbook
+
+    target = tmp_path / "sf.xlsx"
+    build_report(SF_AUDIT, fmt="xlsx", path=str(target))
+    ws = load_workbook(target)["Pages"]
+    headers = [cell.value for cell in ws[1]]
+    assert "Description Length" in headers
+    row = dict(zip(headers, [cell.value for cell in ws[2]], strict=True))
+    assert row["Description Length"] == 159
     assert classify("missing permissions-policy — camera access") == "notice"

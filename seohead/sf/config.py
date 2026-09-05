@@ -70,7 +70,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "Response Codes:Server Error (5xx) Inlinks",
             "Response Codes:Redirection (3xx) Inlinks",
         ],
-        "reports": ["Crawl Overview", "Redirects:Redirect Chains"],
+        # Crawl Overview is deliberately not requested: SF writes it as a
+        # two-column metadata header followed by a five-column table in the
+        # same CSV, a shape no consumer parses (#286), so registering it only
+        # produced a false "read error" for a file that was written correctly.
+        "reports": ["Redirects:Redirect Chains"],
         "fetch_all_inlinks": False,
     },
     "input": {"mode": "auto", "exports_dir": "exports", "html_store_dir": None},
@@ -176,7 +180,9 @@ LITE_EXPORTS = {
         "Response Codes:Server Error (5xx) Inlinks",
         "Response Codes:Redirection (3xx) Inlinks",
     ],
-    "reports": ["Crawl Overview"],
+    # See the comment on the full profile's "reports" default: Crawl Overview
+    # is not requested because nothing parses its two-section CSV yet (#286).
+    "reports": [],
     "fetch_all_inlinks": False,
 }
 

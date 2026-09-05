@@ -15,7 +15,7 @@ ScreamingFrogSEOSpiderCli.exe ^
   --timestamped-output ^
   --export-tabs "Internal:All,Response Codes:Client Error (4xx),H1:Multiple" ^
   --bulk-export "Response Codes:Client Error (4xx) Inlinks" ^
-  --save-report "Crawl Overview,Redirects:Redirect Chains"
+  --save-report "Redirects:Redirect Chains"
 ```
 
 ## Minimum for Mode B (Manual Export)
@@ -30,7 +30,7 @@ the audit will be:
 | **Bulk: Client Error (4xx) Inlinks** (plus 5xx/3xx Inlinks) | Broken links: source, anchor, Link Position, and Link Path (XPath) |
 | Sitemaps → URLs In Sitemap / Not In Sitemap / Orphan URLs / Non-Indexable In Sitemap | Sitemap module (requires Crawl Analysis + Crawl Linked XML Sitemaps) |
 | Images → Missing Alt Text | Alt-text issues |
-| Reports → Crawl Overview / Redirect Chains | Cross-checking counts and redirect chains |
+| Reports → Redirect Chains | Redirect chain evidence |
 
 ## Pitfalls
 - **Crawl Analysis** must complete; otherwise, Sitemaps / Near Duplicates / Orphan
