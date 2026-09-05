@@ -758,13 +758,48 @@ def check_unlinked_canonical(ctx: AuditContext) -> None:
 
 
 def check_pagination(ctx: AuditContext) -> None:
+    """PAGINATION_NONINDEXABLE — a pagination page, or its declared neighbor, cannot be indexed.
+
+    Two independent sources feed the same finding: a page that itself declares
+    rel="next"/rel="prev" while being non-indexable (the original check), and a
+    rel="next"/rel="prev" *target* that the crawl reached and found non-2xx —
+    a 404/3xx/5xx page 2 is exactly as unreachable as a noindex one, even when
+    page 1 itself is perfectly indexable (issue #203). Only a target the crawl
+    actually captured is judged; an uncrawled URL named in the relation is
+    left alone, since nothing here knows its status.
+    """
+    reported: set[str] = set()
     for page in ctx.html_pages():
         rec = _rec(page)
         if (rec.get("rel_next") or rec.get("rel_prev")) and not page.is_indexable:
+            reported.add(page.url)
             ctx.add(
                 "PAGINATION_NONINDEXABLE",
                 target_url=page.url,
                 details={"indexability_status": page.indexability_status},
+            )
+    for page in ctx.html_pages():
+        rec = _rec(page)
+        for relation in ("rel_next", "rel_prev"):
+            value = rec.get(relation)
+            if not value:
+                continue
+            target = ctx.page_by_norm.get(norm_url(value))
+            if target is None or target.url in reported:
+                continue  # not in the crawl — nothing here knows its status
+            status = target.status_code
+            if status is not None and 200 <= int(status) < 300 and target.is_indexable:
+                continue
+            reported.add(target.url)
+            ctx.add(
+                "PAGINATION_NONINDEXABLE",
+                target_url=target.url,
+                details={
+                    "indexability_status": target.indexability_status,
+                    "status_code": status,
+                    "relation": relation.replace("rel_", 'rel="') + '"',
+                    "source_url": page.url,
+                },
             )
 
 
@@ -792,7 +827,16 @@ def check_pagination_series(ctx: AuditContext) -> None:
         ctx.skip("UNLINKED_PAGINATION_SERIES", 'no rel="next" column in Internal:All')
         return
 
-    hop_cap = ctx.thresholds.get("redirect_hop_cap", 20)
+    # next_map is a functional graph — every key has at most one outgoing edge —
+    # so a walk from any start either terminates or re-enters a cycle within at
+    # most len(next_map) hops (there are no more distinct nodes than that to
+    # revisit). The configured redirect_hop_cap exists to bound *redirect*
+    # chains, which fan out across the whole site; reusing it verbatim here
+    # let a 21-page rel="next" cycle outrun a 20-hop default and read as clean
+    # (issue #204). Raising the effective cap to the graph's own size removes
+    # that false floor without weakening the cap for genuinely pathological
+    # inputs — it can only ever grow to match how many series pages exist.
+    hop_cap = max(ctx.thresholds.get("redirect_hop_cap", 20), len(next_map))
     has_predecessor = set(next_map.values())
     reported: set[str] = set()
 
@@ -1206,7 +1250,14 @@ def check_redirect_chains(ctx: AuditContext) -> None:
     final = find_column(df, ["Final Address", "Final URL", "Final URI"])
     loop = find_column(df, ["Loop", "Redirect Loop", "Chain Loop"])
     if not addr:
-        ctx.skip("REDIRECT_CHAIN", "Redirect Chains report has no address column")
+        # A present-but-unusable native report shares nothing REDIRECT_LOOP could stand
+        # on either — its verdict comes from the same per-row address the chain check
+        # just found missing, not from a separate source. Skipping only REDIRECT_CHAIN
+        # here left REDIRECT_LOOP unrecorded, which aggregate.py then classified as a
+        # silent clean pass over a loop nobody evaluated (issue #350).
+        reason = "Redirect Chains report has no address column"
+        ctx.skip("REDIRECT_CHAIN", reason)
+        ctx.skip("REDIRECT_LOOP", reason)
         return
     for _, row in df.iterrows():
         url = normalize_value(row.get(addr))
