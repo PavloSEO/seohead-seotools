@@ -167,9 +167,11 @@ def test_ambiguous_product_scopes_are_omitted_not_guessed():
     # regression control: neither a page-wide Microdata nor text fallback may
     # lend the first card's values to the target.
     html = """<div itemscope itemtype="https://schema.org/Product">
-      <span itemprop="name">A</span><span>20 USD, 4.0/5</span></div>
+      <span itemprop="name">A</span><meta itemprop="price" content="20">
+      <meta itemprop="ratingValue" content="4.0"><span>20 USD, 4.0/5</span></div>
     <div itemscope itemtype="https://schema.org/Product">
-      <span itemprop="name">B</span><span>99 USD, 4.9/5</span></div>"""
+      <span itemprop="name">B</span><meta itemprop="price" content="99">
+      <meta itemprop="ratingValue" content="4.9"><span>99 USD, 4.9/5</span></div>"""
     f = page_facts.extract(html, "https://example.com/p")
     assert f["price"] is None
     assert f["rating"] is None
