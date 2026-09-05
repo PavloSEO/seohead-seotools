@@ -473,6 +473,38 @@ def test_concurrency_is_never_configured_below_one(bad_concurrency):
     assert t.concurrency == 1
 
 
+# --- min_delay/max_delay stay consistent after construction (#150) ---------
+
+
+def test_raising_min_delay_above_max_delay_raises_max_delay_too():
+    t = Throttle(min_delay=0.5, max_delay=5.0)
+    t.min_delay = 20.0  # a robots.txt Crawl-delay wider than the crawl's own ceiling
+    assert t.max_delay >= 20.0
+
+
+def test_delay_never_sinks_below_min_delay_once_inverted_by_a_late_mutation():
+    """Not just __init__: min_delay can be raised well after construction (a
+    robots.txt Crawl-delay is only known once robots.txt is fetched), the way
+    ``spider.py`` raises it once the delay itself has already been pushed to
+    match (mirroring the site's own request). The invariant must hold through
+    every mutator from that point on, including the ones (record_timeout,
+    record_server_error) that are supposed to widen the delay further, not
+    let it collapse back under a stale ceiling."""
+    t = Throttle(min_delay=0.5, max_delay=5.0, adaptive=True)
+    t.min_delay = 100.0
+    t.delay = max(t.delay, t.min_delay)
+    assert t.delay >= t.min_delay
+
+    t.record_response(0.01, ok=True)
+    assert t.delay >= t.min_delay
+
+    t.record_timeout()
+    assert t.delay >= t.min_delay
+
+    t.record_server_error(503)
+    assert t.delay >= t.min_delay
+
+
 # --- composing with everything main gained after this branch was cut -------
 #
 # The concurrency branch predates resumable crawls, the wall-clock budget, and

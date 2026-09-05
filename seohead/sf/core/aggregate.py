@@ -78,7 +78,12 @@ def _withhold_unlinked_findings(ctx: AuditContext, issues: list[Issue]) -> list[
     if not withheld:
         return issues
     for check_id in sorted(withheld):
-        ctx.skip(
+        # retract, not skip: the check has already fired, and skip refuses a
+        # fired check by design. Withholding is the one legitimate move from
+        # fired to skipped, and it has to be a single operation or the issues
+        # are dropped while the skip is silently refused -- the check vanishing
+        # from both buckets, which is exactly what this branch fixes in #136.
+        ctx.retract(
             check_id,
             "crawl is partial: an 'unlinked' finding cannot be proven when the "
             "crawl did not reach every URL",

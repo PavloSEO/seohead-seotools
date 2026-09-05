@@ -1145,3 +1145,58 @@ def test_hreflang_quality_checks_skip_without_export(tmp_path):
     for check_id in _HREFLANG_QUALITY_CHECKS:
         assert check_id in skipped_ids
         assert check_id not in fired_ids
+
+
+def test_a_check_fired_from_one_export_and_declared_skipped_by_a_sibling_export_is_not_double_counted(
+    tmp_path,
+):
+    """Issue #136: BROKEN_EXTERNAL_LINK is the declared ``external_check`` for both
+    inlinks_4xx and inlinks_5xx (seohead/sf/core/inlinks.py's INLINK_SOURCES). With
+    only inlinks_5xx present and carrying one external 5xx link, the missing
+    inlinks_4xx export declares BROKEN_EXTERNAL_LINK skipped while inlinks_5xx fires
+    it — the same check_id in both buckets, which must collapse to "fired", not be
+    counted in both.
+    """
+    d = tmp_path / "exports"
+    d.mkdir()
+    with open(d / "internal_all.csv", "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS[:8])  # Address .. H1-1 is enough for one page
+        w.writerow(
+            [
+                "https://example.com/",
+                "text/html",
+                "200",
+                "OK",
+                "Indexable",
+                TITLE,
+                DESC,
+                "H",
+            ]
+        )
+    with open(
+        d / "response_codes_server_error_(5xx)_inlinks.csv", "w", encoding="utf-8-sig", newline=""
+    ) as fh:
+        w = csv.writer(fh)
+        w.writerow(["Source", "Destination", "Anchor Text", "Status Code", "Follow"])
+        w.writerow(
+            [
+                "https://example.com/",
+                "https://external-host.example/broken",
+                "link",
+                "500",
+                "true",
+            ]
+        )
+    # Deliberately no inlinks_4xx, no inlinks_3xx, no all_inlinks export.
+
+    res = run_audit(input_mode="parse-exports", exports_dir=str(d), log=lambda m: None)
+
+    fired_ids = {i.check for i in res.issues}
+    skipped_ids = {s.id for s in res.skipped}
+    assert "BROKEN_EXTERNAL_LINK" in fired_ids
+    assert "BROKEN_EXTERNAL_LINK" not in skipped_ids
+
+    cc = res.summary["check_coverage"]
+    assert cc["checks_fired"] + cc["checks_skipped"] + cc["checks_silent"] == cc["checks_total"]
+    assert len(res.skipped) == cc["checks_skipped"]

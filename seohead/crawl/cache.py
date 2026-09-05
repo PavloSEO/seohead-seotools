@@ -50,10 +50,14 @@ audit" into a silent report of last week's site. This module refuses that defaul
   (``PageRecord.cache_status == "hit"``) and the run as a whole carries ``cache.mode: replay``
   in its manifest, because "the site is fine" and "the site was fine last time we looked" are
   different claims and a report must not blur them.
-- ``invalidate=True`` is the explicit-invalidation escape hatch: every lookup is forced to miss
-  (a genuine live measurement happens) while stores still happen, refreshing the cache for next
-  time. This is a deliberate hard refresh, distinct from ``mode="off"``, which disables the
-  cache outright — reads and writes both.
+- ``invalidate=True`` is the explicit-invalidation escape hatch: every lookup in ``mode="live"``
+  is forced to miss (a genuine live measurement happens) while stores still happen, refreshing
+  the cache for next time. This is a deliberate hard refresh, distinct from ``mode="off"``,
+  which disables the cache outright — reads and writes both. It is rejected in combination with
+  ``mode="replay"`` (``seohead.crawl.settings.validate``), rather than silently honoured or
+  silently dropped: replay's own guarantee is that it never touches the network for an entry
+  already on disk, which is exactly what invalidate exists to override, so the two settings
+  cannot both mean what they say at once.
 
 **Storage and concurrency.** Entries are plain JSON, one file per (URL, Vary-selected header
 values) pair, written to a temp file and then ``os.replace``'d into place — a reader never

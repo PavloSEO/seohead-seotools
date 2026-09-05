@@ -169,6 +169,14 @@ def test_cache_mode_and_invalidate_are_results_affecting():
     assert "cache.invalidate" in cfg.RESULTS_AFFECTING
 
 
+def test_cache_invalidate_is_refused_with_replay_mode():
+    """Issue #137: replay's own guarantee ("never touch the network for an entry
+    already on disk") and invalidate's ("force every lookup to miss") cannot both
+    hold, so the combination is refused here rather than one silently winning."""
+    with pytest.raises(cfg.ConfigError, match=r"cache\.invalidate"):
+        cfg.load(overrides={"cache.mode": "replay", "cache.invalidate": True})
+
+
 def test_cache_mode_is_configurable_through_a_file(tmp_path):
     path = tmp_path / "crawl.json"
     path.write_text(json.dumps({"cache": {"mode": "replay"}}))

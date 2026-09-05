@@ -3,7 +3,7 @@
 import datetime as dt
 
 from seohead.recon import backlinks, cdn, domain, security, tech
-from seohead.recon.net import normalize_domain, normalize_url
+from seohead.recon.net import normalize_domain, normalize_url, registrable_domain
 
 # ── Input normalization ──────────────────────────────────────────────────────
 
@@ -26,6 +26,41 @@ def test_normalize_domain_converts_idn_to_punycode():
 def test_normalize_domain_rejects_non_domains():
     for raw in ("", "   ", "localhost", "just-a-string", "http://[::1]/", "1.2.3"):
         assert normalize_domain(raw) == ""
+
+
+# ── registrable_domain: multi-tenant hosting suffixes (issue #144) ──────────
+
+
+def test_registrable_domain_keeps_multi_tenant_platform_customers_apart():
+    """github.io, pages.dev, herokuapp.com, vercel.app and myshopify.com are shared
+    suffixes: the label directly under them is a customer, not a subdomain of one
+    site, so two different customers must never collapse to the same value."""
+    pairs = [
+        ("alice.github.io", "bob.github.io"),
+        ("myproject.pages.dev", "attacker.pages.dev"),
+        ("shop.herokuapp.com", "phishing.herokuapp.com"),
+        ("client.vercel.app", "other-tenant.vercel.app"),
+        ("mystore.myshopify.com", "someone-elses-store.myshopify.com"),
+    ]
+    for start_host, other_host in pairs:
+        assert registrable_domain(start_host) != registrable_domain(other_host)
+        assert registrable_domain(start_host) == start_host
+        assert registrable_domain(other_host) == other_host
+
+
+def test_registrable_domain_still_folds_a_real_subdomain_of_a_platform_customer():
+    # A deeper subdomain of alice's own site is still alice's site, not a new tenant.
+    assert registrable_domain("www.alice.github.io") == "alice.github.io"
+
+
+def test_registrable_domain_handles_a_three_label_multi_tenant_suffix():
+    assert registrable_domain("mybucket.s3.amazonaws.com") == "mybucket.s3.amazonaws.com"
+
+
+def test_registrable_domain_is_unaffected_for_ordinary_domains():
+    # No regression on the cases the pre-existing compound-suffix table already covered.
+    assert registrable_domain("www.example.com") == "example.com"
+    assert registrable_domain("www.example.co.uk") == "example.co.uk"
 
 
 def test_normalize_url_adds_scheme_and_rejects_other_protocols():

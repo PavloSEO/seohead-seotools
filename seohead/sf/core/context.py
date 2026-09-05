@@ -44,6 +44,7 @@ class AuditContext:
         self.groups: list[Group] = []
         self.skipped: list[SkippedCheck] = []
         self._skipped_ids: set[str] = set()
+        self._fired_ids: set[str] = set()
         self._group_seq: int = 0
 
         self.internal_df: pd.DataFrame = exports.get("internal_all")
@@ -167,6 +168,16 @@ class AuditContext:
             **kw,
         )
         self.issues.append(issue)
+        # A check with more than one evidence source (e.g. BROKEN_EXTERNAL_LINK,
+        # declared for both inlinks_4xx and inlinks_5xx) can have one source
+        # missing and declare a skip before a sibling source later fires it, or
+        # the reverse. Either way, a check that ever fires has evidence and is
+        # no longer "skipped" -- retract any earlier skip so ctx.skipped and
+        # ctx.issues can never name the same check_id at once.
+        self._fired_ids.add(check_id)
+        if check_id in self._skipped_ids:
+            self._skipped_ids.discard(check_id)
+            self.skipped = [s for s in self.skipped if s.id != check_id]
         return issue
 
     def add_group(self, check_id: str, value: str | None, urls: list[str]) -> Group:
@@ -195,8 +206,27 @@ class AuditContext:
             if gone:
                 self.skip(check_id, "missing export: " + ", ".join(gone))
 
+    def retract(self, check_id: str, reason: str) -> None:
+        """Withdraw a check's findings and record why it cannot be answered.
+
+        ``skip`` refuses a check that already fired, and rightly: a check with
+        evidence from one source is not "skipped" because another source was
+        missing. Withholding is the different case -- the check did produce
+        findings and the run then turned out unable to support them, which the
+        partial-crawl rule for "nothing links here" does (see
+        ``aggregate._withhold_unlinked_findings``). Moving a check between the
+        buckets has to be one operation, or the issues are dropped while the
+        skip is silently refused and the check vanishes from both.
+        """
+        self.issues = [i for i in self.issues if i.check != check_id]
+        self._fired_ids.discard(check_id)
+        self.skip(check_id, reason)
+
     def skip(self, check_id: str, reason: str) -> None:
-        if check_id in self._skipped_ids:
+        # A check that already fired has evidence; declaring it skipped too
+        # would let one check occupy both buckets (see the symmetric guard
+        # in ``add``).
+        if check_id in self._fired_ids or check_id in self._skipped_ids:
             return
         self._skipped_ids.add(check_id)
         self.skipped.append(SkippedCheck(id=check_id, reason=reason))
