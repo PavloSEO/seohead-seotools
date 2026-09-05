@@ -963,6 +963,19 @@ def test_wayback_history_empty_array_is_not_an_error():
     }
 
 
+def test_wayback_history_recognized_header_without_rows_is_not_an_error():
+    """A valid CDX header can legitimately be the whole non-empty response."""
+    result = wayback.history(
+        "https://example.com/never-archived", fetcher=lambda url: json.dumps([_CDX_HEADER])
+    )
+    assert result == {
+        "ok": True,
+        "url": "https://example.com/never-archived",
+        "count": 0,
+        "snapshots": [],
+    }
+
+
 def test_wayback_history_json_object_error_payload_is_reported_not_silent():
     """A synthetically injected object error payload must not read as zero snapshots."""
     body = json.dumps({"error": "synthetic provider failure"})
@@ -975,6 +988,14 @@ def test_wayback_history_json_object_error_payload_is_reported_not_silent():
 def test_wayback_history_malformed_non_empty_array_is_reported_not_silent():
     """A one-element array whose entry is not a header row must not read as zero snapshots."""
     body = json.dumps([{"error": "synthetic provider failure"}])
+    result = wayback.history("https://example.com/", fetcher=lambda url: body)
+    assert result["ok"] is False
+    assert "count" not in result
+
+
+def test_wayback_history_error_shaped_string_array_is_reported_not_silent():
+    """A list of strings is only a header when it names the required CDX fields."""
+    body = json.dumps([["error", "synthetic provider failure"]])
     result = wayback.history("https://example.com/", fetcher=lambda url: body)
     assert result["ok"] is False
     assert "count" not in result
