@@ -64,6 +64,126 @@ def test_duplicate_check_fingerprints_flag(monkeypatch, capsys):
     assert out["echo"]["with_fingerprints"] is True
 
 
+@pytest.mark.parametrize(
+    ("command", "handler_name", "payload", "expected"),
+    [
+        ("log-scan", "log_scan", {"run": "json-run"}, {"run": "json-run"}),
+        (
+            "compare-crawls",
+            "compare_crawls",
+            {"before": {"run": "before"}, "after": {"run": "after"}},
+            {"before": {"run": "before"}, "after": {"run": "after"}},
+        ),
+    ],
+)
+def test_json_input_reaches_handlers_with_path_flags(
+    monkeypatch, capsys, command, handler_name, payload, expected
+):
+    """#218: path flags are convenient overrides, not parser requirements for JSON input."""
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setitem(handlers.HANDLERS, handler_name, lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main([command, "--input", json.dumps(payload)])
+    assert rc == 0
+    echo = json.loads(capsys.readouterr().out)["echo"]
+    assert echo == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "handler_name", "payload", "flag_args", "fields"),
+    [
+        (
+            "sitemap-crawl",
+            "sitemap_crawl",
+            {"concurrency": 3},
+            ["--url", "https://example.com", "--concurrency", "0"],
+            ("concurrency",),
+        ),
+        (
+            "duplicate-check",
+            "duplicate_check",
+            {"threshold": 0.9},
+            ["--threshold", "0"],
+            ("threshold",),
+        ),
+        (
+            "site-audit",
+            "site_audit",
+            {"limit": 25, "concurrency": 5},
+            ["--url", "https://example.com", "--limit", "0", "--concurrency", "0"],
+            ("limit", "concurrency"),
+        ),
+        (
+            "regions-check",
+            "regions_check",
+            {"limit": 12},
+            ["--url", "https://example.com", "--limit", "0"],
+            ("limit",),
+        ),
+        (
+            "backlinks-check",
+            "backlinks_check",
+            {"concurrency": 3},
+            ["--target", "example.com", "--donors", "https://donor.example", "--concurrency", "0"],
+            ("concurrency",),
+        ),
+        (
+            "keywords-expand",
+            "keywords_expand",
+            {"limit": 300},
+            ["--phrase", "floor heating", "--limit", "0"],
+            ("limit",),
+        ),
+        (
+            "keywords-exact",
+            "keywords_exact",
+            {"region": 225},
+            ["--keywords", "floor heating", "--region", "0"],
+            ("region",),
+        ),
+        (
+            "serp-fetch",
+            "serp_fetch",
+            {"top": 10},
+            ["--query", "floor heating", "--top", "0"],
+            ("top",),
+        ),
+        (
+            "google-keywords",
+            "google_keywords",
+            {"location_code": 2840, "limit": 100},
+            ["--seed", "floor heating", "--location-code", "0", "--limit", "0"],
+            ("location_code", "limit"),
+        ),
+        (
+            "google-serp",
+            "google_serp",
+            {"location_code": 2840, "depth": 10},
+            ["--query", "floor heating", "--location-code", "0", "--depth", "0"],
+            ("location_code", "depth"),
+        ),
+    ],
+)
+def test_explicit_zero_numeric_flags_override_json(
+    monkeypatch, capsys, command, handler_name, payload, flag_args, fields
+):
+    """#219: zero is an explicit value, never a signal to keep JSON/default input."""
+    monkeypatch.setattr(cli.sys, "stdin", _NeverReadStdin())
+    monkeypatch.setitem(handlers.HANDLERS, handler_name, lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main([command, "--input", json.dumps(payload), *flag_args])
+    assert rc == 0
+    echo = json.loads(capsys.readouterr().out)["echo"]
+    assert {field: echo[field] for field in fields} == {field: 0 for field in fields}
+
+
+def test_path_flags_override_json_input(monkeypatch, capsys):
+    """#218: direct flag forms remain supported when JSON carries a stale path."""
+    monkeypatch.setattr(cli.sys, "stdin", _NeverReadStdin())
+    monkeypatch.setitem(handlers.HANDLERS, "log_scan", lambda **kw: {"ok": True, "echo": kw})
+    rc = cli.main(["log-scan", "--input", '{"run":"json-run"}', "--run", "flag-run"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["echo"]["run"] == "flag-run"
+
+
 # Issue #156: these flags each identify a command's whole input just as --url does, but were
 # missing from SOURCE_FLAGS, so a per-line loop over any one of them silently stopped after its
 # first iteration (the exact failure the comment above SOURCE_FLAGS warns about).

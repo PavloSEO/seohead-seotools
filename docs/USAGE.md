@@ -80,7 +80,11 @@ onto the handler's arguments. Frequent parameters are duplicated as flags:
 ```bash
 seohead duplicate-check --input '{"items":[{"id":"a","text":"..."},{"id":"b","text":"..."}],"threshold":0.9}'
 echo '{"url": "https://example.com"}' | seohead parse          # stdin JSON also works
+seohead log-scan --input '{"run":"./run"}'
+seohead compare-crawls --input '{"before":"old-audit.json","after":"new-audit.json"}'
 ```
+
+When both forms name the same field, an explicit flag wins over `--input`.
 
 Output is always JSON on stdout. Exit codes:
 
