@@ -28,7 +28,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 from seohead.crawl import state as crawl_state
 from seohead.crawl.cache import ResponseCache
@@ -186,15 +186,16 @@ def _canonical_key(url: str) -> str:
 
 
 def _strip_fragment(url: str) -> str:
-    """The request target for a frontier entry: a fragment selects nothing on
-    the server, so keeping it on the queued/fetched URL made a fragment-only
-    variant of a page its own PageRecord (#194) even though ``_canonical_key``
-    above already treats the two as one identity for de-duplication. Unlike
-    that helper, the path is left exactly as given — only the fragment is
-    dropped — since this value is what actually gets requested, not merely
-    compared."""
-    parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    """The request target for a frontier entry.
+
+    A fragment selects nothing on the server, so keeping it on the queued and
+    fetched URL made a fragment-only variant of a page its own PageRecord
+    (#194) even though ``_canonical_key`` above already treats the two as one
+    identity for de-duplication. Unlike that helper the path is left exactly as
+    given -- this value is what actually gets requested, not merely compared --
+    which is precisely what ``urldefrag`` does, so it does the work.
+    """
+    return urldefrag(url).url
 
 
 def _same_host(url: str, host: str) -> bool:
