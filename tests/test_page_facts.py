@@ -163,11 +163,23 @@ def test_related_first_still_reads_the_targets_own_price_and_rating():
 
 def test_ambiguous_product_scopes_are_omitted_not_guessed():
     # Two competing Product scopes with no h1 to single one out: no fact can
-    # be attributed with confidence, so both price and rating are omitted
-    # rather than reading the first one found in document order.
+    # be attributed with confidence. The visible-text values make this the
+    # regression control: neither a page-wide Microdata nor text fallback may
+    # lend the first card's values to the target.
     html = """<div itemscope itemtype="https://schema.org/Product">
-      <span itemprop="name">A</span><meta itemprop="price" content="20"></div>
+      <span itemprop="name">A</span><span>20 USD, 4.0/5</span></div>
     <div itemscope itemtype="https://schema.org/Product">
-      <span itemprop="name">B</span><meta itemprop="price" content="99"></div>"""
+      <span itemprop="name">B</span><span>99 USD, 4.9/5</span></div>"""
     f = page_facts.extract(html, "https://example.com/p")
     assert f["price"] is None
+    assert f["rating"] is None
+
+
+def test_single_product_visible_text_keeps_heuristics():
+    """The ambiguity guard must not suppress ordinary one-Product text evidence."""
+    html = """<div itemscope itemtype="https://schema.org/Product">
+      <span>20 USD, 4.0/5</span></div>"""
+    f = page_facts.extract(html, "https://example.com/p")
+    assert f["price"]["value"] == 20.0
+    assert f["price"]["source"] == "text"
+    assert f["rating"] == {"value": "4.0", "count": None, "heuristic": True, "source": "text"}

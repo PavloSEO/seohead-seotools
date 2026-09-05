@@ -317,11 +317,16 @@ def _price(soup: BeautifulSoup, text: str, scope: Any) -> dict[str, Any] | None:
     related-item card elsewhere on the page is never mistaken for the target's
     own price. See ``_primary_product_scope``.
     """
+    if scope is _AMBIGUOUS_SCOPE:
+        # The visible-text fallback is page-wide too. With competing Product
+        # scopes, it has no safer ownership signal than the Microdata lookup,
+        # so returning a related card's price as a target fact would only turn
+        # an honest unknown into a different kind of guess.
+        return None
     declared = currency = None
-    if scope is not _AMBIGUOUS_SCOPE:
-        source = scope if scope is not None else soup
-        declared = _microdata_prop(source, "price")
-        currency = _microdata_prop(source, "priceCurrency")
+    source = scope if scope is not None else soup
+    declared = _microdata_prop(source, "price")
+    currency = _microdata_prop(source, "priceCurrency")
     if declared:
         # Microdata states the currency in its own property, so the value is
         # usually a bare number: parse the amount when no marker accompanies it.
@@ -419,12 +424,11 @@ def _rating(soup: BeautifulSoup, text: str, scope: Any) -> dict[str, Any] | None
     ``scope`` restricts the microdata read to the primary Product entity, for
     the same reason as ``_price``.
     """
-    val = None
-    if scope is not _AMBIGUOUS_SCOPE:
-        source = scope if scope is not None else soup
-        val = _microdata_prop(source, "ratingValue")
+    if scope is _AMBIGUOUS_SCOPE:
+        return None
+    source = scope if scope is not None else soup
+    val = _microdata_prop(source, "ratingValue")
     if val:
-        source = scope if scope is not None else soup
         return {
             "value": val,
             "count": _microdata_prop(source, "reviewCount")
