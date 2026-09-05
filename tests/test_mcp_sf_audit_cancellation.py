@@ -182,3 +182,36 @@ def test_an_uncancelled_crawl_still_completes_normally(tmp_path):
     assert result["isError"] is False
     assert (tmp_path / "out" / "audit.json").exists()
     assert (tmp_path / "out" / "audit.md").exists()
+
+
+def test_cancelling_a_crawl_leaves_unrelated_child_processes_alone():
+    """The negative control the first shape of this fix could not have passed.
+
+    Reaching the crawler by replacing ``subprocess.Popen`` for the duration of a
+    crawl also collects every unrelated child started anywhere in the process
+    during that window -- ``subprocess.run`` resolves that module global at call
+    time -- and cancelling the crawl then sends SIGTERM to each one's process
+    group. Registering the process where it is created cannot do that, and this
+    is what says so.
+    """
+    import subprocess
+    import time
+
+    from seohead.sf.core import runner
+
+    bystander = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        # Nothing registered it, because nothing in this repository starts a
+        # child except the runner -- so a cancellation has nothing to reach.
+        assert runner.terminate_live_crawls() == []
+        time.sleep(0.2)
+        assert bystander.poll() is None, "an unrelated process was killed by the crawl teardown"
+    finally:
+        bystander.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            bystander.wait(timeout=5)

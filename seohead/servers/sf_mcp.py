@@ -12,16 +12,14 @@ live-rechecks, remain opt-in.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import signal
-import subprocess
 import threading
 from typing import Any
 
 from seohead.sf.core.audit import run_audit
 from seohead.sf.core.loader import EXPORT_MATCHERS, discover_exports
+from seohead.sf.core.runner import terminate_live_crawls
 from seohead.sf.reporters import write_json, write_markdown
 
 try:
@@ -44,72 +42,22 @@ VALID_PROFILES = {"lite", "full", "custom"}
 # Making the tool an ``async def`` that awaits ``anyio.to_thread.run_sync``
 # fixes the first half for free: the event loop is idle while the crawl runs,
 # so ``sf_list_exports`` and friends stay responsive. The second half --
-# actually stopping the child once the request is cancelled -- needs a way to
-# reach the process group `runner.py` started, without this file reaching into
-# that module's internals (out of territory here; #9 already owns its own
-# timeout-driven cleanup and is left untouched). ``_tracking_child_processes``
-# borrows the same SIGTERM-then-SIGKILL shape as ``runner._terminate_tree`` but
-# gets there by tracking every ``subprocess.Popen`` created while one crawl is
-# in flight, which is the only hook available at this layer.
+# actually stopping the child once the request is cancelled -- is the runner's
+# to answer, because the runner is where the process is created. It publishes
+# the crawlers it currently has running and stops them through the same
+# ``_terminate_tree`` its own timeout uses, so there is one way to kill a crawl
+# rather than two that must be kept in step.
 #
-# ``_RUN_LOCK`` serializes live crawls one at a time: the tracking below is
-# process-global, so two crawls racing inside it at once could kill each
-# other's child. Non-crawl sf_* tools (sf_list_exports, sf_audit_summary, ...)
-# never touch this lock and are unaffected.
+# Replacing ``subprocess.Popen`` process-wide for the duration of a crawl would
+# also have reached it, and would have reached far more: ``subprocess.run``
+# resolves that module global at call time, so every unrelated child started
+# anywhere in the process during the crawl would have been collected too, and
+# cancelling the crawl would have sent SIGTERM to its process group.
+#
+# ``_RUN_LOCK`` serializes live crawls one at a time. Non-crawl sf_* tools
+# (sf_list_exports, sf_audit_summary, ...) never touch it and stay answerable
+# while a crawl is running.
 _RUN_LOCK = threading.Lock()
-_active_procs: set[subprocess.Popen] = set()
-_active_procs_lock = threading.Lock()
-_real_popen = subprocess.Popen
-
-
-class _TrackedPopen(_real_popen):  # type: ignore[misc, valid-type]
-    """``subprocess.Popen`` that registers itself so a cancelled request can reach it."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        with _active_procs_lock:
-            _active_procs.add(self)
-
-
-@contextlib.contextmanager
-def _tracking_child_processes():
-    subprocess.Popen = _TrackedPopen  # type: ignore[misc]
-    try:
-        yield
-    finally:
-        subprocess.Popen = _real_popen  # type: ignore[misc]
-
-
-def _kill_tracked_processes() -> None:
-    """Stop every process group started by the crawl this request is running.
-
-    Mirrors ``runner._terminate_tree``'s SIGTERM-then-SIGKILL escalation, just
-    reached from the MCP request layer instead of the runner's own timeout.
-    """
-    with _active_procs_lock:
-        procs = list(_active_procs)
-        _active_procs.clear()
-    for proc in procs:
-        if proc.poll() is not None:
-            continue
-        with contextlib.suppress(OSError, ProcessLookupError):
-            if os.name == "nt":
-                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], check=False)
-            else:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    for proc in procs:
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=2)
-    for proc in procs:
-        if proc.poll() is not None:
-            continue
-        with contextlib.suppress(OSError, ProcessLookupError):
-            if os.name == "nt":
-                proc.kill()
-            else:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=5)
 
 
 def _do_run(
@@ -186,13 +134,13 @@ async def _do_run_cancellable(
     import anyio
 
     def blocking() -> dict[str, Any]:
-        with _RUN_LOCK, _tracking_child_processes():
+        with _RUN_LOCK:
             return _do_run(mode, source, profile=profile, out=out, config=config, sitemap=sitemap)
 
     try:
         return await anyio.to_thread.run_sync(blocking, abandon_on_cancel=True)
     except anyio.get_cancelled_exc_class():
-        _kill_tracked_processes()
+        terminate_live_crawls()
         raise
 
 
