@@ -29,12 +29,19 @@ from typing import Any
 # The largest crawl this tool will attempt, and the reason for a number rather than
 # "no limit". Both result.pages and result.links are held for the whole run --
 # links.jsonl is a resume aid, not a memory bound, since spider.py appends every edge
-# to the in-memory list as well. Measured on this repository's own dataclasses:
-# 293 bytes per LinkEdge, 1983 bytes per PageRecord. That gives
+# to the in-memory list as well.
 #
-#   10 000 URLs x 150 links/page -> 0.43 GiB
-#   50 000 URLs x  60 links/page -> 0.91 GiB
-#   50 000 URLs x 150 links/page -> 2.14 GiB
+# The 383-byte LinkEdge and 2 400-byte PageRecord figures came from tracemalloc
+# fixtures over 40 000 edges and 8 000 records with distinct URL/text strings;
+# summing sys.getsizeof over a shared object graph roughly doubles them. The paired
+# iframe-head/combined-record fixture measures a 56-byte empty-hreflang-list
+# increment; the same 46-to-47-field fixture measures no further allocation for
+# body_unavailable's default empty string. Field lengths affect absolute memory,
+# so 2 456 bytes is an approximate combined PageRecord estimate; the rounded totals are
+#
+#   10 000 URLs x 150 links/page -> 0.56 GiB
+#   50 000 URLs x  60 links/page -> 1.18 GiB
+#   50 000 URLs x 150 links/page -> 2.79 GiB
 #
 # so the honest ceiling depends on how densely the site links, which no constant can
 # know. 50 000 is where a full crawl stops being the right instrument anyway; past it

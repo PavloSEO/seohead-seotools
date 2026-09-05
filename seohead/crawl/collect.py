@@ -65,6 +65,12 @@ class PageRecord:
     og_image: str = ""
     word_count: int = 0
     text_ratio: float | None = None
+    # <iframe> elements sitting inside the resolved content area, and how many
+    # of those the site itself serves (#360). A framed document is not part of
+    # this one's DOM, so word_count above measures the shell around the content;
+    # these two say so instead of leaving the page to be reported as thin.
+    content_frames: int = 0
+    content_frames_same_origin: int = 0
     crawl_depth: int = 0
     # Response-header/markup evidence for the static Lighthouse checks in
     # seohead.sf.core.rules (charset/doctype/viewport/uses-text-compression) —
@@ -84,6 +90,18 @@ class PageRecord:
     canonical_outside_head: bool | None = None
     directives_outside_head: bool | None = None
     hreflang_outside_head: bool | None = None
+    # The alternates themselves, as the document wrote them (#357). The boolean
+    # above answers where the tags sat; this answers what they said, which is the
+    # only authoritative statement a site makes about which of its pages are the
+    # same page in another language.
+    #
+    # Measured in a dedicated 8 000-record hreflang fixture: a page carrying
+    # twelve alternates costs 6 392 bytes against 2 456 with none, so 3 936
+    # bytes for the declaration set. Absolute totals vary with retained field
+    # lengths; across a 50 000-page twelve-language crawl that fixture adds
+    # 188 MiB. The scope-narrowing advice above MAX_URLS_CEILING applies here
+    # too; this is not the field that decides the ceiling.
+    hreflang: list[dict[str, str]] = field(default_factory=list)
     head_count: int = 0
     body_count: int = 0
     head_not_first: bool = False
@@ -183,6 +201,9 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
     og = parsed.get("og") or {}
     links = parsed.get("links") or []
     position = parsed.get("position") or {}
+    # Only the frames inside the content area: an iframe in a footer is a widget,
+    # an iframe where the copy should be is the page's content (#360).
+    framed = [f for f in (parsed.get("frames") or []) if f.get("in_content_area")]
     return {
         "title": _text_of(parsed.get("title")),
         "meta_description": _text_of(parsed.get("meta_description")),
@@ -198,6 +219,8 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "og_description": _text_of(og.get("description")),
         "og_image": _text_of(og.get("image")),
         "word_count": int(parsed.get("word_count") or 0),
+        "content_frames": len(framed),
+        "content_frames_same_origin": len([f for f in framed if f.get("same_origin")]),
         "outlinks": len(links),
         "external_outlinks": len([link for link in links if link.get("external")]),
         "charset": _text_of(parsed.get("charset")),
@@ -208,6 +231,7 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "canonical_outside_head": position.get("canonical_outside_head"),
         "directives_outside_head": position.get("directives_outside_head"),
         "hreflang_outside_head": position.get("hreflang_outside_head"),
+        "hreflang": list(parsed.get("hreflang") or []),
         "head_count": int(position.get("head_count") or 0),
         "body_count": int(position.get("body_count") or 0),
         "head_not_first": bool(position.get("head_not_first")),
@@ -263,6 +287,11 @@ def _apply_body(
     if not (record.is_html and body):
         return None
     parsed = parse_html(body, url, parse_options)
+    # A successful parse replaces any earlier body-level limitation. This
+    # matters when rendering supplies usable HTML after the static fetch was
+    # too large to parse: the static transport error remains, but the fields
+    # below are now measured rather than unavailable.
+    record.body_unavailable = ""
     # Transient, never persisted to pages.jsonl or PageRecord: the rendering pre-flight gate
     # (#18) needs the start page's raw HTML to check for an empty SPA shell, and this is the
     # one place that HTML is already in memory.
