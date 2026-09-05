@@ -38,7 +38,13 @@ def _report(html: str) -> list[str]:
             "blocks_invalid": found - len(blocks),
             "parse_errors": errors,
             "entities": [],
-            "graph": {"nodes": 0, "is_graph": False, "islands": [], "with_id": 0},
+            "graph": {
+                "nodes": 0,
+                "is_graph": False,
+                "islands": [],
+                "with_id": 0,
+                "top_level": 0,
+            },
             "rich_results": [],
             "other_markup": {"microdata": False, "rdfa": False},
         }
