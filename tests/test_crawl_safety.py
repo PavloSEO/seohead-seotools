@@ -5,7 +5,7 @@ import pytest
 from seohead.crawl.collect import collect_urls, fetch_one
 from seohead.crawl.spider import crawl_site
 from seohead.recon.net import _is_public_address
-from seohead.tools.robots import _rules_for, crawl_delay, parse_robots
+from seohead.tools.robots import _rules_for, crawl_delay, is_allowed, parse_robots
 
 
 class FakeResponse:
@@ -105,6 +105,36 @@ def test_a_token_appearing_mid_string_no_longer_claims_the_agent():
 
 def test_an_unknown_agent_falls_back_to_the_wildcard_group():
     assert _rules_for(parse_robots(ROBOTS), "SomeOtherBot")["disallow"] == ["/private/"]
+
+
+def test_two_groups_for_the_same_agent_combine_instead_of_dropping_the_second():
+    """RFC 9309 2.2.1: every group tied at the most specific match applies together.
+
+    Keeping only the first such group (#237) meant a second, later ``Disallow``
+    for a crawler already named earlier was silently unenforced."""
+    parsed = parse_robots(
+        "User-agent: ExampleBot\nDisallow: /private\n\nUser-agent: ExampleBot\nDisallow: /secret\n"
+    )
+    rules = _rules_for(parsed, "ExampleBot")
+    assert rules["disallow"] == ["/private", "/secret"]
+
+
+def test_combined_groups_still_lose_to_a_more_specific_single_group():
+    parsed = parse_robots(
+        "User-agent: *\nDisallow: /a\n\n"
+        "User-agent: ExampleBot\nDisallow: /b\n\n"
+        "User-agent: ExampleBot\nDisallow: /c\n"
+    )
+    assert _rules_for(parsed, "ExampleBot")["disallow"] == ["/b", "/c"]
+
+
+def test_robots_check_advises_disallow_for_every_repeated_group_path():
+    """The public is_allowed() surface, exercised the way robots-check calls it."""
+    parsed = parse_robots(
+        "User-agent: ExampleBot\nDisallow: /private\n\nUser-agent: ExampleBot\nDisallow: /secret\n"
+    )
+    assert is_allowed(parsed, "/private", "ExampleBot") is False
+    assert is_allowed(parsed, "/secret", "ExampleBot") is False
 
 
 # ── policy in the spider ────────────────────────────────────────────────────

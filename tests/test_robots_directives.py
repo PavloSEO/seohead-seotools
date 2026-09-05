@@ -39,6 +39,17 @@ def test_empty_and_none_inputs():
     assert robots_directives(None, "") == set()
 
 
+def test_a_directive_scoped_to_a_non_google_agent_is_dropped():
+    """#201: a Bingbot/Yandex-only directive must not read as a global one."""
+    assert robots_directives("bingbot: noindex") == set()
+    assert robots_directives("yandex: noindex") == set()
+
+
+def test_a_generic_directive_still_combines_with_a_googlebot_one():
+    tokens = robots_directives("index, googlebot: noindex")
+    assert tokens == {"index", "noindex"}
+
+
 # --- collection -------------------------------------------------------------
 def test_crawler_addressed_tags_are_collected():
     html = (
@@ -56,6 +67,30 @@ def test_unrelated_meta_names_are_not_directives():
     assert parse_html(html, "https://example.com/")["robots_meta"] == []
 
 
+def test_robots_meta_scoped_prefixes_only_the_non_generic_names():
+    """#201: the generic tag's content stays bare; a named one is prefixed the
+    same way an X-Robots-Tag agent scope is, so robots_directives can filter it."""
+    html = (
+        '<html><head><meta name="robots" content="index">'
+        '<meta name="bingbot" content="noindex"></head><body>x</body></html>'
+    )
+    parsed = parse_html(html, "https://example.com/")
+    assert parsed["robots_meta_scoped"] == ["index", "bingbot: noindex"]
+
+
+def test_record_from_parsed_joins_the_scoped_form_not_the_bare_one():
+    """#201's third cause location: collect.py must read robots_meta_scoped, not
+    robots_meta, or the scope computed above never reaches the native-crawl record."""
+    from seohead.crawl.collect import _record_from_parsed
+
+    html = (
+        '<html><head><meta name="robots" content="index">'
+        '<meta name="bingbot" content="noindex"></head><body>x</body></html>'
+    )
+    record = _record_from_parsed(parse_html(html, "https://example.com/"))
+    assert record["meta_robots"] == "index, bingbot: noindex"
+
+
 # --- indexability -----------------------------------------------------------
 def test_indexability_honours_none_and_googlebot():
     def verdict(**kw):
@@ -64,6 +99,18 @@ def test_indexability_honours_none_and_googlebot():
     assert verdict(meta_robots="none") == "Non-Indexable"
     assert verdict(x_robots="googlebot: noindex") == "Non-Indexable"
     assert verdict(meta_robots="index, follow") == "Indexable"
+
+
+def test_a_bing_only_noindex_does_not_make_the_page_non_indexable():
+    """#201: a directive named for Bingbot (meta tag or X-Robots-Tag) is scoped
+    to Bingbot alone -- Google is still explicitly told "index" and the page
+    must stay Indexable for the audit's Google-effective verdict."""
+
+    def verdict(**kw):
+        return _indexability(PageRecord(url="https://e.com/", status_code=200, **kw))[0]
+
+    assert verdict(meta_robots="index, bingbot: noindex") == "Indexable"
+    assert verdict(meta_robots="index", x_robots="bingbot: noindex") == "Indexable"
 
 
 def test_noindex_check_fires_on_none(tmp_path):
