@@ -174,6 +174,37 @@ def test_a_delay_is_not_applied_when_robots_is_not_fetched():
     assert _crawl("ignore").crawl_delay_applied is None
 
 
+def test_a_crawl_delay_above_max_delay_seconds_is_never_clamped_back_below_it():
+    """Issue #150: a Crawl-delay above the crawl's own max_delay_seconds (left at
+    its 60s default here) used to be honoured for exactly one request, then
+    clamped down to max_delay -- below the value robots.txt asked for -- for the
+    rest of the crawl, surviving neither a timeout nor a 5xx that should widen
+    the delay further, never shrink it."""
+
+    def fetcher(url):
+        if url == "https://example.com/robots.txt":
+            return FakeResponse("User-agent: *\nCrawl-delay: 100\n", ct="text/plain")
+        if url == "https://example.com/":
+            return page("/timeout-page", "/error-page", "/normal-page")
+        if url == "https://example.com/timeout-page":
+            raise TimeoutError("simulated read timeout")
+        if url == "https://example.com/error-page":
+            return FakeResponse("", 503)
+        if url == "https://example.com/normal-page":
+            return page()
+        return FakeResponse("", 404)
+
+    result = crawl_site(
+        "https://example.com/",
+        robots_policy="respect",
+        min_delay=0,
+        sleeper=lambda _s: None,
+        fetcher=fetcher,
+    )
+    assert result.crawl_delay_applied == 100.0
+    assert result.effective_delay >= 100.0
+
+
 # ── pinned transport ────────────────────────────────────────────────────────
 
 

@@ -124,7 +124,9 @@ DEFAULTS: dict[str, Any] = {
         # with no entry is still fetched live. See seohead.crawl.cache for the full policy.
         "mode": "off",
         # Force every lookup to miss (a live measurement happens) while still writing the
-        # result back to the cache. A deliberate hard refresh, distinct from mode="off".
+        # result back to the cache. A deliberate hard refresh, distinct from mode="off" -- and
+        # rejected by validate() when mode="replay", since replay's own promise is the opposite
+        # (never touch the network for an entry already on disk).
         "invalidate": False,
     },
     "rendering": {
@@ -282,7 +284,9 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
 DESCRIPTIONS: dict[str, str] = {
     "scope.internal": (
         "Which discovered URLs count as internal: 'host' (conservative) or "
-        "'registrable_domain' (also accepts subdomains)."
+        "'registrable_domain' (also accepts subdomains -- on a shared hosting suffix such as "
+        "github.io or vercel.app, only the audited tenant's own subdomain, never another "
+        "tenant's, per seohead.recon.net.registrable_domain)."
     ),
     "scope.include_patterns": "Regexes; a discovered link must match at least one to be followed.",
     "scope.exclude_patterns": "Regexes; a discovered link matching any of these is not followed.",
@@ -343,7 +347,8 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "cache.invalidate": (
         "Force every cache lookup to miss (a live measurement happens) while still writing the "
-        "result back to the cache. Does not disable the cache; 'cache.mode=off' does that."
+        "result back to the cache. Does not disable the cache; 'cache.mode=off' does that. "
+        "Rejected together with cache.mode='replay', which promises the opposite guarantee."
     ),
     "rendering.mode": (
         "'raw' (static HTML only), 'legacy_fragment' (honour a page's own "
@@ -494,6 +499,17 @@ def validate(config: dict[str, Any]) -> None:
     cache_mode = config["cache"]["mode"]
     if cache_mode not in CACHE_MODES:
         raise ConfigError(f"cache.mode must be one of {CACHE_MODES}, got {cache_mode!r}")
+    # "replay" promises it never touches the network for a URL already on disk;
+    # "invalidate" promises the opposite -- a live measurement on every lookup.
+    # Both are explicit, deliberate settings, so silently letting one win (issue
+    # #137) is worse than refusing the combination outright.
+    if cache_mode == "replay" and config["cache"]["invalidate"]:
+        raise ConfigError(
+            "cache.invalidate cannot be combined with cache.mode='replay': replay promises "
+            "to serve on-disk entries without ever touching the network, which invalidate "
+            "exists to override. Pick one: cache.mode='live' with cache.invalidate=true for "
+            "a forced hard refresh, or drop invalidate to keep replaying from disk."
+        )
     # A pattern that does not compile would otherwise fail mid-crawl, after the
     # site has already been asked for a few hundred pages.
     for key in ("include_patterns", "exclude_patterns"):

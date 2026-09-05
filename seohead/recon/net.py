@@ -373,6 +373,34 @@ def _client(timeout: float):
 # is large and changes; this only has to tell a subdomain from a separate site.
 _COMPOUND_SUFFIXES = frozenset({"com", "net", "org", "co", "gov", "edu", "ac", "spb", "msk"})
 
+# Multi-tenant hosting suffixes where the label directly under the suffix is a
+# customer, not a subdomain of one site -- the shape a full public suffix list
+# would get right and this project deliberately doesn't ship (issue #144). Not
+# a dependency: no PSL package was already in use, and this project's own rule
+# on adding one for a single lookup is to prefer the standard library or a
+# hand-kept table first. Kept short and reviewed whenever a client's audited
+# site turns out to live on a shared suffix not yet listed here -- the ones
+# below are the platforms actually seen in the checks this toolkit runs
+# (GitHub/GitLab Pages, Vercel, Netlify, Heroku, Shopify, S3 static sites,
+# Firebase/web.app, WordPress.com, Blogspot), not an attempt at completeness.
+_MULTI_TENANT_SUFFIXES = frozenset(
+    {
+        "github.io",
+        "githubusercontent.com",
+        "gitlab.io",
+        "pages.dev",
+        "vercel.app",
+        "netlify.app",
+        "herokuapp.com",
+        "myshopify.com",
+        "wordpress.com",
+        "blogspot.com",
+        "s3.amazonaws.com",
+        "web.app",
+        "firebaseapp.com",
+    }
+)
+
 
 def registrable_domain(host: str) -> str:
     """Approximate the registrable domain of a hostname."""
@@ -380,6 +408,11 @@ def registrable_domain(host: str) -> str:
     parts = host.split(".")
     if len(parts) <= 2:
         return host
+    # Longest suffix first: a 3-label entry (s3.amazonaws.com) must be tried
+    # before a 2-label slice of the same host could ever mask it.
+    for suffix_len in (3, 2):
+        if len(parts) > suffix_len and ".".join(parts[-suffix_len:]) in _MULTI_TENANT_SUFFIXES:
+            return ".".join(parts[-(suffix_len + 1) :])
     if parts[-2] in _COMPOUND_SUFFIXES and len(parts[-1]) <= 3:
         return ".".join(parts[-3:])
     return ".".join(parts[-2:])

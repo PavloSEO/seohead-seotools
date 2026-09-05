@@ -87,6 +87,26 @@ def test_registrable_domain_scope_includes_subdomains():
     assert not _fetched(result, "https://other.com/y")
 
 
+def test_registrable_domain_scope_does_not_cross_into_another_tenant_of_a_shared_suffix():
+    """Issue #144: github.io is a multi-tenant hosting suffix, so a site seeded at
+    alice's own subdomain must never treat bob's -- an unrelated customer of the
+    same platform -- as in scope just because 'registrable_domain' widens beyond
+    'host'."""
+    site = {
+        "https://alice.github.io/robots.txt": FakeResponse("", status_code=404),
+        "https://alice.github.io/": page("https://bob.github.io/"),
+    }
+    result = crawl_site(
+        "https://alice.github.io/",
+        fetcher=_fetcher(site),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        scope={"internal": "registrable_domain"},
+    )
+    assert not _fetched(result, "https://bob.github.io/")
+    assert result.excluded.get("outside_host") == 1
+
+
 # --- exclude_hosts ----------------------------------------------------------
 def test_exclude_hosts_wins_over_a_widened_scope():
     result = _crawl(

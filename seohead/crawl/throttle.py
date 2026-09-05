@@ -58,9 +58,9 @@ class Throttle:
         max_concurrency: int = 1,
         adaptive: bool = True,
     ) -> None:
-        self.min_delay = max(0.0, float(min_delay))
-        self.max_delay = max(self.min_delay, float(max_delay))
-        self.delay = max(self.min_delay, float(start_delay))
+        self._min_delay = max(0.0, float(min_delay))
+        self._max_delay = max(self._min_delay, float(max_delay))
+        self.delay = max(self._min_delay, float(start_delay))
         self.timeouts = 0
         self.server_errors = 0
         # The ceiling is a configured, bounded fact; ``concurrency`` is what the
@@ -77,6 +77,34 @@ class Throttle:
         if not self.adaptive:
             self.concurrency = self.max_concurrency
         self._lock = threading.Lock()
+
+    @property
+    def min_delay(self) -> float:
+        return self._min_delay
+
+    @min_delay.setter
+    def min_delay(self, value: float) -> None:
+        """Raising the floor above the current ceiling raises the ceiling too.
+
+        A robots.txt ``Crawl-delay`` above ``max_delay_seconds`` (issue #150) is the
+        motivating case: every adaptive clamp below is ``min(max_delay, max(min_delay,
+        x))``, which silently collapses to ``max_delay`` forever once the floor
+        exceeds it. Keeping the invariant here, on assignment, means no call site —
+        today's or a future one — has to remember to touch both fields by hand.
+        """
+        self._min_delay = max(0.0, float(value))
+        if self._max_delay < self._min_delay:
+            self._max_delay = self._min_delay
+
+    @property
+    def max_delay(self) -> float:
+        return self._max_delay
+
+    @max_delay.setter
+    def max_delay(self, value: float) -> None:
+        self._max_delay = max(0.0, float(value))
+        if self._min_delay > self._max_delay:
+            self._min_delay = self._max_delay
 
     def record_response(self, latency_s: float, ok: bool) -> None:
         """Fold one completed response into the delay and the concurrency level.

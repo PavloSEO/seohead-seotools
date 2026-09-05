@@ -574,6 +574,10 @@ def crawl_site(
 
         # A site asking to be crawled slowly is asking the crawler, not the
         # operator. The configured delay is a floor, never a ceiling on politeness.
+        # ``min_delay``'s setter (issue #150) raises ``max_delay`` along with it when
+        # the site asks for more than the crawl's own ceiling, so every later clamp
+        # into [min_delay, max_delay] keeps honouring this value instead of silently
+        # sinking back to a smaller max_delay.
         asked = crawl_delay(robots, robots_token) if robots else None
         if asked and asked > throttle.min_delay:
             throttle.min_delay = asked

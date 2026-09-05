@@ -78,7 +78,7 @@ def _withhold_unlinked_findings(ctx: AuditContext, issues: list[Issue]) -> list[
     if not withheld:
         return issues
     for check_id in sorted(withheld):
-        ctx.skip(
+        ctx.retract(
             check_id,
             "crawl is partial: an 'unlinked' finding cannot be proven when the "
             "crawl did not reach every URL",
@@ -229,14 +229,23 @@ def aggregate(
     from seohead.sf.core.registry import CHECKS
 
     checks_total = len(CHECKS)
-    checks_skipped = len({s.id for s in ctx.skipped})
-    checks_available = checks_total - checks_skipped
     # "Silent" checks neither produced an issue nor declared a skip. Some are
     # genuinely clean; some had no evidence and said nothing. Today those two are
     # indistinguishable, and naming the population is how the gap stops being
     # invisible — every declaration added moves a check out of this bucket.
     fired_checks = {i.check for i in issues}
     declared = {s.id for s in ctx.skipped}
+    # A check declared skipped by one source but fired by a sibling source
+    # (e.g. BROKEN_EXTERNAL_LINK skipped from a missing inlinks_4xx export
+    # yet raised from inlinks_5xx) isn't actually skipped — one of its
+    # sources produced evidence. Every bucket below reads this same
+    # overlap-adjusted set, so checks_fired + checks_skipped + checks_silent
+    # is exactly checks_total, and this count matches len(result.skipped)
+    # (computed from the identical set further down) instead of disagreeing
+    # with it by the overlap size.
+    skipped_ids = declared - fired_checks
+    checks_skipped = len(skipped_ids)
+    checks_available = checks_total - checks_skipped
     summary["check_coverage"] = {
         "checks_total": checks_total,
         "checks_fired": len(fired_checks),
@@ -281,10 +290,9 @@ def aggregate(
     max_pages = ctx.config.get("output", {}).get("max_pages_in_json", 100000)
     pages = ctx.pages[:max_pages]
 
-    # A check that fired from one source isn't "skipped" just because another
-    # source for it was absent (e.g. BROKEN_EXTERNAL_LINK from 4xx but not 5xx).
-    fired = {i.check for i in issues}
-    skipped = [s for s in ctx.skipped if s.id not in fired]
+    # Same overlap-adjusted set as summary["check_coverage"]["checks_skipped"]
+    # above — one definition of "skipped", not two computed seven lines apart.
+    skipped = [s for s in ctx.skipped if s.id in skipped_ids]
 
     return AuditResult(
         run=run,
