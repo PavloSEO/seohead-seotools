@@ -14,10 +14,14 @@ recorded response shape, but has never reached the live endpoint.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
 
 HOST = "https://api.indexnow.org/indexnow"
 TIMEOUT = 30
@@ -35,6 +39,17 @@ _STATUS_MESSAGES = {
 
 # payload -> (status code, response body text)
 Fetcher = Callable[[dict[str, Any]], tuple[int, str]]
+
+
+def _hostname(value: str) -> str:
+    """Normalize a bare hostname without collapsing distinct subdomains."""
+    # Use the HTTP client's IDNA2008 rules; stdlib IDNA merges faß.de with fass.de.
+    name = httpx.URL(scheme="https", host=value).raw_host.decode("ascii").removesuffix(".")
+    if len(name) > 253 or not all(
+        re.fullmatch(r"(?!-)[a-z0-9-]{1,63}(?<!-)", label) for label in name.split(".")
+    ):
+        raise ValueError("invalid hostname")
+    return name
 
 
 def _default_fetcher(payload: dict[str, Any]) -> tuple[int, str]:
@@ -59,7 +74,13 @@ def submit(
     key_location: str | None = None,
     fetcher: Fetcher | None = None,
 ) -> dict[str, Any]:
-    """Submit up to 10,000 changed URLs in one call; every URL must belong to ``host``."""
+    """Submit up to 10,000 changed URLs belonging to a bare ``host``.
+
+    Match hostnames exactly after case, IDNA, and trailing-dot normalization;
+    subdomains remain distinct. HTTP and HTTPS URLs may use any valid numeric
+    port: membership is by hostname, not origin. URL strings stay unchanged.
+    A successful response acknowledges receipt, never guarantees indexing.
+    """
     from seohead.data_sources.credentials import MissingCredential, indexnow_key
 
     if not urls:
@@ -71,6 +92,32 @@ def submit(
             "ok": False,
             "error": f"IndexNow accepts at most {MAX_URLS_PER_BATCH} URLs per batch; got {len(urls)}",
         }
+    try:
+        host = _hostname(host)
+    except (ValueError, httpx.InvalidURL):
+        return {"ok": False, "error": "host must be a bare hostname without a port or path"}
+    for position, url in enumerate(urls, 1):
+        try:
+            if any(char.isspace() or ord(char) < 32 or 127 <= ord(char) < 160 for char in url):
+                raise ValueError("whitespace or control character")
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or "\\" in url
+                or re.search(r"%(?![0-9a-fA-F]{2})", url)
+                or parsed.netloc.endswith(":")
+                or parsed.port == 0
+                or _hostname(parsed.hostname) != host
+            ):
+                raise ValueError("invalid URL or host mismatch")
+        except (ValueError, httpx.InvalidURL):
+            return {
+                "ok": False,
+                "error": f"URL {position} must be an absolute HTTP(S) URL belonging to host",
+            }
     try:
         submission_key = key or indexnow_key()
     except MissingCredential as exc:
@@ -95,4 +142,10 @@ def submit(
     }
     if not ok:
         result["error"] = _STATUS_MESSAGES.get(status, body[:300] or f"HTTP {status}")
+    else:
+        result["message"] = (
+            "URLs received; key validation pending. Receipt does not guarantee indexing."
+            if status == 202
+            else "URLs received. Receipt does not guarantee indexing."
+        )
     return result
