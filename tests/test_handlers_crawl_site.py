@@ -671,3 +671,23 @@ def test_the_backlog_can_be_turned_off(monkeypatch, tmp_path):
     assert (out / "audit.json").is_file()
     assert not (out / "tasks.json").exists()
     assert not (out / "tasks.md").exists()
+
+
+def test_same_origin_blank_link_is_absent_from_unsafe_cross_origin_summary(monkeypatch, tmp_path):
+    """Issue #336: a same-origin target="_blank" link with no rel token is not a security
+    finding, so it must not reach summary.by_check for either CLI or MCP's shared handler."""
+    edge = LinkEdge(
+        source="https://example.test/",
+        destination="https://example.test/account",
+        anchor="account",
+        nofollow=False,
+        target="_blank",
+    )
+    monkeypatch.setattr(spider_mod, "crawl_site", lambda *a, **kw: SpiderResult(links=[edge]))
+
+    config = tmp_path / "crawl.json"
+    config.write_text(json.dumps({"link_attributes": {"capture": True}}), encoding="utf-8")
+
+    audit = handlers.crawl_site(url="https://example.test/", config=str(config))
+
+    assert audit["summary"]["by_check"].get("UNSAFE_CROSS_ORIGIN_LINK", 0) == 0
