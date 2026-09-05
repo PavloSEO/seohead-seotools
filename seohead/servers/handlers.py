@@ -476,11 +476,16 @@ def crawl_site(
                 "probe_requests": escalation.probe_requests,
                 "render_requests": escalation.render_requests,
                 "render_budget_exhausted": escalation.render_budget_exhausted,
+                # Set independently of render_budget_exhausted (#198): max_render_urls and
+                # max_render_seconds are two different operator-set limits that run out for
+                # unrelated reasons, and a report must say which one cut this run short.
+                "time_budget_exhausted": escalation.time_budget_exhausted,
                 # Which escalated patterns the budget actually reached, and
                 # which it ran out on before finishing -- patterns_escalated
                 # alone cannot tell the two apart (#147).
                 "render_counts": escalation.render_counts,
                 "patterns_partially_rendered": escalation.patterns_partially_rendered,
+                "patterns_unprobed": escalation.patterns_unprobed,
             }
 
         # Re-evaluated after escalation so a run that actually renders its
