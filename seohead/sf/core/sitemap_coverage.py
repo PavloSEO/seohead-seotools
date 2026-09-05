@@ -471,7 +471,7 @@ def run_sitemap(
     sitemap_locs = [e["loc"] for e in sitemap_entries] or sf_in
 
     # --- 3. lastmod staleness -------------------------------------------
-    lastmod_summary = _analyze_lastmod(ctx, sitemap_entries)
+    lastmod_summary = _analyze_lastmod(ctx, sitemap_entries, base)
     if lastmod_summary:
         summary["lastmod"] = lastmod_summary
 
@@ -572,7 +572,9 @@ def run_sitemap(
     return summary
 
 
-def _analyze_lastmod(ctx: AuditContext, entries: list[dict[str, Any]]) -> dict[str, Any]:
+def _analyze_lastmod(
+    ctx: AuditContext, entries: list[dict[str, Any]], base: str | None
+) -> dict[str, Any]:
     dates: list[datetime] = []
     invalid = 0
     future = 0
@@ -609,5 +611,10 @@ def _analyze_lastmod(ctx: AuditContext, entries: list[dict[str, Any]]) -> dict[s
         "future_count": future,
     }
     if cutoff_share >= 0.5 or all_same or future or invalid:
-        ctx.add("SITEMAP_STALE_LASTMOD", target_url=_base_url(ctx), details=summary)
+        # A bare origin (what _base_url returns) matches no row in pages.jsonl -- log-scan's
+        # findings_are_about_crawled_urls rule (#285) would then flag this site-wide finding
+        # as pointing outside the run's own page list. _site_target names the crawled home
+        # page instead, the same rewrite SITEMAP_NOT_IN_ROBOTS and ROBOTS_BLOCKS_RESOURCES
+        # already use above.
+        ctx.add("SITEMAP_STALE_LASTMOD", target_url=_site_target(ctx, base), details=summary)
     return summary

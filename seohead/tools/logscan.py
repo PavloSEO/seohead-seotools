@@ -254,6 +254,13 @@ def rule_findings_are_about_crawled_urls(run: RunArtifacts) -> list[Anomaly]:
         "BROKEN_LINK",
         "HREFLANG_BROKEN_TARGET",
         "UNLINKED_CANONICAL",
+        # Its target names an in-host edge destination, not a fetched page (#285): the
+        # finding exists precisely because some inlinks to it carried nofollow, so the
+        # crawl may have had no other reason to fetch it -- query-variant caps or an
+        # out-of-scope exclusion land it outside pages.jsonl just as legitimately as a
+        # dedicated exclusion would. That is a page-versus-edge distinction, not a
+        # crawl gap this rule can honestly report.
+        "FOLLOW_AND_NOFOLLOW_INLINKS",
     }
     seen: set[tuple[str, str]] = set()
     out = []

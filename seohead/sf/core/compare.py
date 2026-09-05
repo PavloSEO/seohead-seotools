@@ -84,13 +84,40 @@ def preflight(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
         )
     before_cfg = before.get("run", {}).get("crawl_config")
     after_cfg = after.get("run", {}).get("crawl_config")
-    if before_cfg is not None and after_cfg is not None and before_cfg != after_cfg:
+    # A missing crawl_config is an unknown comparison basis, not an established match --
+    # the same distinction crawl_partial already draws above (issue #287). Only a native
+    # crawl currently records this manifest, so an SF-derived audit reaches here with
+    # none at all; silently treating "no manifest" as "same manifest" let a native-versus-
+    # SF comparison classify same-URL finding changes as fixes or regressions when they
+    # may just be two different tools measuring the same URL under different rules.
+    if before_cfg is None or after_cfg is None:
+        missing = [
+            label for label, cfg in (("before", before_cfg), ("after", after_cfg)) if cfg is None
+        ]
+        warnings.append(
+            f"{' and '.join(missing)} recorded no crawl configuration — comparability is "
+            "unknown, not equal, so some of the difference may be the configuration rather "
+            "than the site"
+        )
+    elif before_cfg != after_cfg:
         changed = sorted(
             k for k in set(before_cfg) | set(after_cfg) if before_cfg.get(k) != after_cfg.get(k)
         )
         warnings.append(
             "results-affecting settings differ between the two runs, so some of the "
             f"difference may be the configuration rather than the site: {', '.join(changed)}"
+        )
+    # crawl_config only exists for a native crawl; an SF-derived audit's nearest
+    # equivalent today is its export profile (full/lite/...), which changes which
+    # checks even had evidence to fire. Known profiles that differ are evidence of a
+    # comparability gap even when neither side has a full effective manifest.
+    before_profile = before.get("run", {}).get("profile")
+    after_profile = after.get("run", {}).get("profile")
+    if before_profile is not None and after_profile is not None and before_profile != after_profile:
+        warnings.append(
+            "SF export profile differs between the two runs "
+            f"({before_profile!r} vs {after_profile!r}), so some of the difference may be "
+            "the profile's check coverage rather than the site"
         )
     return warnings
 
