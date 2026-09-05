@@ -81,6 +81,28 @@ class _ParsedPageOptional(TypedDict, total=False):
     url_sources: list[dict[str, str]]
 
 
+class DocumentPosition(TypedDict):
+    """Where key elements sit relative to `<head>`, as `parser.parse_html`'s
+    parse tree resolved them -- not as the source text suggests (issue #123).
+
+    A browser closes `<head>` at the first element that does not belong there,
+    so a canonical or robots directive placed after one silently stops
+    applying; the page still reads fine in the source. Each `*_outside_head`
+    flag is `None` when the element is simply absent -- a different, already
+    covered finding -- and a bool only once it exists.
+    """
+
+    head_count: int
+    body_count: int
+    head_not_first: bool
+    invalid_head_elements: list[str]
+    title_outside_head: bool | None
+    meta_description_outside_head: bool | None
+    canonical_outside_head: bool | None
+    directives_outside_head: bool | None
+    hreflang_outside_head: bool | None
+
+
 class ParsedPage(_ParsedPageOptional):
     """The on-page fields `parser.parse_html` extracts (pure, no network)."""
 
@@ -89,6 +111,7 @@ class ParsedPage(_ParsedPageOptional):
     robots: str | None
     robots_meta: list[str]
     canonical: str | None
+    position: DocumentPosition
     # Static Lighthouse audits (issue #59) — see seohead.sf.core.rules and
     # seohead.sf.core.lighthouse for the correspondence and doc links.
     charset: str | None

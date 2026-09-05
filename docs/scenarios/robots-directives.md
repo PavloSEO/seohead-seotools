@@ -12,7 +12,7 @@ under version control.
 
 ## Covers
 
-- **Directives** — NoImageIndex · Nofollow · None · NoSnippet · NoTranslate · Unavailable_After
+- **Directives** — NoImageIndex · Nofollow · None · NoSnippet · NoTranslate · Unavailable_After · Outside <head>
 
 ## The chain
 
@@ -54,13 +54,20 @@ Each directive becomes its own finding, so the report never says "robots problem
 
 `none` on a page raises `NOINDEX` and `NOFOLLOW_PAGE` together, because that is what it means.
 
-**4. Read `UNAVAILABLE_AFTER` before anything else in the list.**
+**4. Read `DIRECTIVES_OUTSIDE_HEAD` as the one that makes every other directive here moot.** A
+browser closes `<head>` at the first element that does not belong there, and a meta robots tag
+after that point is read from `<body>` instead — it does not apply, and nothing in the source
+looks wrong. Step 3's crawl already resolved this from the parse tree; a directive believed to
+be suppressing indexing, and silently not doing so, is worth checking before anything else on
+this list.
+
+**5. Read `UNAVAILABLE_AFTER` before anything else in the list.**
 
 It is the only directive here that is a timer. Every other one describes a state somebody can
 see today; this one describes a page that will remove itself on a date, and it is a warning
 rather than a notice for that reason. Check the date is in the future and intended.
 
-**5. Confirm the run, then export.**
+**6. Confirm the run, then export.**
 
 ```bash
 seohead log-scan --run ./run
@@ -108,3 +115,5 @@ still around to agree with it.
   the first one and nothing else here does.
 - **Directives on a page the crawl skipped.** A URL blocked by `robots.txt` was never fetched,
   so its directives are unknown rather than absent.
+- **`DIRECTIVES_OUTSIDE_HEAD` on a plain Screaming Frog export.** It needs the parse tree a
+  native crawl builds; an export-only run names it skipped rather than reporting it clean.

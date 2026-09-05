@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**127 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**138 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -230,6 +230,22 @@ python scripts/generate_checks_reference.py
 | `MISSING_DOCTYPE` | notice | SF-derived | Document lacks a modern <!DOCTYPE html> declaration, triggering quirks mode | Add `<!DOCTYPE html>` as the very first line of the document, with no PUBLIC or SYSTEM identifier. |
 | `VIEWPORT_MISSING` | warning | SF-derived | No <meta name=viewport> tag with width or an initial-scale of at least 1 | Add `<meta name="viewport" content="width=device-width, initial-scale=1">` to the document head. |
 | `NO_COMPRESSION` | notice | SF-derived | HTML response is served uncompressed above the size where gzip/br would help | Enable gzip, Brotli, or deflate compression for text responses on the origin server or CDN. |
+
+## --- extension: element position & document skeleton (issue #123) ---
+
+| Check id | Severity | Evidence | Fires on | Fix |
+|---|---|---|---|---|
+| `TITLE_OUTSIDE_HEAD` | warning | SF-derived | The <title> element is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so <title> is read from <head> again. |
+| `DESC_OUTSIDE_HEAD` | warning | SF-derived | The meta description is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the description is read from <head> again. |
+| `CANONICAL_OUTSIDE_HEAD` | critical | SF-derived | The canonical link is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the canonical is read from <head> again; Google ignores a canonical outside <head>. |
+| `DIRECTIVES_OUTSIDE_HEAD` | critical | SF-derived | A robots-directive meta tag is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the directive is read from <head> again; a noindex/nofollow outside <head> does not apply. |
+| `HREFLANG_OUTSIDE_HEAD` | warning | SF-derived | An hreflang alternate link is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the alternate is read from <head> again. |
+| `HEAD_MISSING` | warning | SF-derived | Document has no <head> element | Add a <head> element; a browser inserts one implicitly, but every metadata tag then depends on exactly where it lands. |
+| `HEAD_MULTIPLE` | notice | SF-derived | Document has more than one <head> element | Merge into a single <head>; a browser keeps both as siblings rather than combining their contents. |
+| `BODY_MISSING` | warning | SF-derived | Document has no <body> element | Add a <body> element; a browser inserts one implicitly around the visible content. |
+| `BODY_MULTIPLE` | notice | SF-derived | Document has more than one <body> element | Merge into a single <body>; a browser keeps both as siblings rather than combining their contents. |
+| `INVALID_HEAD_ELEMENT` | notice | SF-derived | An element the head content model does not allow is written inside <head> | Move title/base/link/meta/style/script/noscript/template content into <head> and everything else into <body>; an invalid element is what forces the parser to close <head> early. |
+| `HEAD_NOT_FIRST` | notice | SF-derived | <head> is not the first element under <html> once the parser resolves the document | Fix the markup order so <head> opens immediately after <html>, before any <body> content. |
 
 ## --- extension: export-dependent native filters (active when the export is available) ---
 

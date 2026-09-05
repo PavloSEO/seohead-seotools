@@ -1,7 +1,7 @@
 # Audit coverage — the gap map
 
 **Purpose.** The list of SEO checks our SF audit
-(`seohead/sf/core/registry.py`, 127 checks) still **lacks**. For every gap:
+(`seohead/sf/core/registry.py`, 138 checks) still **lacks**. For every gap:
 value, implementation mode, likely home in the code. This is a filling plan,
 not a bug report. Items implemented since this map was written are marked
 **DONE**.
@@ -58,7 +58,7 @@ from different starting lists; read both before filing a new gap.
 
 **Context.** `SLOW_RESPONSE` already catches a slow server, but it is no
 substitute for real CWV — Google ranks by LCP/INP/CLS. This is the largest
-qualitative gap: none of the 127 checks measures them directly. (Lab LCP/CLS
+qualitative gap: none of the 138 checks measures them directly. (Lab LCP/CLS
 from one Chromium run exist in the live `render-check` as `metrics_lab` —
 labelled lab, not field.)
 
@@ -145,7 +145,7 @@ separate class (they need the full page set, which mode B already has).
 | 6.4 | Canonical -> homepage (stamp) | All canonicals collapse onto `/` instead of the relevant page | medium | B (grouping by canonical) | id `CANONICAL_TO_HOMEPAGE` |
 | 6.5 | Canonical header vs tag | `<link rel=canonical>` disagrees with the HTTP `Link: rel=canonical` | medium | B+ (SF catches HTTP canonical when configured) / A | id `CANONICAL_HEADER_MISMATCH` |
 | 6.6 | Canonical contains a fragment | `<link rel=canonical>` points at a `#fragment`, which the server never sees | low | **DONE** (issue #30) — `CANONICAL_FRAGMENT` | `check_canonical_extra` |
-| 6.7 | Canonical outside `<head>` | The tag is placed in `<body>` and is silently ignored | medium | **A only** — not in the CSV columns SF's `Internal:All` export carries; needs a raw-HTML/DOM pass, out of scope for the registry as built (issue #30) | new live check |
+| 6.7 | Canonical outside `<head>` | The tag is placed in `<body>` and is silently ignored | medium | **DONE** (issue #123) — `CANONICAL_OUTSIDE_HEAD`, from a native crawl's own parse tree (`seohead.tools.parser.parse_html`'s `document_position`); the eleven catalogued "outside head"/document-skeleton entries all closed together, see `check_element_position`/`check_document_skeleton` | `rules.py` |
 | 6.8 | Invalid attribute in canonical annotation | Malformed `rel=canonical` markup (e.g. `rel="canonical "`, missing `href`) | low | **A only** — same reason as 6.7 (issue #30) | new live check |
 
 ---

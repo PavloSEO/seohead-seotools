@@ -11,7 +11,7 @@ chain that mixes them produces a task nobody can act on.
 
 ## Covers
 
-- **Validation** — HTML Document Over 2MB · Resource Over 2MB
+- **Validation** — HTML Document Over 2MB · Resource Over 2MB · Missing <head> Tag · Multiple <head> Tags · Missing <body> Tag · Multiple <body> Tags · Invalid HTML Elements In <head> · <head> Not First In <html> Element · <body> Element Preceding <html>
 
 ## The chain
 
@@ -50,7 +50,21 @@ above the Tukey upper fence when the distribution has real spread. Each finding 
 so a page can be reported as heavy *for this site* rather than against a number from a blog
 post.
 
-**5. Separate the document from what it loads.**
+**5. Read the document-skeleton facts the same crawl already resolved.** A heavy page and a
+malformed one are different complaints that happen to share a symptom, and the second is
+invisible to a source diff: a browser closes `<head>` at the first element that does not belong
+there, so a canonical or robots directive placed after it is silently read from `<body>`
+instead — the page looks correct in the source. `HEAD_MISSING`, `HEAD_MULTIPLE`, `BODY_MISSING`,
+and `BODY_MULTIPLE` name how many of each tag the parser actually found (once per page, not once
+per stray tag — two `<body>` elements is one `BODY_MULTIPLE`, not two), `INVALID_HEAD_ELEMENT`
+names the tag that forced `<head>` to close early, and `HEAD_NOT_FIRST` covers both
+"`<head>` not first in `<html>`" and "`<body>` preceding `<html>`" from the published catalogue —
+after a browser recovers from either shape of broken markup, both collapse into the same
+resolved fact. None of this needs a separate step: it comes from the parse tree step 1's crawl
+already built, and — unlike `LARGE_HTML` — neither Screaming Frog's own crawl nor a plain export
+from it can raise any of these; the fact only exists where the parse tree was actually built.
+
+**6. Separate the document from what it loads.**
 
 ```bash
 seohead asset-weight-check --url https://example.com/page
@@ -59,7 +73,7 @@ seohead asset-weight-check --url https://example.com/page
 Per-resource sizes, totals and the render-blocking list. This is where "it is the images"
 becomes true or false.
 
-**6. Report both, with the numbers in the task.**
+**7. Report both, with the numbers in the task.**
 
 ```bash
 seohead report-build --audit ./run/audit.json --format docx --out ./weight.docx
