@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 from seohead import cli
+from seohead.audit.site import SCHEMA
 from seohead.servers import handlers
 
 
@@ -69,6 +70,7 @@ def test_site_audit_report_write_failure_exits_nonzero(monkeypatch, capsys, tmp_
         "site_audit",
         lambda **kw: {
             "ok": True,
+            "schema": SCHEMA,
             "domain": "example.test",
             "findings": [],
             "pages": [],
@@ -83,6 +85,7 @@ def test_site_audit_report_write_failure_exits_nonzero(monkeypatch, capsys, tmp_
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is True
     assert out["report"]["ok"] is False
+    assert str(tmp_path) in out["report"]["error"]
     assert rc == 1
 
 
@@ -94,6 +97,7 @@ def test_site_audit_report_success_still_exits_zero(monkeypatch, capsys, tmp_pat
         "site_audit",
         lambda **kw: {
             "ok": True,
+            "schema": SCHEMA,
             "domain": "example.test",
             "findings": [],
             "pages": [],
