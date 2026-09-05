@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from html import unescape
 from typing import Any, cast
 from urllib.parse import urljoin, urlparse
 
@@ -31,7 +30,7 @@ from bs4 import BeautifulSoup
 
 from seohead.models import FormInfo, LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
 from seohead.recon.net import http_client
-from seohead.tools.content_area import extract_area_text, resolve_content_area
+from seohead.tools.content_area import TEXT_EXCLUDED_TAGS, extract_area_text, resolve_content_area
 
 # Browser-like User-Agent: without it, bot protection (Cloudflare et al.)
 # tends to serve a challenge/block page instead of the real document.
@@ -110,12 +109,22 @@ _MAX_REDIRECTS = 8
 def collapse_whitespace(text: str | None) -> str:
     """Collapse all runs of whitespace to single spaces and trim.
 
-    Mirrors ``stripTags``'s ``\\s+ -> ' '`` + ``trim`` step. Also decodes
-    HTML entities so callers get human-readable text.
+    Mirrors ``stripTags``'s ``\\s+ -> ' '`` + ``trim`` step. Every call site in
+    this module passes text BeautifulSoup's own parser already produced
+    (``tag.get_text()`` or ``tag.get(attr)``), and lxml decodes character
+    references exactly once while building the tree -- the same number of
+    times a browser's tokenizer does. Decoding again here used to be a silent
+    no-op on ordinary markup, but on a page whose CMS or import pipeline
+    already double-escaped its entities (``&amp;amp;`` -> ``&amp;`` -> ``&``,
+    a real, common artifact) it decoded a second time, past what a browser
+    tab or a SERP snippet ever renders, and so past what the `TITLE_TOO_LONG`
+    / `DESC_TOO_SHORT` length checks should be measuring. There is nothing
+    left to decode here; a caller holding raw, unparsed markup would need to
+    decode it itself before calling this.
     """
     if not text:
         return ""
-    return " ".join(unescape(str(text)).split())
+    return " ".join(str(text).split())
 
 
 def is_external(href_abs: str, base_url: str) -> bool:
@@ -193,11 +202,38 @@ def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
 # all — and BeautifulSoup's ``soup.title`` returns the first in document order.
 _FOREIGN_CONTENT = ("svg", "math")
 
+# <template> content is a DocumentFragment per the HTML spec: it never joins
+# the rendered tree and nothing inside it -- an <a href>, an <img src> -- is
+# ever requested by a browser or a search engine's crawler unless a script
+# explicitly clones the fragment in. That makes it the one element every
+# extractor of *real, requestable* content must agree to skip, so it is kept
+# here as the single shared answer rather than one list per function that can
+# silently drift (which is exactly how issue #140 happened: text extraction
+# excluded it, link and URL-source extraction did not).
+#
+# <noscript> is deliberately NOT in this set, unlike in ``_extract_text``
+# below. Its content is real, spec-defined markup that a JS-disabled client,
+# and search engines' initial non-rendering crawl of the raw HTML, do load --
+# it is the standard place to put a plain <img>/<a> fallback for a
+# lazy-loaded resource, which Google's own guidance recommends specifically
+# so the resource stays discoverable. Excluding it from link/URL-source
+# discovery would hide a genuinely fetchable URL (and any real 404 behind it)
+# from the auditor -- the same false-negative failure mode #138 was about,
+# just relocated. It stays excluded from *text* only, because JS-enabled
+# rendering (what a human visitor and Search Console's rendered view show)
+# never displays it as body copy.
+_INERT_LINK_CONTAINERS = ("template",)
+
+
+def _has_ancestor(tag: Any, names: tuple[str, ...]) -> bool:
+    """True when ``tag`` itself, or any ancestor, is named in ``names``."""
+    return tag.name in names or any(parent.name in names for parent in tag.parents)
+
 
 def document_title(soup: BeautifulSoup) -> str | None:
     """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
     for tag in soup.find_all("title"):
-        if any(parent.name in _FOREIGN_CONTENT for parent in tag.parents):
+        if _has_ancestor(tag, _FOREIGN_CONTENT):
             continue
         return collapse_whitespace(tag.get_text()) or None
     return None
@@ -374,11 +410,12 @@ def _extract_links(
     a ``<base>`` pointing elsewhere must not reclassify the whole page.
 
     Skips empty hrefs and ``javascript:`` / ``mailto:`` / ``tel:`` /
-    pure-fragment (``#...``) links. Each entry carries the resolved absolute
-    href, the href exactly as written (``raw_href`` — the only place a
-    protocol-relative ``//host/path`` form is still visible once resolution has
-    run), anchor text, rel tokens, the ``target`` attribute, a ``nofollow``
-    flag, and an ``external`` flag.
+    pure-fragment (``#...``) links, and any ``<a>`` inside a ``<template>``
+    (see ``_INERT_LINK_CONTAINERS`` for why ``<noscript>`` is not skipped
+    too). Each entry carries the resolved absolute href, the href exactly as
+    written (``raw_href`` — the only place a protocol-relative ``//host/path``
+    form is still visible once resolution has run), anchor text, rel tokens,
+    the ``target`` attribute, a ``nofollow`` flag, and an ``external`` flag.
 
     ``classify_links`` additionally resolves each link's ``position`` (nav,
     header, sidebar, footer, content, other; see ``link_position.py``). It is
@@ -397,6 +434,8 @@ def _extract_links(
         content_root, _ = find_content_root(soup, content_area_config)
         rules = rules_from_config(position_rules)
     for tag in soup.find_all("a"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue  # a <template>-only link is never fetched by a browser or crawler
         # "href" is single-valued, so this is always a plain string.
         href_raw = (cast("str | None", tag.get("href")) or "").strip()
         if not href_raw:
@@ -455,13 +494,13 @@ def _extract_forms(soup: BeautifulSoup, base_url: str, final_url: str) -> list[F
 
 
 def _extract_text(soup: BeautifulSoup) -> str:
-    """Collapsed visible body text (script/style removed)."""
+    """Collapsed visible body text (see ``content_area.TEXT_EXCLUDED_TAGS`` for what is removed)."""
     body = soup.body or soup
     # Work on a copy so we don't mutate the shared tree used by other steps.
     from copy import copy
 
     body = copy(body)
-    for tag in body.find_all(["script", "style", "noscript", "template"]):
+    for tag in body.find_all(list(TEXT_EXCLUDED_TAGS)):
         tag.decompose()
     return collapse_whitespace(body.get_text(" "))
 
@@ -503,7 +542,9 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
 
     Covers media, forms, citations, ping, meta-refresh, and itemtype. Each URL
     records the tag and attribute where it was found. Relative references are
-    resolved against ``base_url``.
+    resolved against ``base_url``. Skips ``<template>`` descendants -- see
+    ``_INERT_LINK_CONTAINERS`` for why only ``<template>`` and not
+    ``<noscript>``.
     """
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -526,6 +567,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
 
     for tag_name, attrs in _URL_SOURCE_ATTRS.items():
         for tag in soup.find_all(tag_name):
+            if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+                continue  # a <template>-only resource is never fetched, see _INERT_LINK_CONTAINERS
             for attr in attrs:
                 value = tag.get(attr)
                 if not value:
@@ -544,17 +587,23 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
     # performs no I/O, so a linked .css is reported as a resource by the <link>
     # rule above and its contents are a crawler concern, not a parser one.
     for tag in soup.find_all(style=True):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue
         style_value = tag.get("style")
         if isinstance(style_value, list):
             style_value = " ".join(style_value)
         for url in extract_css_urls(style_value):
             push(url, tag.name, "style")
     for style_tag in soup.find_all("style"):
+        if _has_ancestor(style_tag, _INERT_LINK_CONTAINERS):
+            continue
         for url in extract_css_urls(style_tag.get_text()):
             push(url, "style", "css")
 
     # meta http-equiv=refresh content="0;url=..."
     for meta in soup.find_all("meta"):
+        if _has_ancestor(meta, _INERT_LINK_CONTAINERS):
+            continue
         equiv = meta.get("http-equiv") or ""
         if isinstance(equiv, list):
             equiv = " ".join(equiv)
@@ -568,6 +617,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
     # itemtype is a microdata vocabulary URL rather than a resource URL, but it
     # is still a useful carrier for an auditor to inspect.
     for tag in soup.select("[itemtype]"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue
         value = tag.get("itemtype")
         if isinstance(value, list):
             for v in value:

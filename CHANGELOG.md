@@ -4,6 +4,26 @@ All notable public changes are documented here.
 
 ## Unreleased
 
+- Fix two content-extraction defects in `seohead/tools/parser.py` (#138, #140). `collapse_whitespace`
+  decoded HTML entities a second time on top of the single decode BeautifulSoup's lxml parser
+  already performs on every `tag.get_text()`/`tag.get(attr)` value it hands to that helper — a
+  silent no-op on ordinary markup, but on a page whose CMS or import pipeline already
+  double-escaped its entities (a real, common artifact) it turned visibly-broken entity soup into
+  clean-looking text and shortened the reported length below what a browser tab or a SERP snippet
+  actually renders, flipping length-based title/description checks in both directions. The helper
+  no longer decodes at all. Separately, link and URL-source extraction walked the whole document
+  unconditionally, so an `<a>`/`<img>` that existed only inside an inert `<template>` — never part
+  of the rendered document per the HTML spec, never requested by a browser or a crawler unless a
+  script clones it in — was reported as a real, on-page link and actually fetched by `spider.py`,
+  the same phantom-URL failure mode closed for `<base href>` in #4; both extractors now skip
+  `<template>` descendants. `<noscript>` is deliberately left reachable there, unlike in text
+  extraction: it is real, spec-defined fallback markup a JS-disabled client (and search engines'
+  non-rendering crawl pass) does load, and excluding it would hide a genuinely fetchable URL from
+  the auditor. Word count also no longer counts `<svg>`/`<math>` descendant text (an icon sprite's
+  accessibility `<title>`, glyph `<text>`, MathML notation) as body copy — a 20-icon header could
+  double a page's reported word count against its real content — and that exclusion list now lives
+  in one place (`content_area.TEXT_EXCLUDED_TAGS`) shared by both text extractors instead of two
+  copies that had already drifted out of sync.
 - Keep a link's full `rel` tokens, its `target` attribute, and its raw (pre-resolution) href,
   and extract `<form>` elements — method, action, whether a password field is present (#125).
   Six catalogued issues depended on those three facts being discarded: unsafe cross-origin
