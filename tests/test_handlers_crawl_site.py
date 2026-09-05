@@ -575,6 +575,37 @@ def test_low_link_score_is_withheld_on_a_partial_native_crawl(monkeypatch):
     assert complete["summary"]["by_check"].get("LOW_LINK_SCORE") == 1
 
 
+def test_low_link_score_withholding_is_recorded_not_silent(tmp_path, monkeypatch):
+    """Absent from the findings is not the whole acceptance criterion: #246
+    requires the withheld check land in checks_skipped with a partial-graph
+    reason. ``aggregate._withhold_graph_wide_findings`` used to call
+    ``ctx.skip()`` on a check that had already fired -- ``skip()`` no-ops on
+    an id already in ``_fired_ids`` by design (see ``ctx.retract``'s own
+    docstring) -- so the finding vanished from ``issues`` but never reached
+    ``ctx.skipped`` either, reading as "silent" (never invoked) exactly like
+    a check nobody ran. That is indistinguishable from the very confusion
+    this withholding pass exists to prevent."""
+    monkeypatch.setattr(
+        spider_mod,
+        "crawl_site",
+        lambda *a, **kw: _partial_link_graph_result(partial=True, finish_reason="url_limit"),
+    )
+    handlers.crawl_site(url="https://example.test/", out_dir=str(tmp_path))
+    audit = json.loads((tmp_path / "audit.json").read_text())
+
+    skipped_ids = {s["id"] for s in audit["run"]["checks_skipped"]}
+    assert "LOW_LINK_SCORE" in skipped_ids, "withheld finding must be named in checks_skipped"
+    reason = next(
+        s["reason"] for s in audit["run"]["checks_skipped"] if s["id"] == "LOW_LINK_SCORE"
+    )
+    assert "partial" in reason
+
+    # Negative control: a check that never ran at all (never fired, never
+    # withheld) is the one category that legitimately reads as silent -- the
+    # bug's signature was LOW_LINK_SCORE joining that bucket by accident.
+    assert "LOW_LINK_SCORE" not in audit["summary"]["check_coverage"]["checks_silent_ids"]
+
+
 def test_inlink_boilerplate_only_is_withheld_on_a_partial_native_crawl(tmp_path, monkeypatch):
     """INLINK_BOILERPLATE_ONLY is a universal claim -- 'never linked from body
     content' -- computed by crawl_site itself rather than through
