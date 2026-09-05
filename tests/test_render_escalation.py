@@ -661,3 +661,38 @@ def test_render_escalation_recomputes_size_bytes_text_ratio_and_jsonld():
     assert record.text_ratio is not None and record.text_ratio > 0.0
     assert record.jsonld_blocks_found == 1
     assert record.jsonld_blocks_parsed == 1
+
+
+def test_the_crawl_passes_its_own_user_agent_to_the_rendered_fetch(monkeypatch, tmp_path):
+    """The fix in render_document is only worth anything if the crawl reaches it.
+
+    Pinning the identity inside render_document and then not passing the crawl's own
+    would be the shape this repository keeps finding (#128, #154, #165): a correct
+    module nothing is wired to. This asserts the wiring, not the renderer.
+    """
+    from seohead.crawl.spider import SpiderResult
+    from seohead.servers import handlers
+    from seohead.tools import render as render_tool
+
+    seen: dict = {}
+
+    def fake_render_document(target, rendering_config, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "url": target, "final_url": target, "html": "<html></html>"}
+
+    monkeypatch.setattr(render_tool, "render_document", fake_render_document)
+    monkeypatch.setattr(
+        render_tool,
+        "render_check",
+        lambda *a, **k: {"ok": True, "js_dependent": True, "empty_shell": ""},
+    )
+
+    settings = crawl_config.load(
+        overrides={"rendering.mode": "js", "http.user_agent": "AcmeAudit/2.0"}
+    )
+    result = SpiderResult()
+    result.pages = [_Page("https://example.com/")]
+
+    handlers._run_render_escalation(result, settings["rendering"], settings)
+
+    assert seen.get("user_agent") == "AcmeAudit/2.0"
