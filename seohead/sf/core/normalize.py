@@ -88,6 +88,19 @@ INTERNAL_FIELD_MAP: dict[str, list[str]] = {
     # (#18). An SF export simply never has this column, so it resolves to
     # None there, same as any other frame a list-mode run cannot fill.
     "representation": ["Representation"],
+    # Element-position evidence (issue #123): also not a default SF column —
+    # "was this element inside <head> once the parser resolved the tree"
+    # needs the parse tree itself, which only a native seohead crawl has.
+    # See seohead/sf/core/rules.py check_element_position/check_document_skeleton.
+    "title_outside_head": ["Title Outside Head"],
+    "meta_description_outside_head": ["Meta Description Outside Head"],
+    "canonical_outside_head": ["Canonical Outside Head"],
+    "directives_outside_head": ["Directives Outside Head"],
+    "hreflang_outside_head": ["Hreflang Outside Head"],
+    "head_count": ["Head Count"],
+    "body_count": ["Body Count"],
+    "head_not_first": ["Head Not First"],
+    "invalid_head_elements": ["Invalid Head Elements"],
 }
 
 # Canonical field -> headers for a ``*:Inlinks`` bulk export.
@@ -190,6 +203,8 @@ INT_FIELDS = frozenset(
         "validation_errors",
         "spelling_errors",
         "grammar_errors",
+        "head_count",
+        "body_count",
     }
 )
 FLOAT_FIELDS = frozenset(

@@ -331,3 +331,63 @@ def test_a_resumed_query_variant_budget_is_not_per_call(tmp_path):
     # must still hold once /other's two more variants are discovered after the resume.
     assert search_urls(resumed) == search_urls(full)
     assert resumed.excluded.get("query_variants_limit") == 2
+
+
+SITE_WITH_RICH_LINKS = {
+    "https://example.com/robots.txt": FakeResponse(
+        ROBOTS_OK, headers={"content-type": "text/plain"}
+    ),
+    "https://example.com/": FakeResponse(
+        "<html><head><title>t</title></head><body><h1>t</h1>"
+        '<a href="/a" rel="nofollow noopener" target="_blank">a</a>'
+        '<a href="/b">b</a>'
+        "</body></html>"
+    ),
+    "https://example.com/a": page(),
+    "https://example.com/b": page(),
+}
+
+
+def test_a_resumed_crawl_keeps_link_rel_as_a_tuple(tmp_path):
+    """Captured link attributes survive the checkpoint sidecar with the type they had in
+    memory. ``rel`` is a tuple on a fresh crawl; JSON only has lists, so without coercion on
+    the way back a resumed crawl would hand callers ['nofollow'] where an uninterrupted one
+    hands ('nofollow',) -- and every ``rel == ("nofollow",)`` comparison downstream would
+    quietly stop matching on exactly the crawls that had to be resumed."""
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    state_path = str(out_dir / "state.json")
+    links_path = str(out_dir / "links.jsonl")
+
+    part = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_RICH_LINKS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=1,
+        state_path=state_path,
+        links_path=links_path,
+        capture_link_attributes=True,
+        config_fingerprint="fp",
+    )
+    assert part.partial is True
+
+    resumed = crawl_site(
+        "https://example.com/",
+        fetcher=_fetcher(SITE_WITH_RICH_LINKS),
+        sleeper=lambda _s: None,
+        min_delay=0,
+        max_urls=50,
+        state_path=state_path,
+        links_path=links_path,
+        capture_link_attributes=True,
+        config_fingerprint="fp",
+    )
+    assert resumed.resumed is True
+
+    replayed = [e for e in resumed.links if e.destination.endswith("/a")]
+    assert replayed, "the edge recorded before the checkpoint must survive the resume"
+    for edge in replayed:
+        assert isinstance(edge.rel, tuple)
+        assert edge.rel == ("nofollow", "noopener")
+        assert edge.target == "_blank"

@@ -177,3 +177,25 @@ def test_header_and_aside_are_excluded_on_the_fallback_path():
     assert "Real text." in text
     assert "masthead" not in text
     assert "promo block" not in text
+
+
+# ── inline SVG/MathML descendant text is not body copy (issue #140) ──────────
+
+
+def test_svg_icon_titles_do_not_inflate_word_count():
+    """A 20-icon sprite header, each with an accessibility <title>, must not double the count."""
+    icons = "".join(f"<svg><title>search icon {i}</title></svg>" for i in range(20))
+    body = " ".join(f"word{i}" for i in range(40))
+    html = f"<html><body>{icons}<p>{body}</p></body></html>"
+    parsed = parse_html(html, "https://example.com/")
+    assert parsed["word_count"] == 40
+
+
+def test_extract_area_text_excludes_svg_and_math():
+    html = (
+        "<html><body><svg><text>decorative label</text></svg>"
+        "<math><mtext>x plus y</mtext></math><p>Real body copy.</p></body></html>"
+    )
+    root, _ = content_area.resolve_content_area(BeautifulSoup(html, features="lxml"))
+    text = content_area.extract_area_text(root)
+    assert text == "Real body copy."

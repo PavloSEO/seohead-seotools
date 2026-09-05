@@ -11,7 +11,7 @@ speeds, so counting them together is how a two-day job becomes a two-week one.
 
 ## Covers
 
-- **Meta Description** — Missing · Duplicate · Over 155 Characters · Below 70 Characters · Over 985 Pixels · Below 400 Pixels
+- **Meta Description** — Missing · Duplicate · Over 155 Characters · Below 70 Characters · Over 985 Pixels · Below 400 Pixels · Outside <head>
 
 ## The chain
 
@@ -57,7 +57,13 @@ alongside the character count, while "below 400 pixels" has no threshold behind 
 is carried as evidence and left unjudged. A native crawl names that column unmeasured rather
 than treating an absent value as zero.
 
-**6. Ship the backlog.**
+**6. Add `DESC_OUTSIDE_HEAD`, which the crawl in step 1 already resolved.** A browser closes
+`<head>` at the first element that does not belong there and reads everything after that point
+from `<body>` instead — the description is still on the page, just not where a search engine
+looks for it. That is the parser's own answer, from the parse tree the native crawl built;
+neither Screaming Frog's own crawl nor an export from it has a notion of this at all.
+
+**7. Ship the backlog.**
 
 ```bash
 seohead report-build --audit ./run/audit.json --format xlsx --out ./descriptions.xlsx
@@ -98,7 +104,8 @@ One request per page. Nothing paid. Pixel width rides along with an export you a
 - **Whether a duplicate is deliberate.** A template that emits one description across a product
   family is indistinguishable, from the outside, from a decision.
 - **Whether two meta descriptions exist on one page.** Only the first is kept during parsing;
-  a second is not counted, and neither is one placed outside `<head>`.
+  a second is not counted. `DESC_OUTSIDE_HEAD` still reads the position of whichever one parsing
+  kept.
 - **Pixel width on a native crawl.** It does not exist there, and "below 400 pixels" is not
   evaluated even where the column does.
 - **Whether the sentence is any good.** Structural only, like everything else here.

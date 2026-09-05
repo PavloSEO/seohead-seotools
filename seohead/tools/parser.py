@@ -4,7 +4,8 @@ Fetches a URL with browser-compatible request headers (httpx follows redirects a
 transparently decodes gzip/deflate/br), then extracts the on-page SEO
 signals a specialist cares about: title, meta description, canonical,
 robots, Open Graph / Twitter tags, the H1..H6 heading outline, JSON-LD
-blocks, links (with rel / nofollow / external flags), and the collapsed
+blocks, links (with raw and resolved href, rel / target / nofollow / external),
+forms (method, action, whether a password field is present), and the collapsed
 visible body text with a word count. Word count is scoped to a configurable
 content area (see ``content_area.py``) so navigation and footer boilerplate
 does not inflate it; link discovery always covers the whole document.
@@ -22,15 +23,22 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from html import unescape
 from typing import Any, cast
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from seohead.models import LinkInfo, ParsedPage, ParseFailed, ParseFetched, ParseResult
+from seohead.models import (
+    DocumentPosition,
+    FormInfo,
+    LinkInfo,
+    ParsedPage,
+    ParseFailed,
+    ParseFetched,
+    ParseResult,
+)
 from seohead.recon.net import http_client
-from seohead.tools.content_area import extract_area_text, resolve_content_area
+from seohead.tools.content_area import TEXT_EXCLUDED_TAGS, extract_area_text, resolve_content_area
 
 # Browser-like User-Agent: without it, bot protection (Cloudflare et al.)
 # tends to serve a challenge/block page instead of the real document.
@@ -65,6 +73,7 @@ _OPTION_KEYS = (
     "headings",
     "jsonld",
     "links",
+    "forms",
     "text",
     "url_sources",
     "classify_links",
@@ -108,12 +117,22 @@ _MAX_REDIRECTS = 8
 def collapse_whitespace(text: str | None) -> str:
     """Collapse all runs of whitespace to single spaces and trim.
 
-    Mirrors ``stripTags``'s ``\\s+ -> ' '`` + ``trim`` step. Also decodes
-    HTML entities so callers get human-readable text.
+    Mirrors ``stripTags``'s ``\\s+ -> ' '`` + ``trim`` step. Every call site in
+    this module passes text BeautifulSoup's own parser already produced
+    (``tag.get_text()`` or ``tag.get(attr)``), and lxml decodes character
+    references exactly once while building the tree -- the same number of
+    times a browser's tokenizer does. Decoding again here used to be a silent
+    no-op on ordinary markup, but on a page whose CMS or import pipeline
+    already double-escaped its entities (``&amp;amp;`` -> ``&amp;`` -> ``&``,
+    a real, common artifact) it decoded a second time, past what a browser
+    tab or a SERP snippet ever renders, and so past what the `TITLE_TOO_LONG`
+    / `DESC_TOO_SHORT` length checks should be measuring. There is nothing
+    left to decode here; a caller holding raw, unparsed markup would need to
+    decode it itself before calling this.
     """
     if not text:
         return ""
-    return " ".join(unescape(str(text)).split())
+    return " ".join(str(text).split())
 
 
 def is_external(href_abs: str, base_url: str) -> bool:
@@ -173,9 +192,14 @@ def document_doctype(html: str) -> str | None:
     return match.group(0).strip() if match else None
 
 
+def _first_meta_tag(soup: BeautifulSoup, *, name: str) -> Any:
+    """Return the first ``<meta name=...>`` tag (case-insensitive), or ``None``."""
+    return soup.find("meta", attrs={"name": _ci(name)})
+
+
 def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
     """Return the ``content`` of ``<meta name=...>`` (case-insensitive)."""
-    tag = soup.find("meta", attrs={"name": _ci(name)})
+    tag = _first_meta_tag(soup, name=name)
     # "content" is not one of BeautifulSoup's multi-valued attributes, so this
     # is always a plain string at runtime; the stub types it broadly because
     # .get() is generic across every attribute.
@@ -191,14 +215,47 @@ def _meta_content(soup: BeautifulSoup, *, name: str) -> str | None:
 # all — and BeautifulSoup's ``soup.title`` returns the first in document order.
 _FOREIGN_CONTENT = ("svg", "math")
 
+# <template> content is a DocumentFragment per the HTML spec: it never joins
+# the rendered tree and nothing inside it -- an <a href>, an <img src> -- is
+# ever requested by a browser or a search engine's crawler unless a script
+# explicitly clones the fragment in. That makes it the one element every
+# extractor of *real, requestable* content must agree to skip, so it is kept
+# here as the single shared answer rather than one list per function that can
+# silently drift (which is exactly how issue #140 happened: text extraction
+# excluded it, link and URL-source extraction did not).
+#
+# <noscript> is deliberately NOT in this set, unlike in ``_extract_text``
+# below. Its content is real, spec-defined markup that a JS-disabled client,
+# and search engines' initial non-rendering crawl of the raw HTML, do load --
+# it is the standard place to put a plain <img>/<a> fallback for a
+# lazy-loaded resource, which Google's own guidance recommends specifically
+# so the resource stays discoverable. Excluding it from link/URL-source
+# discovery would hide a genuinely fetchable URL (and any real 404 behind it)
+# from the auditor -- the same false-negative failure mode #138 was about,
+# just relocated. It stays excluded from *text* only, because JS-enabled
+# rendering (what a human visitor and Search Console's rendered view show)
+# never displays it as body copy.
+_INERT_LINK_CONTAINERS = ("template",)
+
+
+def _has_ancestor(tag: Any, names: tuple[str, ...]) -> bool:
+    """True when ``tag`` itself, or any ancestor, is named in ``names``."""
+    return tag.name in names or any(parent.name in names for parent in tag.parents)
+
+
+def _title_tag(soup: BeautifulSoup) -> Any:
+    """Return the tag ``document_title`` would read, ignoring SVG/MathML ``<title>``."""
+    for tag in soup.find_all("title"):
+        if _has_ancestor(tag, _FOREIGN_CONTENT):
+            continue
+        return tag
+    return None
+
 
 def document_title(soup: BeautifulSoup) -> str | None:
     """Return the HTML document title, ignoring SVG/MathML ``<title>``."""
-    for tag in soup.find_all("title"):
-        if any(parent.name in _FOREIGN_CONTENT for parent in tag.parents):
-            continue
-        return collapse_whitespace(tag.get_text()) or None
-    return None
+    tag = _title_tag(soup)
+    return (collapse_whitespace(tag.get_text()) or None) if tag else None
 
 
 # A robots directive is addressed to a named crawler; ``robots`` addresses all
@@ -224,16 +281,35 @@ _VALUED_DIRECTIVES = (
 )
 
 
-def robots_meta_values(soup: BeautifulSoup) -> list[str]:
-    """Return the ``content`` of every robots-directive meta, in document order."""
-    out: list[str] = []
+def _robots_directive_tags(soup: BeautifulSoup) -> list[Any]:
+    """Return every non-empty robots-directive ``<meta>`` tag, in document order."""
+    out: list[Any] = []
     for tag in soup.find_all("meta"):
         name = tag.get("name")
         if not isinstance(name, str) or name.lower() not in ROBOTS_META_NAMES:
             continue
         content = tag.get("content")
         if isinstance(content, str) and content.strip():
-            out.append(collapse_whitespace(content))
+            out.append(tag)
+    return out
+
+
+def robots_meta_values(soup: BeautifulSoup) -> list[str]:
+    """Return the ``content`` of every robots-directive meta, in document order."""
+    return [collapse_whitespace(tag.get("content")) for tag in _robots_directive_tags(soup)]
+
+
+def _hreflang_tags(soup: BeautifulSoup) -> list[Any]:
+    """Return every ``<link rel="alternate" hreflang="...">`` tag, in document order."""
+    out: list[Any] = []
+    for tag in soup.find_all("link"):
+        hreflang = tag.get("hreflang")
+        if not hreflang:
+            continue
+        rel_attr: str | list[str] = tag.get("rel") or []
+        rel_tokens = rel_attr.split() if isinstance(rel_attr, str) else list(rel_attr)
+        if any(isinstance(t, str) and t.lower() == "alternate" for t in rel_tokens):
+            out.append(tag)
     return out
 
 
@@ -356,6 +432,130 @@ def document_base_url(document: BeautifulSoup | str, final_url: str) -> str:
         return final_url
 
 
+# issue #123: a browser closes <head> at the first element that does not belong
+# there, so a canonical or robots directive placed after one silently stops
+# applying — from the source it looks fine, and every check that reads a tag
+# wherever it finds it agrees. These helpers read where the parser itself
+# resolved each element, which is the only view that matches what a browser
+# (and Google, which follows the same HTML5 parsing algorithm) actually acts
+# on. Verified directly against lxml's own recovery behaviour rather than
+# assumed: a body-only element inside <head> (a bare <div>, <p>, <img>, ...)
+# closes <head> there and moves it and everything after into <body>, while an
+# element the head content model actually allows (title/base/link/meta/style/
+# script/noscript/template, and comments) does not. That also means no
+# *resolved* tree can ever show an invalid element still sitting inside
+# <head> — by the time parsing recovers, it has already been moved out — so
+# "invalid elements in head" is read from the head span as written in the
+# source instead (see invalid_head_elements).
+def _in_head(tag: Any) -> bool:
+    """True when ``tag``'s ancestor chain includes a ``<head>`` element."""
+    return any(getattr(parent, "name", None) == "head" for parent in tag.parents)
+
+
+def _head_not_first(html_tag: Any, head_count: int) -> bool:
+    """True when some element under ``<html>`` precedes its ``<head>``.
+
+    Covers both "<head> Not First In <html> Element" and "<body> Element
+    Preceding <html>" from the Screaming Frog catalogue: once lxml recovers
+    from either shape of malformed markup, both collapse into one resolved
+    tree where something other than <head> is the first element child of the
+    single <html> root — there is no separate signal left to tell them apart.
+    """
+    if html_tag is None or head_count == 0:
+        return False
+    for child in html_tag.children:
+        name: str | None = getattr(child, "name", None)
+        if name is None:  # text/comment/doctype between the tags
+            continue
+        return name != "head"
+    return False
+
+
+# Elements the HTML head content model allows. A bare block-level element
+# (div/p/img/...) verified directly against lxml forces it to close <head>
+# early and move everything after into <body> — which is exactly the "outside
+# <head>" symptom these checks exist to catch — so this whitelist is also,
+# in effect, what a resolved tree could never still contain inside <head>.
+_ALLOWED_HEAD_TAGS = frozenset(
+    {"title", "base", "link", "meta", "style", "script", "noscript", "template"}
+)
+_HEAD_OPEN_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+_HEAD_CLOSE_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_BODY_OPEN_RE = re.compile(r"<body\b", re.IGNORECASE)
+# GTM's <noscript><iframe ...></noscript> fallback is the common real case: with
+# scripting enabled (the only case that matters here — the parser is producing
+# what a search engine's crawler sees) a browser treats <noscript>'s content as
+# opaque text, not markup, so nothing inside it ever forces <head> to close.
+# Stripped before scanning so it isn't flagged as an invalid element.
+_NOSCRIPT_RE = re.compile(r"<noscript\b.*?</noscript\s*>", re.IGNORECASE | re.DOTALL)
+# An opening tag only: "<" immediately followed by a letter excludes both a
+# closing tag ("</title>") and a comment/doctype ("<!--", "<!DOCTYPE").
+_OPEN_TAG_NAME_RE = re.compile(r"<([a-zA-Z][a-zA-Z0-9:-]*)")
+
+
+def invalid_head_elements(html: str) -> list[str]:
+    """Tag names written inside ``<head>...</head>`` that do not belong there.
+
+    Read from the source text, not the resolved tree: an invalid element is
+    exactly what makes the parser close <head> early, so by the time parsing
+    finishes recovering, the resolved <head> can no longer contain it (see the
+    block comment above). The literal span is the only place left to look.
+    """
+    open_match = _HEAD_OPEN_RE.search(html)
+    if not open_match:
+        return []
+    start = open_match.end()
+    close_match = _HEAD_CLOSE_RE.search(html, start)
+    body_match = _BODY_OPEN_RE.search(html, start)
+    if close_match and (body_match is None or close_match.start() < body_match.start()):
+        end = close_match.start()
+    elif body_match:
+        end = body_match.start()
+    else:
+        end = len(html)
+    span = _NOSCRIPT_RE.sub("", html[start:end])
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _OPEN_TAG_NAME_RE.finditer(span):
+        name = match.group(1).lower()
+        if name in _ALLOWED_HEAD_TAGS or name in seen:
+            continue
+        seen.add(name)
+        found.append(name)
+    return found
+
+
+def document_position(soup: BeautifulSoup, html: str) -> DocumentPosition:
+    """Where key elements sit relative to ``<head>``, as the parser resolved the tree.
+
+    Each ``*_outside_head`` flag is ``None`` when the element is simply absent
+    (a different, already-covered finding) and a bool only when it exists —
+    ``True`` iff every instance the parser found sits outside ``<head>``.
+    """
+    head_tags = soup.find_all("head")
+    body_tags = soup.find_all("body")
+    title_tag = _title_tag(soup)
+    desc_tag = _first_meta_tag(soup, name="description")
+    canonical_tag = soup.find("link", attrs={"rel": _rel_has("canonical")})
+    robots_tags = _robots_directive_tags(soup)
+    hreflang_tags = _hreflang_tags(soup)
+    return {
+        "head_count": len(head_tags),
+        "body_count": len(body_tags),
+        "head_not_first": _head_not_first(soup.find("html"), len(head_tags)),
+        "invalid_head_elements": invalid_head_elements(html),
+        "title_outside_head": (not _in_head(title_tag)) if title_tag else None,
+        "meta_description_outside_head": (not _in_head(desc_tag)) if desc_tag else None,
+        "canonical_outside_head": (not _in_head(canonical_tag)) if canonical_tag else None,
+        "directives_outside_head": (
+            any(not _in_head(tag) for tag in robots_tags) if robots_tags else None
+        ),
+        "hreflang_outside_head": (
+            any(not _in_head(tag) for tag in hreflang_tags) if hreflang_tags else None
+        ),
+    }
+
+
 def _extract_links(
     soup: BeautifulSoup,
     base_url: str,
@@ -372,9 +572,12 @@ def _extract_links(
     a ``<base>`` pointing elsewhere must not reclassify the whole page.
 
     Skips empty hrefs and ``javascript:`` / ``mailto:`` / ``tel:`` /
-    pure-fragment (``#...``) links. Each entry carries the resolved absolute
-    href, anchor text, rel tokens, a ``nofollow`` flag, and an ``external``
-    flag.
+    pure-fragment (``#...``) links, and any ``<a>`` inside a ``<template>``
+    (see ``_INERT_LINK_CONTAINERS`` for why ``<noscript>`` is not skipped
+    too). Each entry carries the resolved absolute href, the href exactly as
+    written (``raw_href`` — the only place a protocol-relative ``//host/path``
+    form is still visible once resolution has run), anchor text, rel tokens,
+    the ``target`` attribute, a ``nofollow`` flag, and an ``external`` flag.
 
     ``classify_links`` additionally resolves each link's ``position`` (nav,
     header, sidebar, footer, content, other; see ``link_position.py``). It is
@@ -393,6 +596,8 @@ def _extract_links(
         content_root, _ = find_content_root(soup, content_area_config)
         rules = rules_from_config(position_rules)
     for tag in soup.find_all("a"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue  # a <template>-only link is never fetched by a browser or crawler
         # "href" is single-valued, so this is always a plain string.
         href_raw = (cast("str | None", tag.get("href")) or "").strip()
         if not href_raw:
@@ -415,8 +620,10 @@ def _extract_links(
         rel_tokens = [t.lower() for t in rel_tokens]
         entry: LinkInfo = {
             "href": abs_href,
+            "raw_href": href_raw,
             "text": collapse_whitespace(tag.get_text(" ")),
             "rel": " ".join(rel_tokens),
+            "target": (cast("str | None", tag.get("target")) or "").strip(),
             "nofollow": "nofollow" in rel_tokens,
             "external": is_external(abs_href, final_url),
         }
@@ -426,14 +633,36 @@ def _extract_links(
     return links
 
 
+def _extract_forms(soup: BeautifulSoup, base_url: str, final_url: str) -> list[FormInfo]:
+    """Collect ``<form>`` elements: method, resolved action, and whether a password field
+    is present (issue #125 — a form is otherwise invisible to every check downstream).
+
+    An absent or empty ``action`` submits to the document's own URL per the HTML standard,
+    so it resolves to ``final_url`` rather than being left blank or wrongly following
+    ``base_url`` (a ``<base>`` tag changes where a *relative* action points, not what an
+    omitted one means).
+    """
+    forms: list[FormInfo] = []
+    for tag in soup.find_all("form"):
+        method = (cast("str | None", tag.get("method")) or "get").strip().lower()
+        action_raw = (cast("str | None", tag.get("action")) or "").strip()
+        try:
+            action = urljoin(base_url, action_raw) if action_raw else final_url
+        except ValueError:
+            action = final_url
+        has_password = tag.find("input", attrs={"type": _ci("password")}) is not None
+        forms.append({"method": method, "action": action, "has_password": has_password})
+    return forms
+
+
 def _extract_text(soup: BeautifulSoup) -> str:
-    """Collapsed visible body text (script/style removed)."""
+    """Collapsed visible body text (see ``content_area.TEXT_EXCLUDED_TAGS`` for what is removed)."""
     body = soup.body or soup
     # Work on a copy so we don't mutate the shared tree used by other steps.
     from copy import copy
 
     body = copy(body)
-    for tag in body.find_all(["script", "style", "noscript", "template"]):
+    for tag in body.find_all(list(TEXT_EXCLUDED_TAGS)):
         tag.decompose()
     return collapse_whitespace(body.get_text(" "))
 
@@ -475,7 +704,9 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
 
     Covers media, forms, citations, ping, meta-refresh, and itemtype. Each URL
     records the tag and attribute where it was found. Relative references are
-    resolved against ``base_url``.
+    resolved against ``base_url``. Skips ``<template>`` descendants -- see
+    ``_INERT_LINK_CONTAINERS`` for why only ``<template>`` and not
+    ``<noscript>``.
     """
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -498,6 +729,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
 
     for tag_name, attrs in _URL_SOURCE_ATTRS.items():
         for tag in soup.find_all(tag_name):
+            if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+                continue  # a <template>-only resource is never fetched, see _INERT_LINK_CONTAINERS
             for attr in attrs:
                 value = tag.get(attr)
                 if not value:
@@ -516,17 +749,23 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
     # performs no I/O, so a linked .css is reported as a resource by the <link>
     # rule above and its contents are a crawler concern, not a parser one.
     for tag in soup.find_all(style=True):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue
         style_value = tag.get("style")
         if isinstance(style_value, list):
             style_value = " ".join(style_value)
         for url in extract_css_urls(style_value):
             push(url, tag.name, "style")
     for style_tag in soup.find_all("style"):
+        if _has_ancestor(style_tag, _INERT_LINK_CONTAINERS):
+            continue
         for url in extract_css_urls(style_tag.get_text()):
             push(url, "style", "css")
 
     # meta http-equiv=refresh content="0;url=..."
     for meta in soup.find_all("meta"):
+        if _has_ancestor(meta, _INERT_LINK_CONTAINERS):
+            continue
         equiv = meta.get("http-equiv") or ""
         if isinstance(equiv, list):
             equiv = " ".join(equiv)
@@ -540,6 +779,8 @@ def extract_url_sources(soup: BeautifulSoup, base_url: str) -> list[dict[str, st
     # itemtype is a microdata vocabulary URL rather than a resource URL, but it
     # is still a useful carrier for an auditor to inspect.
     for tag in soup.select("[itemtype]"):
+        if _has_ancestor(tag, _INERT_LINK_CONTAINERS):
+            continue
         value = tag.get("itemtype")
         if isinstance(value, list):
             for v in value:
@@ -651,6 +892,9 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         )
     else:
         result["links"] = []
+    # Cheap regardless of site size: forms are rare compared to links, so — unlike
+    # classify_links — there is no per-crawl memory concern that would justify an opt-out.
+    result["forms"] = _extract_forms(soup, base_url, final_url) if opts["forms"] else []
     # url_sources covers carriers beyond a[href] (srcset, ping, formaction,
     # cite, meta-refresh, itemtype). It is off by default to preserve the links contract.
     if opts["url_sources"]:
@@ -681,6 +925,12 @@ def parse_html(html: str, final_url: str, options: dict[str, Any] | None = None)
         result["content_text"] = ""
         result["content_area_strategy"] = None
         result["word_count"] = 0
+
+    # Always computed, regardless of the option flags above: it is a handful of
+    # already-parsed-tree lookups, not a separate extraction pass, and every
+    # option that turns off title/canonical/etc. text still leaves the tree to
+    # read positions from. See document_position (issue #123).
+    result["position"] = document_position(soup, html)
 
     # Built imperatively above (one assignment per option branch) rather than as
     # one literal, so a plain dict is the natural builder; cast once at the
@@ -748,7 +998,7 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     """Fetch ``url`` and return its extracted SEO data.
 
     ``options`` accepts the boolean flags ``meta``, ``canonical``, ``og``,
-    ``headings``, ``jsonld``, ``links`` and ``text`` (all default True), plus
+    ``headings``, ``jsonld``, ``links``, ``forms`` and ``text`` (all default True), plus
     ``url_sources`` and ``classify_links`` (both default False). A ``timeout``
     (seconds) may also be provided, a ``content_area`` dict configures the
     region ``word_count`` is scoped to — see ``content_area.resolve_content_area``
@@ -759,7 +1009,7 @@ def parse_url(url: str, options: dict[str, Any] | None = None) -> ParseResult:
     On success returns a dict with keys: ``url``, ``final_url``,
     ``status_code``, ``ok``, ``title``, ``meta_description``, ``canonical``,
     ``robots``, ``charset``, ``doctype``, ``viewport``, ``og``, ``twitter``,
-    ``headings``, ``jsonld``, ``links``, ``text``, ``content_text``,
+    ``headings``, ``jsonld``, ``links``, ``forms``, ``text``, ``content_text``,
     ``content_area_strategy`` and ``word_count``.
 
     On any fetch or parse error returns ``{"url", "ok": False, "error"}``
@@ -805,7 +1055,11 @@ if __name__ == "__main__":
         <h2>Sub</h2>
         <a href="/internal">Internal</a>
         <a href="https://other.example.org/x" rel="nofollow noopener">External</a>
+        <a href="//cdn.example.org/y" target="_blank">Protocol-relative, new tab</a>
         <a href="mailto:a@b.com">Mail</a>
+        <form method="post" action="http://insecure.example.com/submit">
+          <input type="password" name="pw">
+        </form>
         <p>Hello   world  from the body.</p>
         <script>ignore()</script>
       </body>
@@ -828,11 +1082,50 @@ if __name__ == "__main__":
     assert not hrefs["https://example.com/internal"]["external"]
     assert hrefs["https://other.example.org/x"]["external"]
     assert hrefs["https://other.example.org/x"]["nofollow"]
+    assert hrefs["https://example.com/internal"]["raw_href"] == "/internal"
     assert all("mailto" not in h for h in hrefs)  # mailto skipped
+
+    blank_link = hrefs["https://cdn.example.org/y"]
+    assert blank_link["raw_href"] == "//cdn.example.org/y"  # protocol-relative, pre-resolution
+    assert blank_link["target"] == "_blank"
+    assert hrefs["https://example.com/internal"]["target"] == ""
+
+    assert len(parsed["forms"]) == 1
+    form = parsed["forms"][0]
+    assert form["method"] == "post"
+    assert form["action"] == "http://insecure.example.com/submit"
+    assert form["has_password"] is True
 
     assert "Hello world from the body." in parsed["text"]
     assert "ignore" not in parsed["text"]  # script stripped
     assert parsed["word_count"] > 0
+
+    # Element position (issue #123): a clean head reports nothing outside it.
+    pos = parsed["position"]
+    assert pos["head_count"] == 1 and pos["body_count"] == 1
+    assert pos["head_not_first"] is False
+    assert pos["invalid_head_elements"] == []
+    assert pos["canonical_outside_head"] is False
+    assert pos["title_outside_head"] is False
+
+    # A body-only element in <head> forces everything after it out — the
+    # classic real-world cause (a stray <div>, here) pushes the canonical that
+    # follows it into <body>, exactly as a browser would read it.
+    broken_head = """
+    <html><head>
+      <title>T</title>
+      <script>ignore()</script>
+      <div>oops</div>
+      <link rel="canonical" href="https://example.com/c">
+    </head><body>hi</body></html>
+    """
+    broken = parse_html(broken_head, "https://example.com/page")
+    assert broken["position"]["canonical_outside_head"] is True
+    assert broken["position"]["invalid_head_elements"] == ["div"]
+    assert broken["canonical"] == "https://example.com/c"  # still found — just misplaced
+
+    two_bodies = "<html><head><title>T</title></head><body>a</body><body>b</body></html>"
+    assert parse_html(two_bodies, "https://example.com/page")["position"]["body_count"] == 2
 
     # Option flags disable their extraction.
     off = parse_html(sample, "https://example.com/page", {"headings": False, "links": False})

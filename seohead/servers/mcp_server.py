@@ -95,8 +95,10 @@ def build_server():  # -> FastMCP
 
     @mcp.tool(annotations=create_files_from_web, structured_output=True)
     def seo_crawl_site(
-        url: str | None = None,
+        url: str = "",
         urls: list[str] | None = None,
+        sitemap: str | None = None,
+        config: str | None = None,
         max_urls: int = 200,
         max_depth: int = 5,
         min_delay: float = 0.5,
@@ -104,10 +106,12 @@ def build_server():  # -> FastMCP
         concurrency: int = 1,
         out_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Crawl a site from a start URL by following links, then audit the result
-        through the same checks used for Screaming Frog exports. Same host only,
-        politeness adapts to the origin. Checks whose evidence a native crawl
-        cannot produce are reported as skipped, never as clean.
+        """Crawl a site from a start URL by following links, or fetch an explicit
+        ``urls`` list instead of following links at all, then audit the result
+        through the same checks used for Screaming Frog exports. One of ``url``
+        or ``urls`` is required. Same host only when following links, politeness
+        adapts to the origin. Checks whose evidence a native crawl cannot produce
+        are reported as skipped, never as clean.
 
         Pass ``urls`` instead of ``url`` for list mode: fetch exactly that set,
         depth 0, no link discovery -- the migration-audit shape (a redirect map,
@@ -119,11 +123,17 @@ def build_server():  # -> FastMCP
         "ignore" (do not fetch it at all) -- applied in list mode too, and named
         in the result's ``discovery.directive_policy``, not only enforced
         silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
-        grows into, not a fixed thread count."""
+        grows into, not a fixed thread count. ``sitemap`` seeds the crawl from a
+        sitemap's declared URLs in addition to following links from ``url``, and
+        reconciles the two sources (declared vs. observed). ``config`` is a path
+        to a crawler config file (JSON) on this machine, the same file
+        ``crawl-site --config`` reads."""
         return _checked(
             handlers.crawl_site(
-                url=url,
+                url=url or None,
                 urls=urls,
+                sitemap=sitemap,
+                config=config,
                 max_urls=max_urls,
                 max_depth=max_depth,
                 min_delay=min_delay,

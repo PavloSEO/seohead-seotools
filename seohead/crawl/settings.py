@@ -120,6 +120,17 @@ DEFAULTS: dict[str, Any] = {
         # built-ins. Plenty of production menus are not a <nav> element.
         "rules": [],
     },
+    "link_attributes": {
+        # Off by default, same reasoning as link_position.classify just above: the full
+        # rel-token set, target attribute, and raw (pre-resolution) href add ~50% to
+        # per-edge memory on a large crawl (measured on a synthetic 3387-page/
+        # 150-link-per-page corpus, ~508k edges: roughly +95 bytes/edge, ~46 MiB total --
+        # see LinkEdge's own docstring in crawl/spider.py for the breakdown, issue #125).
+        # Only unsafe-cross-origin-link and protocol-relative-link detection need this;
+        # the per-target follow/nofollow aggregation and the localhost-outlink check use
+        # only fields already stored regardless of this setting.
+        "capture": False,
+    },
     "cache": {
         # off (default): no cache, reads or writes — a crawl has exactly the side effects it
         # had before this setting existed, per this project's own rule that a side effect (here,
@@ -252,6 +263,9 @@ RESULTS_AFFECTING: frozenset[str] = frozenset(
         # changes where any given link lands.
         "link_position.classify",
         "link_position.rules",
+        # Whether unsafe-cross-origin-link and protocol-relative-link detection can find
+        # anything at all -- see LinkEdge's own docstring in crawl/spider.py.
+        "link_attributes.capture",
         # A replay run can answer entirely from a stale cache; a forced-invalidate run trusted
         # nothing on disk. Both change whether the findings describe the site now or earlier.
         "cache.mode",
@@ -347,6 +361,11 @@ DESCRIPTIONS: dict[str, str] = {
     "link_position.rules": (
         "Ordered [{'position', 'selector'}] overrides for the built-in nav/header/sidebar/"
         "footer selectors; empty keeps the built-ins. Only read when classify is true."
+    ),
+    "link_attributes.capture": (
+        "Store each link's full rel tokens, target attribute, and raw (pre-resolution) href "
+        "-- needed for unsafe-cross-origin-link and protocol-relative-link detection, at a "
+        "real memory cost on a large crawl."
     ),
     "cache.mode": (
         "'off' (default: no cache), 'live' (real HTTP freshness: max-age/Expires, "

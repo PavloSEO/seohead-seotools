@@ -60,6 +60,21 @@ def test_url_sources_off_by_default():
     assert "url_sources" not in r  # The disabled option preserves backward compatibility.
 
 
+# ── inert <template> content (issue #140) ───────────────────────────────────
+
+
+def test_template_image_is_not_a_url_source():
+    """<template> is a DocumentFragment: a browser never requests what is inside it."""
+    src = _sources('<template><img src="/template-image.jpg"></template>')
+    assert src == []
+
+
+def test_noscript_image_is_still_a_url_source():
+    """Unlike <template>, <noscript> is a real fallback a JS-disabled client does load."""
+    src = _sources('<noscript><img src="/fallback.jpg"></noscript>')
+    assert {"url": "https://example.com/fallback.jpg", "tag": "img", "attr": "src"} in src
+
+
 # ── CSS-referenced resources ────────────────────────────────────────────────
 
 

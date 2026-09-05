@@ -117,6 +117,9 @@ def test_allowed_private_hosts_does_not_survive_a_redirect_to_a_different_privat
 
     class Response:
         is_redirect = True
+        # A real redirect response always carries one, and the guard now reports
+        # it so a caller can tell a refused hop from a transport failure (#175).
+        status_code = 302
         request = Request()
         headers: ClassVar[dict[str, str]] = {"location": "http://admin.internal/panel"}
 
@@ -143,6 +146,9 @@ def test_redirect_hook_blocks_a_private_destination(monkeypatch: pytest.MonkeyPa
 
     class Response:
         is_redirect = True
+        # A real redirect response always carries one, and the guard now reports
+        # it so a caller can tell a refused hop from a transport failure (#175).
+        status_code = 302
         request = Request()
         headers: ClassVar[dict[str, str]] = {"location": "http://127.0.0.1/admin"}
 

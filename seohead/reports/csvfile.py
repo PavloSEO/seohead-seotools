@@ -18,7 +18,7 @@ from typing import Any
 
 
 def write(document: dict[str, Any], path: pathlib.Path) -> None:
-    from seohead.reports import SEVERITY_TITLES
+    from seohead.reports import SEVERITY_TITLES, neutralize_formula
 
     with path.open("w", encoding="utf-8-sig", newline="") as fh:
         # ``utf-8-sig`` includes a BOM so Excel detects UTF-8 instead of corrupting
@@ -29,9 +29,9 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
             writer.writerow(
                 [
                     SEVERITY_TITLES.get(finding.get("severity"), finding.get("severity")),
-                    finding.get("source", ""),
-                    finding.get("url", ""),
-                    finding.get("text", ""),
+                    neutralize_formula(finding.get("source", "")),
+                    neutralize_formula(finding.get("url", "")),
+                    neutralize_formula(finding.get("text", "")),
                 ]
             )
 
@@ -55,4 +55,4 @@ def write(document: dict[str, Any], path: pathlib.Path) -> None:
             writer = csv.writer(fh, delimiter=";")
             writer.writerow(columns)
             for page in pages:
-                writer.writerow([page.get(c, "") for c in columns])
+                writer.writerow([neutralize_formula(page.get(c, "")) for c in columns])

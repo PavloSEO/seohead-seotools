@@ -63,12 +63,14 @@ Follow a live redirect chain for a URL and report each hop (status, location).
 
 MCP name: `seo_crawl_site`
 
-Crawl a site from a start URL by following links, then audit the result through the same checks used for Screaming Frog exports. Same host only, politeness adapts to the origin. Checks whose evidence a native crawl cannot produce are reported as skipped, never as clean.
+Crawl a site from a start URL by following links, or fetch an explicit ``urls`` list instead of following links at all, then audit the result through the same checks used for Screaming Frog exports. One of ``url`` or ``urls`` is required. Same host only when following links, politeness adapts to the origin. Checks whose evidence a native crawl cannot produce are reported as skipped, never as clean.
 
 | Argument | Type | Default |
 |---|---|---|
-| `url` | `str | None` | `None` |
+| `url` | `str` | `''` |
 | `urls` | `list[str] | None` | `None` |
+| `sitemap` | `str | None` | `None` |
+| `config` | `str | None` | `None` |
 | `max_urls` | `int` | `200` |
 | `max_depth` | `int` | `5` |
 | `min_delay` | `float` | `0.5` |
@@ -90,7 +92,11 @@ anyway, and report what a compliant crawler would have missed) or
 "ignore" (do not fetch it at all) -- applied in list mode too, and named
 in the result's ``discovery.directive_policy``, not only enforced
 silently. ``concurrency`` is a per-origin ceiling the adaptive throttle
-grows into, not a fixed thread count.
+grows into, not a fixed thread count. ``sitemap`` seeds the crawl from a
+sitemap's declared URLs in addition to following links from ``url``, and
+reconciles the two sources (declared vs. observed). ``config`` is a path
+to a crawler config file (JSON) on this machine, the same file
+``crawl-site --config`` reads.
 
 ### `crawl-describe-settings`
 

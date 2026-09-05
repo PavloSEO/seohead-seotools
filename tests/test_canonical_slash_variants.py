@@ -102,6 +102,44 @@ def test_a_canonical_whose_only_crawled_variant_is_a_redirect_still_fires(tmp_pa
     assert "https://blog.example.com/post" in fired.get("CANONICAL_TO_REDIRECT", set())
 
 
+# The other half of #95 (issue #176): a normalised key can hold a plain 404 and its 301
+# twin rather than a 200 and its 301 twin, and the old code read ``targets[0]`` — whichever
+# crawl order inserted first — instead of noticing the redirect either way.
+NOTFOUND = "https://blog.example.com/a"
+NOTFOUND_SLASHED = "https://blog.example.com/a/"
+
+
+def test_canonical_to_redirect_fires_when_the_4xx_twin_is_crawled_first(tmp_path):
+    rows = [
+        _row("https://blog.example.com/post", canonical=NOTFOUND_SLASHED),
+        _row(NOTFOUND, status=404, indexability="Non-Indexable"),
+        _row(
+            NOTFOUND_SLASHED,
+            status=301,
+            indexability="Non-Indexable",
+            redirect="https://blog.example.com/b/",
+        ),
+    ]
+    fired = _fired(tmp_path, rows)
+    assert "https://blog.example.com/post" in fired.get("CANONICAL_TO_REDIRECT", set())
+
+
+def test_canonical_to_redirect_fires_when_the_3xx_twin_is_crawled_first(tmp_path):
+    """Same fixture, reversed insertion order — the verdict must not depend on crawl order."""
+    rows = [
+        _row("https://blog.example.com/post", canonical=NOTFOUND_SLASHED),
+        _row(
+            NOTFOUND_SLASHED,
+            status=301,
+            indexability="Non-Indexable",
+            redirect="https://blog.example.com/b/",
+        ),
+        _row(NOTFOUND, status=404, indexability="Non-Indexable"),
+    ]
+    fired = _fired(tmp_path, rows)
+    assert "https://blog.example.com/post" in fired.get("CANONICAL_TO_REDIRECT", set())
+
+
 def test_canonical_non_indexable_reads_every_variant_too(tmp_path):
     """The 301 variant is Non-Indexable; the 200 one is not. The canonical is fine."""
     rows = [

@@ -11,7 +11,7 @@ nothing to offer a visitor who matches none of it.
 
 ## Covers
 
-- **Hreflang** — Incorrect Language & Region Codes · Multiple Entries · Missing Self Reference · Missing X-Default · Not Using Canonical
+- **Hreflang** — Incorrect Language & Region Codes · Multiple Entries · Missing Self Reference · Missing X-Default · Not Using Canonical · Outside <head>
 
 ## The chain
 
@@ -55,7 +55,18 @@ Five checks group by the declaring page, which is how a crawler reads one page's
 each one makes an annotation ambiguous or invalid; a missing `x-default` merely leaves the
 fallback unstated.
 
-**4. Check the run, then export.**
+**4. Add `HREFLANG_OUTSIDE_HEAD` from a native crawl, since the export above cannot carry it.**
+
+```bash
+seohead crawl-site --url https://example.com --out-dir ./run
+```
+
+A browser closes `<head>` at the first element that does not belong there, and an alternate
+link after that point is read from `<body>` instead — every other check in this scenario would
+judge it as if it still counted. That is the parser's own answer to where the tag ended up, not
+a reading of the source text, so it exists only where this crawl's own parse tree was built.
+
+**5. Check the run, then export.**
 
 ```bash
 seohead log-scan --run ./run
@@ -92,7 +103,7 @@ person reading the page.
 
 ## What it costs
 
-- One request per URL in steps 1 and 2. Steps 3 and 4 are local reads.
+- One request per URL in steps 1 and 2, plus the crawl in step 4. Steps 3 and 5 are local reads.
 - Nothing paid.
 - This is the cheapest chain in this directory: a single-page validation costs one GET.
 
@@ -103,8 +114,9 @@ person reading the page.
   language detection runs here.
 - **Whether a region should exist at all.** `es-MX` is valid whether or not the business sells
   in Mexico.
-- **Whether the annotation is inside `<head>`.** Element position is not recorded, so an
-  annotation crawlers would ignore is judged as if it counted.
+- **Whether the annotation is inside `<head>`, on a plain Screaming Frog export.**
+  `HREFLANG_OUTSIDE_HEAD` needs the parse tree a native crawl builds; an export-only run names
+  it skipped rather than reporting it clean.
 - **Whether the other end agrees.** Reciprocity, return links and target status are
   [scenario 18](hreflang-return-links.md).
 - **Annotations delivered in an XML sitemap or an HTTP header.** Only the HTML `link` elements

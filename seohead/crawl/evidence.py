@@ -12,6 +12,7 @@ as a clean result.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from seohead.tools.parser import robots_directives
@@ -67,8 +68,18 @@ UNMEASURED_COLUMNS: tuple[str, ...] = (
 )
 
 
-def _indexability(record: Any) -> tuple[str, str]:
-    """Derive SF's Indexability pair without inventing a verdict."""
+def _indexability(record: Any, blocked_by_robots: bool = False) -> tuple[str, str]:
+    """Derive SF's Indexability pair without inventing a verdict.
+
+    ``blocked_by_robots`` takes priority over the fetched outcome: a
+    ``report_only`` crawl fetches a disallowed URL anyway to get full
+    coverage, but a compliant crawler never would have, so the status code it
+    happened to get back is not what makes the page non-indexable. This is
+    exactly what a Screaming Frog ``Internal:All`` export would say for a URL
+    it fetched under "ignore robots.txt" while still tracking the disallow.
+    """
+    if blocked_by_robots:
+        return "Non-Indexable", "Blocked by Robots.txt"
     if record.error and record.status_code is None:
         return "Non-Indexable", "Response unavailable"
     code = record.status_code
@@ -86,9 +97,13 @@ def _indexability(record: Any) -> tuple[str, str]:
     return "Indexable", ""
 
 
-def _row(record: Any) -> dict[str, Any]:
-    indexability, reason = _indexability(record)
-    return {
+def _row(
+    record: Any,
+    blocked_by_robots: bool = False,
+    inlink_counts: dict[str, tuple[int, int]] | None = None,
+) -> dict[str, Any]:
+    indexability, reason = _indexability(record, blocked_by_robots)
+    row = {
         "Address": record.url,
         "Content Type": record.content_type,
         "Status Code": record.status_code if record.status_code is not None else 0,
@@ -113,6 +128,18 @@ def _row(record: Any) -> dict[str, Any]:
         "Doctype": record.doctype,
         "Viewport": record.viewport,
         "Meta Charset": record.charset,
+        # Element-position evidence (issue #123): same story as the four
+        # columns above — an SF export never carries this, so it stays blank
+        # there and the position/skeleton checks skip honestly (see rules.py).
+        "Title Outside Head": record.title_outside_head,
+        "Meta Description Outside Head": record.meta_description_outside_head,
+        "Canonical Outside Head": record.canonical_outside_head,
+        "Directives Outside Head": record.directives_outside_head,
+        "Hreflang Outside Head": record.hreflang_outside_head,
+        "Head Count": record.head_count,
+        "Body Count": record.body_count,
+        "Head Not First": record.head_not_first,
+        "Invalid Head Elements": record.invalid_head_elements,
         "OG:Title": record.og_title,
         "OG:Description": record.og_description,
         "OG:Image": record.og_image,
@@ -133,6 +160,15 @@ def _row(record: Any) -> dict[str, Any]:
         # representation -- see seohead.crawl.render_escalation.
         "Representation": record.representation,
     }
+    # Only set when the crawl's own link graph is known at all (see
+    # build_evidence): a page absent from ``inlink_counts`` on a followed-link
+    # crawl has zero inlinks for real, but on a fetched-URL-list run nobody
+    # ever looked for inlinks, and the two must not read the same (#154).
+    if inlink_counts is not None:
+        total, unique = inlink_counts.get(record.url, (0, 0))
+        row["Inlinks"] = total
+        row["Unique Inlinks"] = unique
+    return row
 
 
 def _inlinks_frame(links: list[Any]) -> Any:
@@ -160,6 +196,21 @@ def _inlinks_frame(links: list[Any]) -> Any:
     )
 
 
+def _inlink_counts(links: list[Any]) -> dict[str, tuple[int, int]]:
+    """Per-destination (Inlinks, Unique Inlinks), from the crawl's own link graph.
+
+    Mirrors what a Screaming Frog ``Internal:All`` export calls those two
+    columns: every recorded edge counts toward Inlinks, distinct source pages
+    toward Unique Inlinks. A destination absent here was never linked at all.
+    """
+    totals: Counter[str] = Counter()
+    sources: dict[str, set[str]] = {}
+    for edge in links:
+        totals[edge.destination] += 1
+        sources.setdefault(edge.destination, set()).add(edge.source)
+    return {dest: (total, len(sources[dest])) for dest, total in totals.items()}
+
+
 def build_evidence(result: CrawlResult) -> dict[str, Any]:
     """Project a crawl into analyzer-shaped frames with its gaps declared.
 
@@ -170,15 +221,24 @@ def build_evidence(result: CrawlResult) -> dict[str, Any]:
     """
     import pandas as pd
 
-    frame = pd.DataFrame([_row(record) for record in result.pages])
+    # Only a followed-links crawl (``SpiderResult``) ever populates a link
+    # graph; a fetched URL list (``CrawlResult``) never discovers links, so it
+    # keeps declaring "all_inlinks" (and per-page Inlinks/Unique Inlinks,
+    # which come from the same graph) absent exactly as before.
+    links = getattr(result, "links", None)
+    inlink_counts = _inlink_counts(links) if links else None
+    # Populated even under ``robots_policy="report_only"``, where a disallowed
+    # URL is still fetched and gets an ordinary page row (#154) -- that row
+    # must not read as indexable just because the fetch happened to succeed.
+    blocked = set(getattr(result, "robots_blocked", None) or [])
+
+    frame = pd.DataFrame(
+        [_row(record, record.url in blocked, inlink_counts) for record in result.pages]
+    )
     frames: dict[str, Any] = {"internal_all": frame}
     found = ["internal_all"]
     missing = list(UNAVAILABLE_FRAMES)
 
-    # Only a followed-links crawl (``SpiderResult``) ever populates a link
-    # graph; a fetched URL list (``CrawlResult``) never discovers links, so it
-    # keeps declaring "all_inlinks" absent exactly as before.
-    links = getattr(result, "links", None)
     if links:
         frames["all_inlinks"] = _inlinks_frame(links)
         found.append("all_inlinks")

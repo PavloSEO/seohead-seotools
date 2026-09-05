@@ -29,7 +29,7 @@ import httpx
 from seohead.crawl.cache import ResponseCache
 from seohead.crawl.settings import resolve_credential_headers
 from seohead.crawl.throttle import MAX_DELAY_S, Throttle
-from seohead.recon.net import UA, http_client, pinned_target, validate_url
+from seohead.recon.net import UA, BlockedRedirectError, http_client, pinned_target, validate_url
 from seohead.tools.parser import parse_html
 from seohead.tools.robots import is_allowed, match_path, parse_robots
 
@@ -74,6 +74,21 @@ class PageRecord:
     charset: str = ""
     doctype: str = ""
     viewport: str = ""
+    # Document-position evidence for issue #123: like the four fields above, a
+    # native Screaming Frog export never carries this either, because "was
+    # this element inside <head> once the parser recovered" needs the parse
+    # tree, not a crawl column. ``None`` means the element itself is absent
+    # (a different finding); the joined string mirrors how other multi-value
+    # fields on this record (e.g. ``meta_robots``) are carried as text.
+    title_outside_head: bool | None = None
+    meta_description_outside_head: bool | None = None
+    canonical_outside_head: bool | None = None
+    directives_outside_head: bool | None = None
+    hreflang_outside_head: bool | None = None
+    head_count: int = 0
+    body_count: int = 0
+    head_not_first: bool = False
+    invalid_head_elements: str = ""
     # Every link found on the page, and how many of them left the host. Note
     # that Screaming Frog's Outlinks column counts internal links only, so the
     # projection in evidence.py subtracts rather than passing this through.
@@ -83,12 +98,18 @@ class PageRecord:
     jsonld_blocks_parsed: int = 0
     error: str = ""
     # "timeout", "connection" (a transport failure that produced no response at all —
-    # refused/reset connection, DNS failure, an aborted TLS handshake), or "" for anything
-    # else (a non-2xx response, a parser error, no error at all). Recorded as data rather than
-    # left for a caller to re-derive from ``error``'s free text, because that text is whatever
-    # the underlying exception happened to say — see ``_classify_fetch_error`` and #132. Both
-    # ``collect_urls``'s live Throttle and ``spider._fold_failure_streaks``'s replay of the same
-    # decision from a written-out record key off this field so the two never drift apart.
+    # refused/reset connection, DNS failure, an aborted TLS handshake), "blocked_redirect"
+    # (the server answered with a real redirect whose ``Location`` our own guard refused to
+    # follow — see ``recon.net.BlockedRedirectError`` and #175; unlike the first two, this one
+    # always comes with a real ``status_code`` and ``redirect_url``, because a response was
+    # received), or "" for anything else (a non-2xx response, a parser error, no error at all).
+    # Recorded as data rather than left for a caller to re-derive from ``error``'s free text,
+    # because that text is whatever the underlying exception happened to say — see
+    # ``_classify_fetch_error`` and #132. Both ``collect_urls``'s live Throttle and
+    # ``spider._fold_failure_streaks``'s replay of the same decision from a written-out record
+    # key off this field so the two never drift apart. ``_fold_failure_streaks`` only consults
+    # this field when ``status_code`` is still ``None``, so "blocked_redirect" never reaches
+    # that branch — it counts as the healthy response it is, like any other 3xx.
     error_kind: str = ""
     # "" when no cache was configured for this run at all. Otherwise one of "hit" (served from
     # disk, no request sent), "revalidated" (a conditional request came back 304, body reused)
@@ -153,6 +174,7 @@ def _first_heading(parsed: dict, level: str, index: int = 0) -> str:
 def _record_from_parsed(parsed: dict) -> dict[str, Any]:
     og = parsed.get("og") or {}
     links = parsed.get("links") or []
+    position = parsed.get("position") or {}
     return {
         "title": _text_of(parsed.get("title")),
         "meta_description": _text_of(parsed.get("meta_description")),
@@ -172,6 +194,15 @@ def _record_from_parsed(parsed: dict) -> dict[str, Any]:
         "charset": _text_of(parsed.get("charset")),
         "doctype": _text_of(parsed.get("doctype")),
         "viewport": _text_of(parsed.get("viewport")),
+        "title_outside_head": position.get("title_outside_head"),
+        "meta_description_outside_head": position.get("meta_description_outside_head"),
+        "canonical_outside_head": position.get("canonical_outside_head"),
+        "directives_outside_head": position.get("directives_outside_head"),
+        "hreflang_outside_head": position.get("hreflang_outside_head"),
+        "head_count": int(position.get("head_count") or 0),
+        "body_count": int(position.get("body_count") or 0),
+        "head_not_first": bool(position.get("head_not_first")),
+        "invalid_head_elements": ", ".join(position.get("invalid_head_elements") or []),
     }
 
 
@@ -365,6 +396,20 @@ def fetch_one(
                     extensions=extensions,
                 )
             break
+        except BlockedRedirectError as exc:
+            # The origin answered in full — this is a redirect our own guard refused to
+            # follow, not a sign the origin is unreachable (#175) — so it is recorded exactly
+            # like the unguarded 3xx it would have been, plus the reason it went no further.
+            elapsed = time.monotonic() - started
+            record.response_time = round(elapsed, 3)
+            record.status_code = exc.status_code
+            record.redirect_url = exc.location
+            record.error = str(exc)
+            record.error_kind = "blocked_redirect"
+            if throttle is not None:
+                throttle.record_response(elapsed, False)
+                throttle.record_success()
+            return record, None
         except Exception as exc:
             kind = _classify_fetch_error(exc)
             if kind == "timeout" and attempt < retry_on_timeout:

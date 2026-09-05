@@ -6,7 +6,7 @@ Generated from `seohead/sf/core/registry.py` — do not edit by hand. Regenerate
 python scripts/generate_checks_reference.py
 ```
 
-**121 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
+**138 checks.** Severity, evidence and fix all come from the same `CHECKS` dict the rule engine reads, so this table cannot say something the engine disagrees with.
 
 - **Fires on** — what the check id means, in the registry's own words.
 - **Evidence** — the `source` tag: which export or module has to be present for the check to run at all; its absence is why a check comes back `skipped` instead of a silent pass.
@@ -129,7 +129,7 @@ python scripts/generate_checks_reference.py
 | `SITEMAP_TOO_LARGE` | warning | sitemap | Sitemap exceeds the protocol's uncompressed size limit | Split the sitemap so each file stays under 50 MB uncompressed. The limit is about the document a search engine parses, so compressing it does not help. |
 | `SITEMAP_URL_DUPLICATED` | notice | sitemap | URL is declared in more than one sitemap | Declare each URL in exactly one sitemap. A URL in two files is usually a generator that ran twice, and it distorts every count taken from the declared set. |
 | `SITEMAP_DESYNC` | warning | sitemap | Sitemap and crawl URL sets are out of sync | Synchronize the sitemap with the site's actual set of canonical, indexable pages. |
-| `SITEMAP_FETCH_INCOMPLETE` | notice | sitemap | Some child sitemaps could not be fetched because of network or availability errors | Check that every child sitemap is reachable and retry the audit in case the sitemap service was temporarily slow. |
+| `SITEMAP_FETCH_INCOMPLETE` | notice | sitemap | Some child sitemaps could not be fetched or parsed | Check that every child sitemap is reachable, retry in case the service was temporarily slow, and validate the XML -- a 200 response with malformed markup (e.g. an unescaped '&' in a URL) fails here the same way a network error does. |
 
 ## 8.x — heuristics beyond SF
 
@@ -231,6 +231,22 @@ python scripts/generate_checks_reference.py
 | `VIEWPORT_MISSING` | warning | SF-derived | No <meta name=viewport> tag with width or an initial-scale of at least 1 | Add `<meta name="viewport" content="width=device-width, initial-scale=1">` to the document head. |
 | `NO_COMPRESSION` | notice | SF-derived | HTML response is served uncompressed above the size where gzip/br would help | Enable gzip, Brotli, or deflate compression for text responses on the origin server or CDN. |
 
+## --- extension: element position & document skeleton (issue #123) ---
+
+| Check id | Severity | Evidence | Fires on | Fix |
+|---|---|---|---|---|
+| `TITLE_OUTSIDE_HEAD` | warning | SF-derived | The <title> element is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so <title> is read from <head> again. |
+| `DESC_OUTSIDE_HEAD` | warning | SF-derived | The meta description is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the description is read from <head> again. |
+| `CANONICAL_OUTSIDE_HEAD` | critical | SF-derived | The canonical link is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the canonical is read from <head> again; Google ignores a canonical outside <head>. |
+| `DIRECTIVES_OUTSIDE_HEAD` | critical | SF-derived | A robots-directive meta tag is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the directive is read from <head> again; a noindex/nofollow outside <head> does not apply. |
+| `HREFLANG_OUTSIDE_HEAD` | warning | SF-derived | An hreflang alternate link is outside <head> once the parser resolves the document | Move whatever precedes it in <head> — usually an element the head content model does not allow — so the alternate is read from <head> again. |
+| `HEAD_MISSING` | warning | SF-derived | Document has no <head> element | Add a <head> element; a browser inserts one implicitly, but every metadata tag then depends on exactly where it lands. |
+| `HEAD_MULTIPLE` | notice | SF-derived | Document has more than one <head> element | Merge into a single <head>; a browser keeps both as siblings rather than combining their contents. |
+| `BODY_MISSING` | warning | SF-derived | Document has no <body> element | Add a <body> element; a browser inserts one implicitly around the visible content. |
+| `BODY_MULTIPLE` | notice | SF-derived | Document has more than one <body> element | Merge into a single <body>; a browser keeps both as siblings rather than combining their contents. |
+| `INVALID_HEAD_ELEMENT` | notice | SF-derived | An element the head content model does not allow is written inside <head> | Move title/base/link/meta/style/script/noscript/template content into <head> and everything else into <body>; an invalid element is what forces the parser to close <head> early. |
+| `HEAD_NOT_FIRST` | notice | SF-derived | <head> is not the first element under <html> once the parser resolves the document | Fix the markup order so <head> opens immediately after <html>, before any <body> content. |
+
 ## --- extension: export-dependent native filters (active when the export is available) ---
 
 | Check id | Severity | Evidence | Fires on | Fix |
@@ -247,3 +263,14 @@ python scripts/generate_checks_reference.py
 | Check id | Severity | Evidence | Fires on | Fix |
 |---|---|---|---|---|
 | `INLINK_BOILERPLATE_ONLY` | warning | crawl:link_position | Page is linked only from navigation, header, sidebar, or footer, never from body content | Add a contextual link to the page from relevant body copy; a page reachable only through boilerplate is not linked the way a page in the content graph is. |
+
+## nor a link's rel/target/raw-href.
+
+| Check id | Severity | Evidence | Fires on | Fix |
+|---|---|---|---|---|
+| `UNSAFE_CROSS_ORIGIN_LINK` | warning | crawl:link_findings | A target="_blank" link declares neither rel="noopener" nor rel="noreferrer" | Add rel="noopener" (or "noreferrer") so the opened page cannot reach back into this one through window.opener. |
+| `PROTOCOL_RELATIVE_LINK` | notice | crawl:link_findings | Link href is written in the protocol-relative "//host/path" form | Write an explicit https:// href; a protocol-relative one silently follows whatever scheme served the current page, including a plain-HTTP embed. |
+| `OUTLINK_TO_LOCALHOST` | warning | crawl:link_findings | A link points at a loopback address (localhost, 127.0.0.1, ::1, ...) | Replace the development/staging reference with the production URL. |
+| `FOLLOW_AND_NOFOLLOW_INLINKS` | notice | crawl:link_findings | The page receives both a followed and a nofollow internal link | Decide deliberately whether the page should be crawl-priority or not, and make every internal link to it agree. |
+| `FORM_URL_INSECURE` | critical | crawl:link_findings | A form submits to an http:// action, so its data leaves the browser unencrypted regardless of the page's own scheme | Point the form's action at an https:// URL. |
+| `FORM_ON_HTTP_URL` | critical | crawl:link_findings | A form with a password field is served from a plain-HTTP page, so the credentials themselves travel unencrypted before the action URL is even reached | Serve the page itself over HTTPS; an HTTPS form action does not protect input typed on an HTTP page. |

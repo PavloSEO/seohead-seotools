@@ -34,8 +34,10 @@ seohead log-scan --run ./run
 ```
 
 **3. Fingerprint and cluster.** Each page becomes a 64-bit simhash; locality-sensitive hashing
-groups likely matches; the final decision uses exact Hamming distance, so a reported cluster is
-never a false positive of the bucketing.
+groups likely matches; every pairwise similarity inside a reported cluster is verified against the
+exact Hamming distance, so a cluster is never a false positive of the bucketing, nor of chaining
+one candidate pair into another (a cluster is complete-linkage: every member pair clears the
+threshold, not only the ones LSH happened to compare).
 
 ```bash
 seohead duplicate-check --input '{"items": [{"url": "https://example.com/a", "text": "one paragraph of body copy"}, {"url": "https://example.com/b", "text": "one paragraph of body copy"}]}'
@@ -91,9 +93,14 @@ bucketing, against the quadratic number that was avoided.
 
 ## What it costs
 
-The clustering itself is local, near-instant, and free regardless of corpus size — that is the
-entire point of avoiding pairwise comparison. The cost lives in collecting the text: one request
-per page if it comes from a live crawl, none if it comes from an export you already had.
+The clustering itself is local and free of API cost, but "avoids pairwise comparison" is not
+unconditional: on a templated site, shared boilerplate can dominate every page's fingerprint and
+defeat LSH's bucketing (measured: 99.7%+ of a synthetic corpus in one bucket at every scale
+tested, before the fix that damps such shingles). Damped, wall-clock time on that same synthetic
+corpus was 0.4s/2.2s/8.9s at n=1,000/4,000/10,000 — a large improvement, but not "near-instant" at
+the top of that range. The cost that usually dominates in practice is still collecting the text:
+one request per page if it comes from a live crawl, none if it comes from an export you already
+had.
 
 ## What it cannot answer
 

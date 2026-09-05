@@ -37,17 +37,33 @@ class _HasUrl(Protocol):
     url: str
 
 
-# A path segment shaped like this is almost certainly a per-item identifier
-# (numeric id, slug, UUID) rather than part of the template. Collapsing it is
-# what lets two pages of one template share a single pattern key, so a
-# hundred product pages are sampled as one pattern instead of a hundred --
-# over-grouping only costs one extra sample, never a missed escalation, since
-# every page under an escalated pattern is still re-fetched.
+# A path segment shaped like this is structurally an identifier -- a number, a
+# UUID, or a date -- no matter where in the path it sits, because nothing
+# about those shapes is a word a person would choose for a single static
+# page. Collapsing it is what lets two pages of one template share a single
+# pattern key, so a hundred product pages are sampled as one pattern instead
+# of a hundred.
 _ID_SEGMENT_RE = re.compile(
     r"^(?:\d+"
     r"|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-    r"|[\w-]{9,})$"
+    r"|\d{4}-\d{2}-\d{2})$"
 )
+# A long hyphenated slug (`how-to-fix-pumps`) is *not* structurally an
+# identifier the way a number or UUID is -- "documentation" and
+# "case-studies" are exactly this shape too, and are distinct static pages,
+# not interchangeable members of one template. What actually distinguishes a
+# template instance from a hand-written page is a shared parent: `/blog/<
+# slug>` and `/product/<slug>` mean many pages sit under one template
+# segment, while a bare `/<slug>` at the root is indistinguishable from any
+# other page name. So this alternative only fires on a segment that has a
+# preceding sibling segment in the path -- see `_is_identifier_segment`.
+_SLUG_SEGMENT_RE = re.compile(r"^[\w-]{9,}$")
+
+
+def _is_identifier_segment(segment: str, *, has_parent: bool) -> bool:
+    if _ID_SEGMENT_RE.match(segment):
+        return True
+    return has_parent and bool(_SLUG_SEGMENT_RE.match(segment))
 
 
 def url_pattern(url: str) -> str:
@@ -56,10 +72,22 @@ def url_pattern(url: str) -> str:
     A heuristic, not a template engine. Query string and fragment are
     dropped entirely: they vary per item at least as often as path segments
     do, and keeping them would turn "one pattern per template" back into
-    "one pattern per URL".
+    "one pattern per URL". This groups `/product/wireless-mouse` with
+    `/product/bluetooth-speaker` (a shared parent, so the slug is a per-item
+    identifier) but leaves `/documentation` and `/contact-us` apart (no
+    parent segment, so each root-level slug is its own page).
     """
     parts = urlsplit(url)
-    segments = ["*" if seg and _ID_SEGMENT_RE.match(seg) else seg for seg in parts.path.split("/")]
+    raw_segments = parts.path.split("/")
+    segments = []
+    has_named_parent = False
+    for seg in raw_segments:
+        if seg and _is_identifier_segment(seg, has_parent=has_named_parent):
+            segments.append("*")
+        else:
+            segments.append(seg)
+        if seg:
+            has_named_parent = True
     return urlunsplit((parts.scheme, parts.netloc, "/".join(segments), "", ""))
 
 
@@ -110,6 +138,10 @@ class EscalationResult:
     schema_version: str = "render_escalation.v1"
     mode: str = "raw"
     patterns_sampled: int = 0
+    # Patterns whose probe sample said "needs a fuller fetch" -- a judgement,
+    # not a promise that every page in it was re-fetched. See render_counts
+    # and patterns_partially_rendered for what the render budget actually did
+    # with that judgement.
     patterns_escalated: list[str] = field(default_factory=list)
     # Request counts are how "selective" is proven rather than asserted: a
     # crawl of 500 URLs across 12 patterns should show on the order of 24
@@ -117,6 +149,16 @@ class EscalationResult:
     probe_requests: int = 0
     render_requests: int = 0
     render_budget_exhausted: bool = False
+    # pattern -> how many of its pages actually reached render_fetch(). A
+    # pattern in patterns_escalated with no entry here got zero -- the exact
+    # corruption #147 found: an escalated pattern indistinguishable in the
+    # summary from one that was fully rendered.
+    render_counts: dict[str, int] = field(default_factory=dict)
+    # Escalated patterns the render budget ran out before finishing, sorted.
+    # A pattern absent from this list either was not escalated, or had every
+    # one of its pages rendered -- the two states patterns_escalated alone
+    # cannot tell apart.
+    patterns_partially_rendered: list[str] = field(default_factory=list)
     empty_shell_urls: list[str] = field(default_factory=list)
     # url -> the representation that produced its evidence going forward.
     representations: dict[str, str] = field(default_factory=dict)
@@ -179,21 +221,38 @@ def escalate(
     for u in urls:
         by_pattern.setdefault(url_pattern(u), []).append(u)
 
+    # Spent breadth-first, one URL per escalated pattern per round, rather
+    # than draining patterns_escalated in order: sequential spending let
+    # whichever pattern sorted first consume the whole budget, leaving every
+    # later pattern at zero renders while still calling it "escalated" (#147).
+    # Round-robin instead means a budget that covers at least one URL per
+    # pattern reaches every pattern; render_counts and
+    # patterns_partially_rendered record honestly what a smaller budget could
+    # not finish, instead of the summary claiming a fuller fetch that never
+    # ran.
+    queues = {pattern: list(by_pattern.get(pattern, [])) for pattern in result.patterns_escalated}
     budget = int(escalation_cfg.get("max_render_urls", 0))
-    for pattern in result.patterns_escalated:
-        if budget <= 0:
-            result.render_budget_exhausted = True
-            break
-        for target_url in by_pattern.get(pattern, []):
+    active = [pattern for pattern in result.patterns_escalated if queues[pattern]]
+    while active and budget > 0:
+        next_active = []
+        for pattern in active:
             if budget <= 0:
-                result.render_budget_exhausted = True
                 break
+            target_url = queues[pattern].pop(0)
             fetched = render_fetch(target_url)
             result.render_requests += 1
             budget -= 1
+            result.render_counts[pattern] = result.render_counts.get(pattern, 0) + 1
             if fetched.get("ok"):
                 result.representations[target_url] = representation_label
                 result.rendered[target_url] = fetched
+            if queues[pattern]:
+                next_active.append(pattern)
+        active = next_active
+    result.patterns_partially_rendered = sorted(
+        pattern for pattern, remaining in queues.items() if remaining
+    )
+    result.render_budget_exhausted = bool(result.patterns_partially_rendered)
     return result
 
 
