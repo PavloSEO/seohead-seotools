@@ -24,6 +24,20 @@ All notable public changes are documented here.
   double a page's reported word count against its real content — and that exclusion list now lives
   in one place (`content_area.TEXT_EXCLUDED_TAGS`) shared by both text extractors instead of two
   copies that had already drifted out of sync.
+- Keep a link's full `rel` tokens, its `target` attribute, and its raw (pre-resolution) href,
+  and extract `<form>` elements — method, action, whether a password field is present (#125).
+  Six catalogued issues depended on those three facts being discarded: unsafe cross-origin
+  links (`target="_blank"` without `rel="noopener"`/`"noreferrer"`), protocol-relative links
+  (`//host/path`, before resolution), outlinks to localhost, a page receiving both a followed
+  and a nofollow internal link, an insecure form action, and a password form served from a
+  plain-HTTP page. All six are now `UNSAFE_CROSS_ORIGIN_LINK`, `PROTOCOL_RELATIVE_LINK`,
+  `OUTLINK_TO_LOCALHOST`, `FOLLOW_AND_NOFOLLOW_INLINKS`, `FORM_URL_INSECURE` and
+  `FORM_ON_HTTP_URL` in the registry. The form/localhost/nofollow-mix checks need only fields
+  every crawl already recorded, so those four run unconditionally; the cross-origin and
+  protocol-relative pair need `link_attributes.capture`, off by default,
+  because the extra per-edge data measured roughly +50% on a synthetic 3387-page,
+  150-link-per-page crawl — about +95 bytes/edge, +46 MiB total, `raw_href` alone accounting
+  for most of it. Registry grows from 121 to 127 checks.
 - Fix `report-build` silently rendering a zero-findings report for an SF Analyzer
   `audit.json` (#151). The documented recipe — `sf run --tasks` piped into
   `report-build --format docx`/`xlsx`/`csv`/`md` — read `findings`/flat page keys, which
