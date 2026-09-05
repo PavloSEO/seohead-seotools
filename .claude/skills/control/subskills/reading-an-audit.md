@@ -10,15 +10,18 @@ complete one.
 |---|---|
 | `run.crawl_finish_reason` | `finished`, or why not — `errors`, `budget`, `duration` |
 | `run.crawl_partial` | whether the crawl covered the site |
-| `summary.check_coverage` | how many checks *could* run: `checks_fired`, `checks_skipped`, `checks_silent` |
+| `summary.check_coverage` | how many checks *could* run: `checks_fired`, `checks_skipped`, `checks_disabled`, `checks_silent` |
 | `summary.health_score_basis` | whether the score compares to anything |
 
-Fired, skipped and silent are three different things:
+Fired, skipped, disabled and silent are four different things:
 
 - **fired** — the check ran and found something
 - **skipped** — the check could not run, and the reason is named (a missing export column, a
   missing page property). Not "zero issues".
-- **silent** — the check ran and found nothing. This is the good one.
+- **disabled** — the operator turned the check off in config. Not missing evidence, and never
+  read as "clean" — `checks_disabled_ids` names which ones.
+- **silent** — the check *was invoked* and found nothing. This is the good one.
+  `checks_silent_ids` names the population; a check nothing ever invokes is a defect, not this.
 
 A health score computed from 16 of 118 checks is not a health score. The audit says so in
 `health_score_basis`; **report that sentence next to the score, always.** Where coverage is too

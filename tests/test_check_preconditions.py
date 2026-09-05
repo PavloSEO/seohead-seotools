@@ -23,14 +23,17 @@ from seohead.sf.core.registry import CHECK_REQUIRES, CHECKS, missing_requirement
 EXPORTS = Path("examples/exports")
 
 
-def _audit(tmp_path: Path, drop: list[str] | None = None) -> dict:
+def _audit(tmp_path: Path, drop: list[str] | None = None, disable: list[str] | None = None) -> dict:
     """Run the analyzer over a copy of the example exports, minus some files."""
     work = tmp_path / "exports"
     shutil.copytree(EXPORTS, work)
     for pattern in drop or []:
         for path in work.glob(pattern):
             path.unlink()
-    result = run_audit(input_mode="parse-exports", exports_dir=str(work), config=load_config(None))
+    config = load_config(None)
+    for check_id in disable or []:
+        config.setdefault("checks", {})[check_id] = {"enabled": False}
+    result = run_audit(input_mode="parse-exports", exports_dir=str(work), config=config)
     return json.loads(json.dumps(result.to_json()))
 
 
@@ -53,13 +56,29 @@ def test_a_declared_dependency_is_skipped_with_a_readable_reason(tmp_path):
     assert "images_missing_alt" in reasons["IMG_MISSING_ALT"]
 
 
-def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
-    """Checks that neither fired nor declared a skip are the actual defect."""
-    coverage = _audit(tmp_path)["summary"]["check_coverage"]
-    total = coverage["checks_total"]
-    assert (
-        coverage["checks_fired"] + coverage["checks_skipped"] + coverage["checks_silent"] == total
-    )
+def test_silent_checks_are_named_so_the_gap_is_visible(tmp_path):
+    """Checks that neither fired, nor were skipped, nor were disabled are the
+    actual defect (issue #177) — and the population must be nameable, not just
+    countable, or a reader has to diff CHECKS against fired/skipped themselves.
+    """
+    audit = _audit(tmp_path)
+    coverage = audit["summary"]["check_coverage"]
+    fired = {i["check"] for i in audit["issues"]}
+    skipped = {s["id"] for s in audit["run"]["checks_skipped"]}
+    disabled = {d["id"] for d in audit["run"]["checks_disabled"]}
+    silent = set(coverage["checks_silent_ids"])
+
+    # A property of the partition, not the complement's own definition: every
+    # id in the silent list is independently absent from every other bucket,
+    # checked against the raw fired/skipped/disabled records rather than by
+    # recomputing the same "total minus everything else" formula the
+    # production code uses.
+    assert not (silent & fired)
+    assert not (silent & skipped)
+    assert not (silent & disabled)
+    assert silent | fired | skipped | disabled == set(CHECKS)
+    assert coverage["checks_silent"] == len(silent)
+
     # A ratchet: this may fall as declarations are added, never rise unnoticed.
     # Raised from 56 to 59 when NOTRANSLATE, UNAVAILABLE_AFTER and
     # CANONICAL_FRAGMENT were added (issue #30): the example fixture has no
@@ -83,6 +102,59 @@ def test_silent_checks_are_counted_so_the_gap_is_visible(tmp_path):
     assert coverage["checks_silent"] <= 58
 
 
+def test_a_disabled_check_is_its_own_bucket_never_silent_or_clean(tmp_path):
+    """An operator's own config switch must be visible as disabled, not as a
+    clean/silent result (issue #177) — regression for context.py's ``ctx.add``
+    silently returning ``None`` for a disabled check with nothing recording it.
+    """
+    baseline = _audit(tmp_path / "on")
+    disabled_run = _audit(tmp_path / "off", disable=["BROKEN_PAGE_4XX"])
+
+    assert "BROKEN_PAGE_4XX" in {i["check"] for i in baseline["issues"]}
+    assert "BROKEN_PAGE_4XX" not in {i["check"] for i in disabled_run["issues"]}
+
+    coverage = disabled_run["summary"]["check_coverage"]
+    assert coverage["checks_disabled_ids"] == ["BROKEN_PAGE_4XX"]
+    assert coverage["checks_disabled"] == 1
+    assert "BROKEN_PAGE_4XX" not in coverage["checks_silent_ids"]
+    assert coverage["checks_fired"] == baseline["summary"]["check_coverage"]["checks_fired"] - 1
+
+    disabled_reasons = {d["id"]: d["reason"] for d in disabled_run["run"]["checks_disabled"]}
+    assert disabled_reasons["BROKEN_PAGE_4XX"]
+    assert "BROKEN_PAGE_4XX" not in {s["id"] for s in disabled_run["run"]["checks_skipped"]}
+
+
+def test_fired_and_skipped_for_one_id_cannot_both_be_counted(tmp_path, monkeypatch):
+    """issue #136/#177: a check that fires from one source must not also be
+    counted (or reported) as skipped just because ``ctx.skip`` was separately
+    called for it — the two counts are derived from one partition, not two.
+    """
+    from seohead.sf.core import audit as audit_module
+
+    real_run_rules = audit_module.run_rules
+
+    def run_rules_then_skip_a_fired_check(ctx):
+        real_run_rules(ctx)
+        assert "BROKEN_PAGE_4XX" in {i.check for i in ctx.issues}, "fixture must fire this check"
+        ctx.skip("BROKEN_PAGE_4XX", "evidence for another source was absent")
+
+    monkeypatch.setattr(audit_module, "run_rules", run_rules_then_skip_a_fired_check)
+    audit = _audit(tmp_path)
+
+    coverage = audit["summary"]["check_coverage"]
+    fired = {i["check"] for i in audit["issues"]}
+    skipped = {s["id"] for s in audit["run"]["checks_skipped"]}
+    assert "BROKEN_PAGE_4XX" in fired
+    assert "BROKEN_PAGE_4XX" not in skipped
+    assert (
+        coverage["checks_fired"]
+        + coverage["checks_skipped"]
+        + coverage["checks_disabled"]
+        + coverage["checks_silent"]
+        == coverage["checks_total"]
+    )
+
+
 def test_removing_evidence_only_ever_grows_the_skip_set(tmp_path):
     baseline = _audit(tmp_path / "a")
     reduced = _audit(tmp_path / "b", drop=["*4xx*"])
@@ -102,7 +174,10 @@ def test_coverage_is_machine_readable_so_consumers_can_refuse_a_verdict(tmp_path
         "checks_total",
         "checks_fired",
         "checks_skipped",
+        "checks_disabled",
+        "checks_disabled_ids",
         "checks_silent",
+        "checks_silent_ids",
         "coverage",
     }
     assert coverage["checks_total"] == len(CHECKS)

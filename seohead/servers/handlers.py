@@ -335,6 +335,14 @@ def crawl_site(
     # resumed run's result.links whole again (see spider.crawl_site), a correctness need
     # distinct from whether the operator also wants pages.jsonl as a human-readable export.
     links_path = os.path.join(out_dir, "links.jsonl") if out_dir else None
+    # Same "tied to out_dir, gated by its own toggle" shape as pages_path: a
+    # decision log is a diagnostic artifact, not something a resumed run
+    # depends on (issue #134).
+    decisions_path = (
+        os.path.join(out_dir, "decisions.jsonl")
+        if out_dir and settings["output"]["write_decisions_jsonl"]
+        else None
+    )
     max_seconds = settings["limits"]["max_crawl_seconds"]
     # One cache per run, shared by every worker thread a concurrent crawl starts — see
     # seohead.crawl.cache for the freshness policy and seohead.crawl.settings for cache.mode /
@@ -363,6 +371,7 @@ def crawl_site(
             seed_urls=sitemap_seed["declared"] or None,
             out_path=pages_path,
             links_path=links_path,
+            decisions_path=decisions_path,
             credential_headers=settings["http"]["credential_headers"],
             # Checkpointed only when there is somewhere durable to put it; a
             # crawl with no out_dir has nothing to resume into anyway.
@@ -1035,8 +1044,11 @@ def log_scan(
 ) -> dict[str, Any]:
     """Report claims a finished run makes that cannot all be true at once.
 
-    ``run`` is a directory holding ``audit.json`` and/or ``pages.jsonl`` — whatever
-    ``crawl-site --out-dir`` or ``sf run --out`` wrote. ``images_dir`` is an
+    ``run`` is a directory holding ``audit.json``, ``pages.jsonl`` and/or
+    ``decisions.jsonl`` — whatever ``crawl-site --out-dir`` or ``sf run --out`` wrote.
+    ``decisions.jsonl`` (issue #134) is the per-URL exclusion log a native crawl writes
+    beside ``pages.jsonl``; it lets a rule catch a contradiction that never survives into
+    ``audit.json`` at all, not only one visible in the finished output. ``images_dir`` is an
     ``images-download`` output directory, whose manifest lets a recorded size be compared
     against the file itself.
 

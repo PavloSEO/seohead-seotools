@@ -178,12 +178,14 @@ class AuditResult:
     pages: list[Page] = field(default_factory=list)
     groups: list[Group] = field(default_factory=list)
     skipped: list[SkippedCheck] = field(default_factory=list)
+    disabled: list[SkippedCheck] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         from .. import __version__
 
         run = dict(self.run)
         run["checks_skipped"] = [s.to_json() for s in self.skipped]
+        run["checks_disabled"] = [d.to_json() for d in self.disabled]
         return {
             "schema_version": "2.0",
             "tool": {

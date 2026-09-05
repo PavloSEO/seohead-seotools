@@ -109,6 +109,10 @@ DEFAULTS: dict[str, Any] = {
     "output": {
         "dir": "",
         "write_pages_jsonl": True,
+        # A structured, per-URL decision log beside pages.jsonl (issue #134):
+        # measured at one small JSON line per exclusion on the chain fixture,
+        # so on by default rather than a diagnostic nobody remembers to enable.
+        "write_decisions_jsonl": True,
     },
     "link_position": {
         # Off by default: classifying every link's DOM ancestry (nav, header,
@@ -353,6 +357,10 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     "output.dir": "Directory to write pages.jsonl and audit.json into; empty writes nothing to disk.",
     "output.write_pages_jsonl": "Write one JSON line per fetched page to pages.jsonl.",
+    "output.write_decisions_jsonl": (
+        "Write one JSON line per exclusion decision to decisions.jsonl, naming the URL and the "
+        "rule that rejected it — see seohead.tools.logscan for what reads it."
+    ),
     "link_position.classify": (
         "Classify each link's DOM ancestry (nav/header/sidebar/footer/content) as it is "
         "parsed, at no extra requests; off by default because storing a position per link "
