@@ -6,11 +6,7 @@
 
 **The local evidence and audit-automation layer for SEO specialists and tool-calling AI agents.**
 
-<<<<<<< HEAD
-59 callable tools · 138 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
-=======
-59 callable tools · 138 checks over Screaming Frog crawl exports · 29 workflow skills · CLI · local MCP · Docker
->>>>>>> origin/main
+59 callable tools · 138 checks · 29 workflow skills · 57 scenarios · 2 400+ offline tests · CLI · local MCP · Docker
 
 [Website](https://seohead.tech) · [Documentation](docs/README.md)
 
@@ -25,7 +21,7 @@
 </div>
 
 **SEOHEAD is not a crawler replacement.** Screaming Frog produces the CSV/XLSX exports consumed
-by SEOHEAD's 132-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
+by SEOHEAD's 138-check analyzer. SEOHEAD then runs complementary bounded checks, keeps failed and
 unavailable measurements visible, and gives a specialist or tool-calling agent one tested CLI/MCP
 surface for assembling an audit, prioritized backlog, and reports.
 
@@ -44,7 +40,7 @@ commercial-proposal draft while a specialist keeps control of interpretation.
 | Stage | Primary owner | Role |
 |---|---|---|
 | Crawl collection | Screaming Frog | Discover site-scale URLs and produce compatible CSV/XLSX exports |
-| Evidence processing | SEOHEAD Tools | Analyze those exports against a 132-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
+| Evidence processing | SEOHEAD Tools | Analyze those exports against a 138-check registry, run targeted live and infrastructure tools, preserve uncertainty, and build structured artifacts |
 | Interpretation and approval | SEO specialist, optionally supported by an AI agent | Connect findings to business context, implementation risk, and final priorities |
 
 See [how SEOHEAD fits with crawlers and data providers](docs/COMPARISON.md) for the exact scope
@@ -63,9 +59,40 @@ No client data is included.
 
 | Starting point | Start with | What it does |
 |---|---|---|
-| Existing Screaming Frog exports | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates available crawl evidence against the 132-check registry and builds an audit plus backlog |
-| A site that needs a bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Runs selected sitemap-based live, page, and infrastructure checks; it is not a link-graph crawl |
-| A tool-calling AI agent | `seohead mcp` | Exposes 54 shared `seo_*` handlers plus five separately registered `sf_*` crawl-workflow tools over local stdio |
+| **A site, and no crawl yet** | `seohead crawl-site --url https://example.com --out-dir ./run` | Crawls the site with this toolkit's own crawler — no Screaming Frog, no licence — and audits the result through the same 138-check registry |
+| **Existing Screaming Frog exports** | `seohead sf run --exports-dir ./exports --out ./report --tasks` | Evaluates crawl evidence you already have against the 138-check registry and builds an audit plus a prioritized backlog |
+| **Screaming Frog installed and licensed** | `seohead sf run --crawl https://example.com --out ./report` | Drives your local Screaming Frog CLI, then audits its exports — one command instead of crawl, export, import |
+| A bounded current-state pass | `seohead site-audit --url https://example.com --limit 25` | Sitemap-based live, page and infrastructure checks. Not a link-graph crawl, and it says so |
+| A tool-calling AI agent | `seohead mcp` | 54 shared `seo_*` handlers plus five `sf_*` crawl-workflow tools over local stdio |
+| Two crawls, and the question "did they fix it" | `seohead compare-crawls --before a.json --after b.json` | Per check: entered, appeared, left, disappeared — a fix and a deletion are different answers |
+
+## Why an agent should reach for this
+
+Five things this gives a tool-calling agent that a general-purpose browser or a shell full of
+`curl` does not:
+
+**One evidence contract across every source.** A native crawl, a Screaming Frog export, and a
+licensed Screaming Frog run all produce the same audit document with the same field names. An
+agent writes one consumer, not three.
+
+**Structured output on failure, not just on success.** Every tool returns JSON. When a source is
+unreachable it returns `{"ok": false, "error": "..."}` rather than raising — an unreachable site is
+data about the site, not an accident that ends the run. Since #155 that `ok: false` also reaches
+the process exit code, so a shell caller and a JSON caller agree about what happened.
+
+**The cost of a call is declared before it is made.** [docs/TOOL_REFERENCE.md](docs/TOOL_REFERENCE.md)
+is generated from the code and states, per tool, whether it touches the network, whether it writes
+to disk, whether it is idempotent, and whether it can spend money. Paid providers write to a spend
+journal; `spend-report` reads it back by source, operation and day.
+
+**It refuses to guess.** No check reports a result it cannot support: missing evidence is a named
+skip, a partial crawl withholds the conclusions that need completeness, and a check that suddenly
+describes most of a site is flagged for a human before the rest of the report is believed.
+
+**The chains are written down.** 57 scenarios in [docs/scenarios/](docs/scenarios/README.md) give
+the actual command sequences for real jobs — a migration audit, a duplicate-content pass, a
+robots-and-indexability review — with what each produces, what it costs, and what it cannot answer.
+An agent does not have to invent an order of operations.
 
 ## Why it is useful
 
@@ -114,7 +141,88 @@ a fixture site on every CI run.
 | Demand, SERP, and traffic sources | 17 | Yandex Wordstat and async SERP, Arsenkin exact frequency, Yandex Metrika, DataForSEO Google data, region tree, credential and spend diagnostics, Wayback snapshot history, certificate-log subdomains, Search Console, CrUX field vitals, IndexNow submission |
 
 Run `seohead --help` for the authoritative command list. Every core command goes through the
-same handler used by its `seo_*` MCP counterpart; a test gate fails if the interfaces drift.
+same handler used by its `seo_*` MCP counterpart; a test gate fails if the interfaces drift — and
+another fails if the CLI can name an argument the MCP tool cannot, which is how an entire crawl
+mode once stayed unreachable for agents.
+
+<details>
+<summary><b>All 54 commands, by what they answer</b></summary>
+
+**Crawl a site yourself** — `crawl-site` · `crawl-describe-settings` · `compare-crawls` ·
+`log-scan`
+
+**One page, one answer** — `parse` · `headers-check` · `links-check` · `hreflang-check` ·
+`redirects-check` · `redirects-generate` · `schema-check` · `schema-build` · `social-meta-check` ·
+`soft404-check` · `render-check` · `markdown-extract` · `citability-check` · `asset-weight-check`
+
+**The site as a whole** — `site-audit` · `sitemap-crawl` · `robots-check` · `llms-txt-check` ·
+`ai-bots-check` · `duplicate-check` · `boilerplate-report` · `report-build`
+
+**Infrastructure and identity** — `domain-profile` · `cdn-check` · `tech-detect` ·
+`security-check` · `mirror-check` · `regions-check` · `backlinks-check` · `crtsh-subdomains`
+
+**Images** — `images-download` · `images-optimize`
+
+**Logs** — `log-analyze`
+
+**Demand and search data** — `keywords-expand` · `keywords-seasonality` · `keywords-exact` ·
+`keywords-cluster` · `serp-fetch` · `google-keywords` · `google-serp` · `regions-tree` ·
+`gsc-query` · `crux-report` · `wayback-history` · `indexnow-submit`
+
+**Analytics** — `metrika-counters` · `metrika-setup` · `metrika-report`
+
+**Housekeeping** — `sources-doctor` · `spend-report`
+
+Each has the same MCP counterpart named `seo_<command>` with dashes replaced by underscores.
+[docs/TOOL_REFERENCE.md](docs/TOOL_REFERENCE.md) is generated from the code and carries every
+argument, its type and default, whether the tool touches the network, whether it writes, whether
+it is idempotent, and whether it can spend money.
+
+</details>
+
+### Three ways to get crawl evidence
+
+The audit layer does not care where the crawl came from. Three sources feed the same 138-check
+registry and produce the same audit document, so a report built one way is comparable with a
+report built another.
+
+**1. This toolkit's own crawler — no licence, no other software.**
+
+```bash
+seohead crawl-site --url https://example.com --out-dir ./run --max-urls 500
+```
+
+Follows links from a start URL, or fetches an explicit list (`--urls`), or seeds from a sitemap
+(`--sitemap`). It obeys robots.txt by default, adapts its request rate to what the origin can
+take, resumes from a checkpoint if it is interrupted, and can escalate to a real browser for the
+pages that need one. Every setting is discoverable: `seohead crawl-site --config-help` prints each
+one with its type, default, and whether it changes *what the audit finds* or only what the run
+costs. `seohead crawl-describe-settings` returns the same thing as JSON, so an agent can read the
+configuration surface without a filesystem.
+
+**2. Your licensed Screaming Frog, driven for you.**
+
+```bash
+seohead sf run --crawl https://example.com --out ./report --tasks
+```
+
+Launches the local Screaming Frog CLI, waits for it, then audits the exports it produced. Requires
+an installed and licensed SEO Spider — this toolkit neither bundles nor replaces it.
+
+**3. Screaming Frog exports you already have.**
+
+```bash
+seohead sf run --exports-dir ./exports --out ./report --tasks
+```
+
+Reads CSV or XLSX exports from any previous crawl, by anyone, on any machine. Nothing is fetched.
+
+**What differs between them is evidence, and the report says so.** A native crawl has its own link
+graph and can answer questions about internal linking that no export carries; a Screaming Frog
+export carries columns the native crawler does not produce. A check with no evidence is reported as
+skipped **with the reason**, never as "no issues found" — that distinction is the point of the
+tool, and `docs/COVERAGE_SF_ISSUES.md` maps all 320 published Screaming Frog issue types onto what
+this repository does and does not cover.
 
 ### Screaming Frog audit layer
 
@@ -275,6 +383,21 @@ Provider integrations are optional and explicit:
 Secrets are read from environment variables or local configuration files and are never shipped.
 Paid calls are journalled before response parsing so a parser failure cannot make spend invisible.
 Read [provider gotchas](docs/GOTCHAS.md) before enabling production credentials.
+
+## What keeps the output honest
+
+The claim this repository makes is not "it finds everything" — it is that **it does not report what
+it did not measure**. That is enforced mechanically, not by intention:
+
+| | |
+|---|---|
+| **2 400+ tests**, all offline | No test reaches the network. The suite runs in CI with no egress, so a green run means the logic is right, not that a site happened to answer |
+| **57 scenarios** in `docs/scenarios/` | Each is a real chain of commands ending in something a person can act on. Every command in them is executed against a fixture site on every CI run — a documented example that cannot work fails the build |
+| **Skipped is not clean** | A check without evidence is reported as skipped *with its reason*. `checks_fired`, `checks_skipped`, `checks_disabled` and `checks_silent` are four separate, listed buckets, so "nothing was wrong here" and "nobody looked here" are different answers |
+| **Implausible findings are named** | Any check covering more than half the crawled pages is listed above the findings, because a check that describes most of a site is usually broken rather than right |
+| **Partial crawls withhold conclusions** | A finding that needs a complete link graph — "nothing links here" — is withheld and named, not footnoted, when the crawl did not finish |
+| **`log-scan`** | Reads a finished run's own artifacts and reports where two numbers in it disagree. Exit 2 means the run contradicts itself |
+| **Counts cannot drift** | Every number this README states about the registry is checked against the code by a test. So are the command lists in the skills, the coverage map, and the generated references |
 
 ## Safety and honest limits
 
