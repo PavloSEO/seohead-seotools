@@ -179,6 +179,44 @@ def test_orphan_urls_is_empty_when_everything_joined():
     assert orphan_urls(result) == []
 
 
+def test_orphan_urls_defaults_to_the_crawl_origins():
+    result = join_external_data(
+        _pages("https://example.com/a"),
+        _rows("https://foreign.example/traffic-only"),
+    )
+    assert result["external_only"]
+    assert result["crawl_origins"] == ["https://example.com"]
+    assert orphan_urls(result) == []
+
+
+def test_orphan_urls_allows_an_explicit_multi_origin_audit_scope():
+    result = join_external_data(
+        _pages("https://example.com/a"),
+        _rows("https://foreign.example/traffic-only"),
+    )
+    assert orphan_urls(
+        result, allowed_origins={"https://example.com", "https://foreign.example"}
+    ) == ["https://foreign.example/traffic-only"]
+
+
+def test_orphan_urls_keeps_a_second_origin_when_the_crawl_includes_it():
+    result = join_external_data(
+        _pages("https://example.com/a", "https://foreign.example/seen"),
+        _rows("https://foreign.example/traffic-only"),
+    )
+    assert orphan_urls(result) == ["https://foreign.example/traffic-only"]
+
+
+def test_orphan_urls_accepts_one_explicit_origin_as_a_string():
+    result = join_external_data(
+        _pages("https://example.com/a"),
+        _rows("https://foreign.example/traffic-only"),
+    )
+    assert orphan_urls(result, allowed_origins="https://foreign.example") == [
+        "https://foreign.example/traffic-only"
+    ]
+
+
 # --- load_csv_rows ------------------------------------------------------------
 
 
